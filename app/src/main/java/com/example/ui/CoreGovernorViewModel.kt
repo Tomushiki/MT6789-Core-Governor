@@ -181,6 +181,29 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun updateOverlayPosition(xPm: Int?, yPm: Int?, reset: Boolean = false) {
+        engine.updateConfig { cfg ->
+            if (reset) {
+                cfg.copy(
+                    overlayCompactXPm = 40,
+                    overlayCompactYPm = 60,
+                    overlayExpandedXPm = 40,
+                    overlayExpandedYPm = 60
+                )
+            } else if (cfg.overlayExpanded) {
+                cfg.copy(
+                    overlayExpandedXPm = (xPm ?: cfg.overlayExpandedXPm).coerceIn(0, 1000),
+                    overlayExpandedYPm = (yPm ?: cfg.overlayExpandedYPm).coerceIn(0, 1000)
+                )
+            } else {
+                cfg.copy(
+                    overlayCompactXPm = (xPm ?: cfg.overlayCompactXPm).coerceIn(0, 1000),
+                    overlayCompactYPm = (yPm ?: cfg.overlayCompactYPm).coerceIn(0, 1000)
+                )
+            }
+        }
+    }
+
     fun selectTempSensor(path: String) {
         engine.updateConfig { it.copy(selectedTempSensorPath = path) }
     }

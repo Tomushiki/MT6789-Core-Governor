@@ -311,7 +311,7 @@ class ConfigStorage(private val context: Context) {
         return listOf(
             PresetItem(
                 id = "builtin_balanced",
-                name = "Balanced Helio G99",
+                name = "Balanced",
                 builtIn = true,
                 config = base
             ),
@@ -381,6 +381,10 @@ class ConfigStorage(private val context: Context) {
             put("overlayOpacityPct", c.overlayOpacityPct)
             put("overlayCompactScalePct", c.overlayCompactScalePct)
             put("overlayExpandedScalePct", c.overlayExpandedScalePct)
+            put("overlayCompactXPm", c.overlayCompactXPm)
+            put("overlayCompactYPm", c.overlayCompactYPm)
+            put("overlayExpandedXPm", c.overlayExpandedXPm)
+            put("overlayExpandedYPm", c.overlayExpandedYPm)
             put("overlayX", c.overlayX)
             put("overlayY", c.overlayY)
             put("safetyFloorPct", c.safetyFloorPct.toDouble())
@@ -469,6 +473,10 @@ class ConfigStorage(private val context: Context) {
             overlayOpacityPct = obj.optInt("overlayOpacityPct", default.overlayOpacityPct).coerceIn(30, 100),
             overlayCompactScalePct = obj.optInt("overlayCompactScalePct", default.overlayCompactScalePct).coerceIn(40, 400),
             overlayExpandedScalePct = obj.optInt("overlayExpandedScalePct", default.overlayExpandedScalePct).coerceIn(40, 400),
+            overlayCompactXPm = obj.optInt("overlayCompactXPm", default.overlayCompactXPm).coerceIn(0, 1000),
+            overlayCompactYPm = obj.optInt("overlayCompactYPm", default.overlayCompactYPm).coerceIn(0, 1000),
+            overlayExpandedXPm = obj.optInt("overlayExpandedXPm", default.overlayExpandedXPm).coerceIn(0, 1000),
+            overlayExpandedYPm = obj.optInt("overlayExpandedYPm", default.overlayExpandedYPm).coerceIn(0, 1000),
             overlayX = obj.optInt("overlayX", default.overlayX),
             overlayY = obj.optInt("overlayY", default.overlayY),
             safetyFloorPct = obj.optDouble("safetyFloorPct", default.safetyFloorPct.toDouble()).toFloat().coerceIn(5f, 95f),

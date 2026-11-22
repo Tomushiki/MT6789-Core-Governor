@@ -161,7 +161,7 @@ fun CoreGovernorRootScreen(
                                 style = MaterialTheme.typography.headlineSmall
                             )
                             Text(
-                                text = "MT6789 • Helio G99 Controller",
+                                text = "CoreGovernor • MediaTek Controller",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -218,6 +218,7 @@ fun CoreGovernorRootScreen(
                 onUpdateCpuLoadUsesBusiestCore = vm::updateCpuLoadUsesBusiestCore,
                 onUpdateScreenOffSaving = vm::updateScreenOffSaving,
                 onUpdateOverlay = vm::updateOverlay,
+                onUpdateOverlayPosition = vm::updateOverlayPosition,
                 onUpdateClusterRange = vm::updateClusterRange,
                 onUpdateGpuRange = vm::updateGpuRange,
                 onUpdateModeScalingParams = vm::updateModeScalingParams,

@@ -102,6 +102,7 @@ fun TuningScreen(
         compactScalePct: Int?,
         expandedScalePct: Int?
     ) -> Unit,
+    onUpdateOverlayPosition: (Int?, Int?, Boolean) -> Unit,
     onUpdateClusterRange: (GovernorMode, Int, FreqRange) -> Unit,
     onUpdateGpuRange: (GovernorMode, FreqRange) -> Unit,
     onUpdateModeScalingParams: (
@@ -635,6 +636,53 @@ fun TuningScreen(
                             enabled = config.overlayEnabled,
                             testTag = "overlay_expanded_scale_slider"
                         )
+
+                        val posStyle = if (config.overlayExpanded) "expanded" else "compact"
+                        val posXPct = ((if (config.overlayExpanded) config.overlayExpandedXPm else config.overlayCompactXPm) / 10).coerceIn(0, 100)
+                        val posYPct = ((if (config.overlayExpanded) config.overlayExpandedYPm else config.overlayCompactYPm) / 10).coerceIn(0, 100)
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSliderRow(
+                            title = "Horizontal position ($posStyle)",
+                            valueText = "${posXPct}%",
+                            explanation = "Positions the overlay horizontally along available screen width.",
+                            value = posXPct.toFloat(),
+                            valueRange = 0f..100f,
+                            steps = 99,
+                            onValueChange = {
+                                val pct = it.roundToInt().coerceIn(0, 100)
+                                onUpdateOverlayPosition(pct * 10, null, false)
+                            },
+                            enabled = config.overlayEnabled,
+                            testTag = "overlay_pos_x_slider"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSliderRow(
+                            title = "Vertical position ($posStyle)",
+                            valueText = "${posYPct}%",
+                            explanation = "Positions the overlay vertically along available screen height.",
+                            value = posYPct.toFloat(),
+                            valueRange = 0f..100f,
+                            steps = 99,
+                            onValueChange = {
+                                val pct = it.roundToInt().coerceIn(0, 100)
+                                onUpdateOverlayPosition(null, pct * 10, false)
+                            },
+                            enabled = config.overlayEnabled,
+                            testTag = "overlay_pos_y_slider"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = { onUpdateOverlayPosition(null, null, true) },
+                            enabled = config.overlayEnabled,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("overlay_reset_position_button")
+                        ) {
+                            Text("Reset position")
+                        }
                     }
                 }
             }

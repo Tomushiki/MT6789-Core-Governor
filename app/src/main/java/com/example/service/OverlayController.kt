@@ -26,6 +26,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -46,6 +47,7 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 class OverlayController(
@@ -64,6 +66,8 @@ class OverlayController(
     private var overlayView: OverlayPillView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var isDragging = false
+    private var lastAppliedXPm: Int = -1
+    private var lastAppliedYPm: Int = -1
 
     private var lastAppliedDisplay: DisplayData? = null
     private var lastApplyTimeMs: Long = 0L
@@ -149,9 +153,8 @@ class OverlayController(
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = cfg.overlayX
-                y = cfg.overlayY
             }
+            applyPermillePosition(view, params, cfg)
 
             val initialData = toDisplayData(engine.telemetry.value)
             lastAppliedDisplay = initialData
@@ -169,23 +172,28 @@ class OverlayController(
             }
         } else {
             var layoutChanged = false
+            var needsReposition = false
             existingView.alpha = targetAlpha
             existingView.setClickThrough(cfg.overlayClickThrough)
             if (existingView.isExpandedMode() != cfg.overlayExpanded) {
                 existingView.setExpanded(cfg.overlayExpanded)
                 layoutChanged = true
+                needsReposition = true
             }
             if (existingView.setScales(cfg.overlayCompactScalePct, cfg.overlayExpandedScalePct)) {
                 layoutChanged = true
+                needsReposition = true
             }
             if (existingParams.flags != targetFlags) {
                 existingParams.flags = targetFlags
                 layoutChanged = true
             }
-            if (!isDragging && (existingParams.x != cfg.overlayX || existingParams.y != cfg.overlayY)) {
-                existingParams.x = cfg.overlayX
-                existingParams.y = cfg.overlayY
-                layoutChanged = true
+            if (!isDragging) {
+                val (xPm, yPm) = currentPosPm(cfg)
+                if (needsReposition || xPm != lastAppliedXPm || yPm != lastAppliedYPm) {
+                    applyPermillePosition(existingView, existingParams, cfg)
+                    layoutChanged = true
+                }
             }
             if (layoutChanged) {
                 try {
@@ -196,6 +204,48 @@ class OverlayController(
         }
     }
 
+    private fun currentPosPm(cfg: GovernorConfig): Pair<Int, Int> {
+        val xPm = if (cfg.overlayExpanded) cfg.overlayExpandedXPm else cfg.overlayCompactXPm
+        val yPm = if (cfg.overlayExpanded) cfg.overlayExpandedYPm else cfg.overlayCompactYPm
+        return xPm.coerceIn(0, 1000) to yPm.coerceIn(0, 1000)
+    }
+
+    private fun getScreenSize(): Pair<Int, Int> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windowManager.currentWindowMetrics.bounds
+            bounds.width() to bounds.height()
+        } else {
+            val dm = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(dm)
+            dm.widthPixels to dm.heightPixels
+        }
+    }
+
+    private fun getMeasuredViewSize(view: View, screenW: Int, screenH: Int): Pair<Int, Int> {
+        if (view.measuredWidth <= 0 || view.measuredHeight <= 0 || view.isLayoutRequested) {
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(screenW, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(screenH, View.MeasureSpec.AT_MOST)
+            )
+        }
+        return view.measuredWidth to view.measuredHeight
+    }
+
+    private fun applyPermillePosition(
+        view: View,
+        params: WindowManager.LayoutParams,
+        cfg: GovernorConfig
+    ) {
+        val (xPm, yPm) = currentPosPm(cfg)
+        val (screenW, screenH) = getScreenSize()
+        val (viewW, viewH) = getMeasuredViewSize(view, screenW, screenH)
+        params.x = (xPm / 1000f * max(0, screenW - viewW)).roundToInt()
+        params.y = (yPm / 1000f * max(0, screenH - viewH)).roundToInt()
+        lastAppliedXPm = xPm
+        lastAppliedYPm = yPm
+    }
+
     private fun hide() {
         telemetryJob?.cancel()
         telemetryJob = null
@@ -203,6 +253,8 @@ class OverlayController(
         overlayView = null
         layoutParams = null
         isDragging = false
+        lastAppliedXPm = -1
+        lastAppliedYPm = -1
         lastAppliedDisplay = null
         lastApplyTimeMs = 0L
         if (view != null) {
@@ -717,8 +769,12 @@ class OverlayController(
                         isDragging = true
                     }
                     if (isDragging) {
-                        params.x = (downWinX + dx).roundToInt()
-                        params.y = (downWinY + dy).roundToInt()
+                        val (screenW, screenH) = getScreenSize()
+                        val (viewW, viewH) = getMeasuredViewSize(this, screenW, screenH)
+                        val maxX = max(0, screenW - viewW)
+                        val maxY = max(0, screenH - viewH)
+                        params.x = (downWinX + dx).roundToInt().coerceIn(0, maxX)
+                        params.y = (downWinY + dy).roundToInt().coerceIn(0, maxY)
                         try {
                             windowManager.updateViewLayout(this, params)
                         } catch (_: Throwable) {
@@ -729,9 +785,38 @@ class OverlayController(
                 MotionEvent.ACTION_UP -> {
                     if (isDragging) {
                         isDragging = false
-                        val savedX = params.x
-                        val savedY = params.y
-                        engine.updateConfig { it.copy(overlayX = savedX, overlayY = savedY) }
+                        val (screenW, screenH) = getScreenSize()
+                        val (viewW, viewH) = getMeasuredViewSize(this, screenW, screenH)
+                        val freeW = max(0, screenW - viewW)
+                        val freeH = max(0, screenH - viewH)
+                        var xPm = if (freeW <= 0) 0 else (params.x * 1000f / max(1, freeW)).roundToInt().coerceIn(0, 1000)
+                        var yPm = if (freeH <= 0) 0 else (params.y * 1000f / max(1, freeH)).roundToInt().coerceIn(0, 1000)
+                        xPm = when {
+                            xPm <= 25 -> 0
+                            xPm >= 975 -> 1000
+                            abs(xPm - 500) <= 20 -> 500
+                            else -> xPm
+                        }
+                        yPm = when {
+                            yPm <= 25 -> 0
+                            yPm >= 975 -> 1000
+                            else -> yPm
+                        }
+                        params.x = (xPm / 1000f * freeW).roundToInt()
+                        params.y = (yPm / 1000f * freeH).roundToInt()
+                        lastAppliedXPm = xPm
+                        lastAppliedYPm = yPm
+                        try {
+                            windowManager.updateViewLayout(this, params)
+                        } catch (_: Throwable) {
+                        }
+                        engine.updateConfig {
+                            if (expanded) {
+                                it.copy(overlayExpandedXPm = xPm, overlayExpandedYPm = yPm)
+                            } else {
+                                it.copy(overlayCompactXPm = xPm, overlayCompactYPm = yPm)
+                            }
+                        }
                     } else {
                         engine.updateConfig { it.copy(overlayExpanded = !it.overlayExpanded) }
                     }

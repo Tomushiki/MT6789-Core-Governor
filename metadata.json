@@ -1,6 +1,6 @@
 {
   "name": "CoreGovernor",
-  "description": "Custom root CPU and GPU throttling governor for MediaTek Helio G99 (MT6789) devices with per-mode frequency grading, thermal curves, and power-draw throttling.",
+  "description": "Root CPU and GPU governor for MediaTek devices with per-mode frequency grading, thermal curves, and power-draw throttling.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
