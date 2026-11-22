@@ -94,6 +94,14 @@ fun TuningScreen(
         exemptMusic: Boolean?,
         exemptCharging: Boolean?
     ) -> Unit,
+    onUpdateOverlay: (
+        enabled: Boolean?,
+        clickThrough: Boolean?,
+        gameOnly: Boolean?,
+        opacityPct: Int?,
+        compactScalePct: Int?,
+        expandedScalePct: Int?
+    ) -> Unit,
     onUpdateClusterRange: (GovernorMode, Int, FreqRange) -> Unit,
     onUpdateGpuRange: (GovernorMode, FreqRange) -> Unit,
     onUpdateModeScalingParams: (
@@ -540,6 +548,92 @@ fun TuningScreen(
                             onCheckedChange = { onUpdateScreenOffSaving(null, null, null, it) },
                             enabled = config.screenOffSavingEnabled,
                             testTag = "screen_off_exempt_charging_switch"
+                        )
+                    }
+                }
+
+                item {
+                    EcuCard {
+                        Text(
+                            text = "OVERLAY",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingSwitchRow(
+                            title = "Enable overlay",
+                            explanation = "Displays a floating CPU, GPU, thermal, and power monitor over other apps.",
+                            checked = config.overlayEnabled,
+                            onCheckedChange = { onUpdateOverlay(it, null, null, null, null, null) },
+                            testTag = "overlay_enabled_switch"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSwitchRow(
+                            title = "Click-through",
+                            explanation = "Lets touches pass through the overlay. Use the notification action to unlock.",
+                            checked = config.overlayClickThrough,
+                            onCheckedChange = { onUpdateOverlay(null, it, null, null, null, null) },
+                            enabled = config.overlayEnabled,
+                            testTag = "overlay_click_through_switch"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSwitchRow(
+                            title = "Show only in Game mode",
+                            explanation = "Shows the overlay only when Game mode is active.",
+                            checked = config.overlayGameOnly,
+                            onCheckedChange = { onUpdateOverlay(null, null, it, null, null, null) },
+                            enabled = config.overlayEnabled,
+                            testTag = "overlay_game_only_switch"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSliderRow(
+                            title = "Opacity",
+                            valueText = "${config.overlayOpacityPct}%",
+                            explanation = "Adjusts floating overlay opacity from 30% to 100%.",
+                            value = config.overlayOpacityPct.toFloat(),
+                            valueRange = 30f..100f,
+                            steps = 69,
+                            onValueChange = {
+                                onUpdateOverlay(null, null, null, it.roundToInt().coerceIn(30, 100), null, null)
+                            },
+                            enabled = config.overlayEnabled,
+                            testTag = "overlay_opacity_slider"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSliderRow(
+                            title = "Compact size",
+                            valueText = "${config.overlayCompactScalePct}%",
+                            explanation = "Scales the compact overlay pill from 40% to 400%.",
+                            value = config.overlayCompactScalePct.toFloat(),
+                            valueRange = 40f..400f,
+                            steps = 71,
+                            onValueChange = {
+                                val snapped = ((it / 5f).roundToInt() * 5).coerceIn(40, 400)
+                                onUpdateOverlay(null, null, null, null, snapped, null)
+                            },
+                            enabled = config.overlayEnabled,
+                            testTag = "overlay_compact_scale_slider"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSliderRow(
+                            title = "Expanded size",
+                            valueText = "${config.overlayExpandedScalePct}%",
+                            explanation = "Scales the expanded overlay card from 40% to 400%.",
+                            value = config.overlayExpandedScalePct.toFloat(),
+                            valueRange = 40f..400f,
+                            steps = 71,
+                            onValueChange = {
+                                val snapped = ((it / 5f).roundToInt() * 5).coerceIn(40, 400)
+                                onUpdateOverlay(null, null, null, null, null, snapped)
+                            },
+                            enabled = config.overlayEnabled,
+                            testTag = "overlay_expanded_scale_slider"
                         )
                     }
                 }

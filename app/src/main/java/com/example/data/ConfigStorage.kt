@@ -374,6 +374,15 @@ class ConfigStorage(private val context: Context) {
             put("screenOffDelaySec", c.screenOffDelaySec)
             put("screenOffExemptMusic", c.screenOffExemptMusic)
             put("screenOffExemptCharging", c.screenOffExemptCharging)
+            put("overlayEnabled", c.overlayEnabled)
+            put("overlayClickThrough", c.overlayClickThrough)
+            put("overlayGameOnly", c.overlayGameOnly)
+            put("overlayExpanded", c.overlayExpanded)
+            put("overlayOpacityPct", c.overlayOpacityPct)
+            put("overlayCompactScalePct", c.overlayCompactScalePct)
+            put("overlayExpandedScalePct", c.overlayExpandedScalePct)
+            put("overlayX", c.overlayX)
+            put("overlayY", c.overlayY)
             put("safetyFloorPct", c.safetyFloorPct.toDouble())
             put("selectedTempSensorPath", c.selectedTempSensorPath)
             put("modeOverride", c.modeOverride.name)
@@ -453,6 +462,15 @@ class ConfigStorage(private val context: Context) {
             screenOffDelaySec = obj.optInt("screenOffDelaySec", default.screenOffDelaySec).coerceIn(0, 60),
             screenOffExemptMusic = obj.optBoolean("screenOffExemptMusic", default.screenOffExemptMusic),
             screenOffExemptCharging = obj.optBoolean("screenOffExemptCharging", default.screenOffExemptCharging),
+            overlayEnabled = obj.optBoolean("overlayEnabled", default.overlayEnabled),
+            overlayClickThrough = obj.optBoolean("overlayClickThrough", default.overlayClickThrough),
+            overlayGameOnly = obj.optBoolean("overlayGameOnly", default.overlayGameOnly),
+            overlayExpanded = obj.optBoolean("overlayExpanded", default.overlayExpanded),
+            overlayOpacityPct = obj.optInt("overlayOpacityPct", default.overlayOpacityPct).coerceIn(30, 100),
+            overlayCompactScalePct = obj.optInt("overlayCompactScalePct", default.overlayCompactScalePct).coerceIn(40, 400),
+            overlayExpandedScalePct = obj.optInt("overlayExpandedScalePct", default.overlayExpandedScalePct).coerceIn(40, 400),
+            overlayX = obj.optInt("overlayX", default.overlayX),
+            overlayY = obj.optInt("overlayY", default.overlayY),
             safetyFloorPct = obj.optDouble("safetyFloorPct", default.safetyFloorPct.toDouble()).toFloat().coerceIn(5f, 95f),
             selectedTempSensorPath = obj.optString("selectedTempSensorPath", ""),
             modeOverride = enumOrDefault(obj.optString("modeOverride"), ModeOverride.AUTO),

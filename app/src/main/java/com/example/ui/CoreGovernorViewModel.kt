@@ -21,6 +21,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.CoreGovernorApp
@@ -127,6 +128,55 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                 screenOffDelaySec = (delaySec ?: cfg.screenOffDelaySec).coerceIn(0, 60),
                 screenOffExemptMusic = exemptMusic ?: cfg.screenOffExemptMusic,
                 screenOffExemptCharging = exemptCharging ?: cfg.screenOffExemptCharging
+            )
+        }
+    }
+
+    fun updateOverlay(
+        enabled: Boolean? = null,
+        clickThrough: Boolean? = null,
+        gameOnly: Boolean? = null,
+        opacityPct: Int? = null,
+        compactScalePct: Int? = null,
+        expandedScalePct: Int? = null
+    ) {
+        if (enabled == true) {
+            val ctx = getApplication<Application>()
+            if (!Settings.canDrawOverlays(ctx)) {
+                viewModelScope.launch {
+                    engine.rootShell.exec("appops set ${ctx.packageName} SYSTEM_ALERT_WINDOW allow")
+                    if (Settings.canDrawOverlays(ctx)) {
+                        engine.updateConfig { cfg ->
+                            cfg.copy(
+                                overlayEnabled = true,
+                                overlayClickThrough = clickThrough ?: cfg.overlayClickThrough,
+                                overlayGameOnly = gameOnly ?: cfg.overlayGameOnly,
+                                overlayOpacityPct = (opacityPct ?: cfg.overlayOpacityPct).coerceIn(30, 100),
+                                overlayCompactScalePct = (compactScalePct ?: cfg.overlayCompactScalePct).coerceIn(40, 400),
+                                overlayExpandedScalePct = (expandedScalePct ?: cfg.overlayExpandedScalePct).coerceIn(40, 400)
+                            )
+                        }
+                    } else {
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${ctx.packageName}")
+                        ).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        ctx.startActivity(intent)
+                    }
+                }
+                return
+            }
+        }
+        engine.updateConfig { cfg ->
+            cfg.copy(
+                overlayEnabled = enabled ?: cfg.overlayEnabled,
+                overlayClickThrough = clickThrough ?: cfg.overlayClickThrough,
+                overlayGameOnly = gameOnly ?: cfg.overlayGameOnly,
+                overlayOpacityPct = (opacityPct ?: cfg.overlayOpacityPct).coerceIn(30, 100),
+                overlayCompactScalePct = (compactScalePct ?: cfg.overlayCompactScalePct).coerceIn(40, 400),
+                overlayExpandedScalePct = (expandedScalePct ?: cfg.overlayExpandedScalePct).coerceIn(40, 400)
             )
         }
     }

@@ -272,23 +272,21 @@ class GovernorEngine(context: Context) {
             resetLoopState()
             val rememberedPerfPolicies = storage.loadPerformancePinPolicies()
             for (policy in hw.cpuPolicies) {
-                if (policy.policyId in rememberedPerfPolicies) {
-                    val availGovsRaw = rootShell.readFile("${policy.path}/scaling_available_governors").orEmpty()
-                    val availGovs = availGovsRaw.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-                    val switched = ("performance" in availGovs) &&
-                        safeWriteSysfs("${policy.path}/scaling_governor", "performance")
-                    if (switched) {
-                        policyPinState[policy.policyId] = PolicyPinState(maxOnly = true)
-                        log(
-                            LogLevel.INFO,
-                            "CpuPin",
-                            "policy${policy.policyId} governor -> performance (remembered; orig=${policy.origGovernor})"
-                        )
-                        continue
-                    } else {
-                        storage.setPerformancePinPolicy(policy.policyId, false)
-                        log(LogLevel.WARN, "CpuPin", "performance governor unavailable; back to min/max pinning.")
-                    }
+                val availGovsRaw = rootShell.readFile("${policy.path}/scaling_available_governors").orEmpty()
+                val availGovs = availGovsRaw.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                val switched = ("performance" in availGovs) &&
+                    safeWriteSysfs("${policy.path}/scaling_governor", "performance")
+                if (switched) {
+                    policyPinState[policy.policyId] = PolicyPinState(maxOnly = true, minWorksInPerformance = false)
+                    log(
+                        LogLevel.INFO,
+                        "CpuPin",
+                        "policy${policy.policyId} governor -> performance (default; orig=${policy.origGovernor})"
+                    )
+                    continue
+                } else {
+                    storage.setPerformancePinPolicy(policy.policyId, false)
+                    log(LogLevel.WARN, "CpuPin", "performance governor unavailable; back to min/max pinning.")
                 }
                 val ok = safeWriteSysfs("${policy.path}/scaling_governor", "powersave")
                 if (ok) {

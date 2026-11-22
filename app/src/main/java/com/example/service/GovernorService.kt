@@ -41,20 +41,30 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class GovernorService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var telemetryJob: Job? = null
+    private var overlayNotifyJob: Job? = null
     private lateinit var engine: GovernorEngine
+    private lateinit var overlayController: OverlayController
     private var screenReceiverRegistered = false
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                Intent.ACTION_SCREEN_OFF -> engine.onScreenOff()
-                Intent.ACTION_SCREEN_ON -> engine.onScreenOn()
+                Intent.ACTION_SCREEN_OFF -> {
+                    engine.onScreenOff()
+                    overlayController.setScreenInteractive(false)
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    engine.onScreenOn()
+                    overlayController.setScreenInteractive(true)
+                }
             }
         }
     }
@@ -64,7 +74,11 @@ class GovernorService : Service() {
         engine = (application as CoreGovernorApp).engine
         ensureNotificationChannel()
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        engine.setInitialScreenInteractive(pm.isInteractive)
+        val interactive = pm.isInteractive
+        engine.setInitialScreenInteractive(interactive)
+        overlayController = OverlayController(this, engine, serviceScope)
+        overlayController.setScreenInteractive(interactive)
+        overlayController.start()
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -85,6 +99,12 @@ class GovernorService : Service() {
                 engine.cycleModeOverride()
                 return START_STICKY
             }
+            ACTION_UNLOCK_OVERLAY -> {
+                engine.updateConfig { it.copy(overlayClickThrough = false) }
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                nm.notify(NOTIFICATION_ID, buildNotification(engine.telemetry.value))
+                return START_STICKY
+            }
             else -> {
                 startForegroundCompat(buildNotification(engine.telemetry.value))
                 engine.startGovernor()
@@ -95,6 +115,17 @@ class GovernorService : Service() {
     }
 
     private fun observeTelemetry() {
+        if (overlayNotifyJob?.isActive != true) {
+            overlayNotifyJob = serviceScope.launch {
+                engine.config
+                    .map { it.overlayEnabled to it.overlayClickThrough }
+                    .distinctUntilChanged()
+                    .collectLatest {
+                        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                        nm.notify(NOTIFICATION_ID, buildNotification(engine.telemetry.value))
+                    }
+            }
+        }
         if (telemetryJob?.isActive == true) return
         telemetryJob = serviceScope.launch {
             var lastNotifyMs = 0L
@@ -160,7 +191,7 @@ class GovernorService : Service() {
         val gpuText = if (state.gpu.available) "GPU:${state.gpu.targetFreqKhz / 1000}M" else ""
         val telemetryLine = "${"%.1f".format(state.temperatureC)}°C • ${"%.2f".format(state.watts)}W • $clustersSummary $gpuText"
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(statusTitle)
             .setContentText(telemetryLine.trim())
@@ -170,7 +201,18 @@ class GovernorService : Service() {
             .setContentIntent(openIntent)
             .addAction(0, getString(R.string.action_toggle_mode), modeIntent)
             .addAction(0, getString(R.string.action_stop_governor), stopIntent)
-            .build()
+
+        val cfg = engine.config.value
+        if (cfg.overlayEnabled && cfg.overlayClickThrough) {
+            val unlockIntent = PendingIntent.getService(
+                this,
+                3,
+                Intent(this, GovernorService::class.java).apply { action = ACTION_UNLOCK_OVERLAY },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            builder.addAction(0, "Unlock overlay", unlockIntent)
+        }
+        return builder.build()
     }
 
     private fun ensureNotificationChannel() {
@@ -196,7 +238,9 @@ class GovernorService : Service() {
             }
             screenReceiverRegistered = false
         }
+        overlayController.stop()
         engine.stopAndRestore()
+        overlayNotifyJob?.cancel()
         telemetryJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
@@ -210,6 +254,7 @@ class GovernorService : Service() {
         const val ACTION_START = "com.example.action.START_GOVERNOR"
         const val ACTION_STOP = "com.example.action.STOP_GOVERNOR"
         const val ACTION_CYCLE_MODE = "com.example.action.CYCLE_MODE"
+        const val ACTION_UNLOCK_OVERLAY = "com.example.action.UNLOCK_OVERLAY"
 
         fun start(context: Context) {
             val intent = Intent(context, GovernorService::class.java).apply { action = ACTION_START }
