@@ -87,6 +87,7 @@ fun TuningScreen(
     onUpdatePollInterval: (Long) -> Unit,
     onUpdateSafetyFloor: (Float) -> Unit,
     onUpdateStartOnBoot: (Boolean) -> Unit,
+    onUpdateCpuLoadUsesBusiestCore: (Boolean) -> Unit,
     onUpdateClusterRange: (GovernorMode, Int, FreqRange) -> Unit,
     onUpdateGpuRange: (GovernorMode, FreqRange) -> Unit,
     onUpdateModeScalingParams: (
@@ -462,6 +463,15 @@ fun TuningScreen(
                                 testTag = "launch_spike_slider"
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        SettingSwitchRow(
+                            title = "CPU Load = Busiest Core",
+                            explanation = "Grades each cluster by its busiest core instead of the cluster average, so one pegged core can reach the top clock. Turn off for the old averaged behavior.",
+                            checked = config.cpuLoadUsesBusiestCore,
+                            onCheckedChange = onUpdateCpuLoadUsesBusiestCore,
+                            testTag = "cpu_load_busiest_switch"
+                        )
 
                         Spacer(modifier = Modifier.height(12.dp))
                         SettingSwitchRow(

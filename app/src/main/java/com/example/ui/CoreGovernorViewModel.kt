@@ -111,6 +111,10 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         engine.updateConfig { it.copy(startOnBoot = enabled) }
     }
 
+    fun updateCpuLoadUsesBusiestCore(enabled: Boolean) {
+        engine.updateConfig { it.copy(cpuLoadUsesBusiestCore = enabled) }
+    }
+
     fun selectTempSensor(path: String) {
         engine.updateConfig { it.copy(selectedTempSensorPath = path) }
     }

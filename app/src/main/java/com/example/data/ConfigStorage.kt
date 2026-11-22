@@ -342,6 +342,7 @@ class ConfigStorage(private val context: Context) {
         return JSONObject().apply {
             put("pollIntervalMs", c.pollIntervalMs)
             put("startOnBoot", c.startOnBoot)
+            put("cpuLoadUsesBusiestCore", c.cpuLoadUsesBusiestCore)
             put("safetyFloorPct", c.safetyFloorPct.toDouble())
             put("selectedTempSensorPath", c.selectedTempSensorPath)
             put("modeOverride", c.modeOverride.name)
@@ -416,6 +417,7 @@ class ConfigStorage(private val context: Context) {
         return GovernorConfig(
             pollIntervalMs = obj.optLong("pollIntervalMs", default.pollIntervalMs).coerceIn(50L, 1000L),
             startOnBoot = obj.optBoolean("startOnBoot", default.startOnBoot),
+            cpuLoadUsesBusiestCore = obj.optBoolean("cpuLoadUsesBusiestCore", default.cpuLoadUsesBusiestCore),
             safetyFloorPct = obj.optDouble("safetyFloorPct", default.safetyFloorPct.toDouble()).toFloat().coerceIn(5f, 95f),
             selectedTempSensorPath = obj.optString("selectedTempSensorPath", ""),
             modeOverride = enumOrDefault(obj.optString("modeOverride"), ModeOverride.AUTO),

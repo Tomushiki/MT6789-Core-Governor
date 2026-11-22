@@ -153,6 +153,7 @@ data class PowerThrottleConfig(
 data class GovernorConfig(
     val pollIntervalMs: Long = 150L,
     val startOnBoot: Boolean = false,
+    val cpuLoadUsesBusiestCore: Boolean = true,
     val safetyFloorPct: Float = 20f,
     val selectedTempSensorPath: String = "",
     val modeOverride: ModeOverride = ModeOverride.AUTO,

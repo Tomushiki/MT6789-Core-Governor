@@ -215,6 +215,7 @@ fun CoreGovernorRootScreen(
                 onUpdatePollInterval = vm::updatePollInterval,
                 onUpdateSafetyFloor = vm::updateSafetyFloor,
                 onUpdateStartOnBoot = vm::updateStartOnBoot,
+                onUpdateCpuLoadUsesBusiestCore = vm::updateCpuLoadUsesBusiestCore,
                 onUpdateClusterRange = vm::updateClusterRange,
                 onUpdateGpuRange = vm::updateGpuRange,
                 onUpdateModeScalingParams = vm::updateModeScalingParams,

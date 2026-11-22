@@ -45,6 +45,8 @@ class SysfsParsersTest {
         val curr = SysfsParsers.parseProcStat(currRaw)
         val load = SysfsParsers.computeClusterLoadPct(listOf(0, 1), prev, curr)
         assertEquals(37.5f, load, 0.2f)
+        val busiestLoad = SysfsParsers.computeClusterLoadPct(listOf(0, 1), prev, curr, useBusiestCore = true)
+        assertEquals(50f, busiestLoad, 0.2f)
     }
 
     @Test

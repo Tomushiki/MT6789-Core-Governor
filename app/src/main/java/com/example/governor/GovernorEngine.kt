@@ -362,7 +362,7 @@ class GovernorEngine(context: Context) {
         val clusterRawLoads = mutableMapOf<Int, Float>()
         var maxLoadSpike = 0f
         for (p in hw.cpuPolicies) {
-            val load = SysfsParsers.computeClusterLoadPct(p.relatedCpus, prevCpuTicks, currTicks)
+            val load = SysfsParsers.computeClusterLoadPct(p.relatedCpus, prevCpuTicks, currTicks, cfg.cpuLoadUsesBusiestCore)
             clusterRawLoads[p.policyId] = load
             val prevLoad = prevRawClusterLoad[p.policyId] ?: load
             maxLoadSpike = maxOf(maxLoadSpike, load - prevLoad)

@@ -88,10 +88,12 @@ object SysfsParsers {
     fun computeClusterLoadPct(
         relatedCpus: List<Int>,
         prev: Map<Int, CpuTickSnapshot>,
-        curr: Map<Int, CpuTickSnapshot>
+        curr: Map<Int, CpuTickSnapshot>,
+        useBusiestCore: Boolean = false
     ): Float {
         if (relatedCpus.isEmpty() || prev.isEmpty()) return 0f
         var sumPct = 0f
+        var maxPct = 0f
         var count = 0
         for (cpuId in relatedCpus) {
             val p = prev[cpuId] ?: continue
@@ -100,12 +102,14 @@ object SysfsParsers {
             val idleDelta = c.idleTicks - p.idleTicks
             if (totalDelta > 0L) {
                 val busyDelta = (totalDelta - idleDelta).coerceAtLeast(0L)
-                val pct = (busyDelta.toFloat() / totalDelta.toFloat()) * 100f
-                sumPct += pct.coerceIn(0f, 100f)
+                val pct = ((busyDelta.toFloat() / totalDelta.toFloat()) * 100f).coerceIn(0f, 100f)
+                sumPct += pct
+                if (pct > maxPct) maxPct = pct
                 count++
             }
         }
-        return if (count > 0) (sumPct / count).coerceIn(0f, 100f) else 0f
+        if (count == 0) return 0f
+        return if (useBusiestCore) maxPct else (sumPct / count).coerceIn(0f, 100f)
     }
 
     /**
