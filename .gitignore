@@ -1,0 +1,43 @@
+# Built application files
+*.apk
+*.ap_
+*.aab
+**/build/
+/build/
+/app/build/
+
+# Gradle & Kotlin caches
+.gradle/
+.kotlin/
+**/gradle-app.setting
+!gradle-wrapper.jar
+
+# Local configuration & secrets
+local.properties
+.env
+*.local
+
+# Keystores, certificates, and signing secrets
+*.jks
+*.keystore
+*.keystore.*
+debug.keystore
+debug.keystore.base64
+*.pem
+*.p12
+*.cer
+*.crt
+*.key
+
+# Android Studio / IntelliJ IDEA
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+*~
+*.swp
