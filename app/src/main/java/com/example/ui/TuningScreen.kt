@@ -88,6 +88,12 @@ fun TuningScreen(
     onUpdateSafetyFloor: (Float) -> Unit,
     onUpdateStartOnBoot: (Boolean) -> Unit,
     onUpdateCpuLoadUsesBusiestCore: (Boolean) -> Unit,
+    onUpdateScreenOffSaving: (
+        enabled: Boolean?,
+        delaySec: Int?,
+        exemptMusic: Boolean?,
+        exemptCharging: Boolean?
+    ) -> Unit,
     onUpdateClusterRange: (GovernorMode, Int, FreqRange) -> Unit,
     onUpdateGpuRange: (GovernorMode, FreqRange) -> Unit,
     onUpdateModeScalingParams: (
@@ -480,6 +486,60 @@ fun TuningScreen(
                             checked = config.startOnBoot,
                             onCheckedChange = onUpdateStartOnBoot,
                             testTag = "boot_start_switch"
+                        )
+                    }
+                }
+
+                item {
+                    EcuCard {
+                        Text(
+                            text = "SCREEN-OFF POWER SAVING",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingSwitchRow(
+                            title = "Screen-off power saving",
+                            explanation = "Pins all CPU and GPU clocks to minimum while the screen is off. Stops all frequency changes during sleep.",
+                            checked = config.screenOffSavingEnabled,
+                            onCheckedChange = { onUpdateScreenOffSaving(it, null, null, null) },
+                            testTag = "screen_off_saving_switch"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSliderRow(
+                            title = "Delay before activating",
+                            valueText = "${config.screenOffDelaySec} s",
+                            explanation = "Wait time after the screen turns off before pinning clocks to minimum.",
+                            value = config.screenOffDelaySec.toFloat(),
+                            valueRange = 0f..60f,
+                            steps = 59,
+                            onValueChange = {
+                                onUpdateScreenOffSaving(null, it.roundToInt().coerceIn(0, 60), null, null)
+                            },
+                            enabled = config.screenOffSavingEnabled,
+                            testTag = "screen_off_delay_slider"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSwitchRow(
+                            title = "Keep normal while music is playing",
+                            explanation = "Skips sleep saving while active audio playback is detected.",
+                            checked = config.screenOffExemptMusic,
+                            onCheckedChange = { onUpdateScreenOffSaving(null, null, it, null) },
+                            enabled = config.screenOffSavingEnabled,
+                            testTag = "screen_off_exempt_music_switch"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSwitchRow(
+                            title = "Keep normal while charging",
+                            explanation = "Skips sleep saving while the device is plugged into a charger.",
+                            checked = config.screenOffExemptCharging,
+                            onCheckedChange = { onUpdateScreenOffSaving(null, null, null, it) },
+                            enabled = config.screenOffSavingEnabled,
+                            testTag = "screen_off_exempt_charging_switch"
                         )
                     }
                 }

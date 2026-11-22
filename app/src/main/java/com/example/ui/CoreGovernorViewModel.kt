@@ -115,6 +115,22 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         engine.updateConfig { it.copy(cpuLoadUsesBusiestCore = enabled) }
     }
 
+    fun updateScreenOffSaving(
+        enabled: Boolean? = null,
+        delaySec: Int? = null,
+        exemptMusic: Boolean? = null,
+        exemptCharging: Boolean? = null
+    ) {
+        engine.updateConfig { cfg ->
+            cfg.copy(
+                screenOffSavingEnabled = enabled ?: cfg.screenOffSavingEnabled,
+                screenOffDelaySec = (delaySec ?: cfg.screenOffDelaySec).coerceIn(0, 60),
+                screenOffExemptMusic = exemptMusic ?: cfg.screenOffExemptMusic,
+                screenOffExemptCharging = exemptCharging ?: cfg.screenOffExemptCharging
+            )
+        }
+    }
+
     fun selectTempSensor(path: String) {
         engine.updateConfig { it.copy(selectedTempSensorPath = path) }
     }

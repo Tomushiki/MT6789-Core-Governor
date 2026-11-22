@@ -16,6 +16,11 @@
 package com.example.governor
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
+import android.os.BatteryManager
+import android.os.PowerManager
 import com.example.data.ConfigStorage
 import com.example.data.OriginalCpuBackup
 import com.example.data.OriginalHardwareBackup
@@ -31,9 +36,11 @@ import com.example.model.PresetItem
 import com.example.model.TelemetrySample
 import com.example.model.TelemetryState
 import com.example.root.RootShell
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,6 +49,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -82,9 +92,38 @@ class GovernorEngine(context: Context) {
     private val smoothedClusterLoad = mutableMapOf<Int, Float>()
     private var smoothedGpuLoad = 0f
 
+    private data class PolicyPinState(
+        var maxOnly: Boolean = false,
+        var minRevertCount: Int = 0,
+        var perfUnavailable: Boolean = false,
+        var minWorksInPerformance: Boolean? = null,
+        var pendingPerfMinCheckTargetKhz: Long? = null,
+        var pendingPerfMinCheckAtMs: Long = 0L,
+        var perfStickFailCount: Int = 0
+    )
+
+    private enum class SleepWakeReason {
+        SCREEN_ON,
+        EXEMPT,
+        DISABLED
+    }
+
     private val lastWrittenCpuFreq = mutableMapOf<Int, Long>()
+    private val lastReassertMs = mutableMapOf<Int, Long>()
+    private val lastDriftLogMs = mutableMapOf<Int, Long>()
+    private val policyPinState = mutableMapOf<Int, PolicyPinState>()
     private var lastWrittenGpuOppIndex: Int? = null
     private val failedWriteCooldownUntil = mutableMapOf<String, Long>()
+
+    // Screen-off power saving state
+    @Volatile
+    private var isScreenInteractive: Boolean =
+        (appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: true
+    @Volatile
+    private var isSleepSaving: Boolean = false
+    private val sleepMutex = Mutex()
+    private var sleepWatcherJob: Job? = null
+    private var wakeSignal = CompletableDeferred<Unit>()
 
     // GED GPU load candidate tracking: prefer first candidate that demonstrates changing values
     private val gedLastValByPath = mutableMapOf<String, Float>()
@@ -230,33 +269,200 @@ class GovernorEngine(context: Context) {
             storage.saveOriginalHardwareBackup(backup)
             installCrashRestoreHook()
 
+            resetLoopState()
+            val rememberedPerfPolicies = storage.loadPerformancePinPolicies()
             for (policy in hw.cpuPolicies) {
+                if (policy.policyId in rememberedPerfPolicies) {
+                    val availGovsRaw = rootShell.readFile("${policy.path}/scaling_available_governors").orEmpty()
+                    val availGovs = availGovsRaw.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                    val switched = ("performance" in availGovs) &&
+                        safeWriteSysfs("${policy.path}/scaling_governor", "performance")
+                    if (switched) {
+                        policyPinState[policy.policyId] = PolicyPinState(maxOnly = true)
+                        log(
+                            LogLevel.INFO,
+                            "CpuPin",
+                            "policy${policy.policyId} governor -> performance (remembered; orig=${policy.origGovernor})"
+                        )
+                        continue
+                    } else {
+                        storage.setPerformancePinPolicy(policy.policyId, false)
+                        log(LogLevel.WARN, "CpuPin", "performance governor unavailable; back to min/max pinning.")
+                    }
+                }
                 val ok = safeWriteSysfs("${policy.path}/scaling_governor", "powersave")
                 if (ok) {
                     log(LogLevel.INFO, "Governor", "policy${policy.policyId} governor -> powersave (orig=${policy.origGovernor})")
                 }
             }
 
-            resetLoopState()
             _telemetry.update { it.copy(isRunning = true, rootGranted = true) }
             log(LogLevel.INFO, "Engine", "Control loop started (poll=${_config.value.pollIntervalMs}ms).")
+
+            if (!isScreenInteractive && _config.value.screenOffSavingEnabled) {
+                scheduleScreenOffWatcher()
+            }
 
             try {
                 while (isActive) {
                     val cycleStart = System.currentTimeMillis()
-                    runControlTick(_hardwareSpec.value, cycleStart)
+                    val waitSignal: CompletableDeferred<Unit>? = sleepMutex.withLock {
+                        if (isSleepSaving) {
+                            CompletableDeferred<Unit>().also { wakeSignal = it }
+                        } else {
+                            runControlTick(_hardwareSpec.value, cycleStart)
+                            null
+                        }
+                    }
+                    if (waitSignal != null) {
+                        waitSignal.await()
+                        continue
+                    }
                     val elapsed = System.currentTimeMillis() - cycleStart
                     val targetInterval = _config.value.pollIntervalMs.coerceIn(50L, 1000L)
                     val sleepMs = (targetInterval - elapsed).coerceAtLeast(15L)
                     delay(sleepMs)
                 }
             } finally {
+                sleepWatcherJob?.cancel()
+                sleepWatcherJob = null
+                isSleepSaving = false
                 restoreOriginalHardwareInternal()
             }
         }
     }
 
+    fun setInitialScreenInteractive(interactive: Boolean) {
+        isScreenInteractive = interactive
+    }
+
+    fun onScreenOff() {
+        isScreenInteractive = false
+        if (controlJob?.isActive == true && _config.value.screenOffSavingEnabled) {
+            scheduleScreenOffWatcher()
+        }
+    }
+
+    fun onScreenOn() {
+        isScreenInteractive = true
+        sleepWatcherJob?.cancel()
+        sleepWatcherJob = null
+        if (isSleepSaving) {
+            engineScope.launch {
+                exitSleepSaving(SleepWakeReason.SCREEN_ON)
+            }
+        }
+    }
+
+    private fun scheduleScreenOffWatcher() {
+        sleepWatcherJob?.cancel()
+        if (controlJob?.isActive != true) return
+        val cfg = _config.value
+        if (!cfg.screenOffSavingEnabled || isScreenInteractive) return
+
+        sleepWatcherJob = engineScope.launch {
+            val delayMs = cfg.screenOffDelaySec.coerceIn(0, 60) * 1000L
+            if (delayMs > 0L) {
+                delay(delayMs)
+            }
+            while (isActive && !isScreenInteractive && _config.value.screenOffSavingEnabled && controlJob?.isActive == true) {
+                val currentCfg = _config.value
+                val exempt = isSleepExempt(currentCfg)
+                if (exempt) {
+                    if (isSleepSaving) {
+                        exitSleepSaving(SleepWakeReason.EXEMPT)
+                    }
+                } else {
+                    if (!isSleepSaving) {
+                        enterSleepSaving()
+                    }
+                }
+                delay(10_000L)
+            }
+        }
+    }
+
+    private fun isSleepExempt(cfg: GovernorConfig): Boolean {
+        if (cfg.screenOffExemptMusic) {
+            val am = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (am?.isMusicActive == true) return true
+        }
+        if (cfg.screenOffExemptCharging && isDeviceCharging()) {
+            return true
+        }
+        return false
+    }
+
+    private fun isDeviceCharging(): Boolean {
+        val bm = appContext.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        if (bm != null && bm.isCharging) return true
+        val battIntent = appContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val status = battIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val plugged = battIntent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+        return status == BatteryManager.BATTERY_STATUS_CHARGING ||
+            status == BatteryManager.BATTERY_STATUS_FULL ||
+            plugged != 0
+    }
+
+    private suspend fun enterSleepSaving() {
+        sleepMutex.withLock {
+            if (controlJob?.isActive != true) return@withLock
+            if (isSleepSaving || isScreenInteractive) return@withLock
+            val cfg = _config.value
+            if (!cfg.screenOffSavingEnabled || isSleepExempt(cfg)) return@withLock
+
+            isSleepSaving = true
+            val hw = _hardwareSpec.value
+            for (p in hw.cpuPolicies) {
+                val lowestKhz = p.availableFreqsKhz.firstOrNull() ?: p.origMinFreqKhz
+                if (lowestKhz > 0L) {
+                    val ok = writeCpuPinnedFreq(p.path, lowestKhz, raising = false)
+                    if (ok) {
+                        lastWrittenCpuFreq[p.policyId] = lowestKhz
+                    }
+                }
+            }
+            val gpuOpps = hw.gpu.oppTable
+            val fixPath = hw.gpu.gpufreqFixOppPath
+            if (gpuOpps.isNotEmpty() && fixPath != null) {
+                val lowestOppIdx = gpuOpps.first().oppIndex
+                if (safeWriteSysfs(fixPath, lowestOppIdx.toString())) {
+                    lastWrittenGpuOppIndex = lowestOppIdx
+                }
+            }
+            log(LogLevel.INFO, "ScreenOff", "Sleep saving active: clocks pinned to minimum.")
+        }
+    }
+
+    private suspend fun exitSleepSaving(reason: SleepWakeReason) {
+        sleepMutex.withLock {
+            if (!isSleepSaving) return@withLock
+            isSleepSaving = false
+            prevCpuTicks = emptyMap()
+            when (reason) {
+                SleepWakeReason.SCREEN_ON -> {
+                    val cfg = _config.value
+                    if (cfg.normalMode.launchBurstEnabled && cfg.normalMode.launchBurstDurationMs > 0L) {
+                        burstEndTimeMs = System.currentTimeMillis() + cfg.normalMode.launchBurstDurationMs
+                    }
+                    log(LogLevel.INFO, "ScreenOff", "Screen on: control resumed.")
+                }
+                SleepWakeReason.EXEMPT -> {
+                    log(LogLevel.INFO, "ScreenOff", "Exemption active: control resumed.")
+                }
+                SleepWakeReason.DISABLED -> {
+                    log(LogLevel.INFO, "ScreenOff", "Screen-off saving disabled: control resumed.")
+                }
+            }
+            wakeSignal.complete(Unit)
+        }
+    }
+
     fun stopAndRestore() {
+        sleepWatcherJob?.cancel()
+        sleepWatcherJob = null
+        isSleepSaving = false
+        wakeSignal.complete(Unit)
         val job = controlJob
         controlJob = null
         if (job != null && job.isActive) {
@@ -269,38 +475,44 @@ class GovernorEngine(context: Context) {
         }
     }
 
-    private suspend fun restoreOriginalHardwareInternal() {
-        val backup = storage.loadOriginalHardwareBackup()
-        if (backup != null) {
-            restoreFromBackup(backup)
-        } else {
-            val hw = _hardwareSpec.value
-            for (p in hw.cpuPolicies) {
-                safeWriteSysfs("${p.path}/scaling_governor", p.origGovernor)
-                safeWriteSysfs("${p.path}/scaling_min_freq", p.origMinFreqKhz.toString())
-                safeWriteSysfs("${p.path}/scaling_max_freq", p.origMaxFreqKhz.toString())
+    private suspend fun restoreOriginalHardwareInternal() = withContext(NonCancellable) {
+        sleepMutex.withLock {
+            failedWriteCooldownUntil.clear()
+            val backup = storage.loadOriginalHardwareBackup()
+            if (backup != null) {
+                restoreFromBackup(backup)
+            } else {
+                val hw = _hardwareSpec.value
+                for (p in hw.cpuPolicies) {
+                    safeWriteSysfs("${p.path}/scaling_governor", p.origGovernor)
+                    safeWriteSysfs("${p.path}/scaling_min_freq", p.origMinFreqKhz.toString())
+                    safeWriteSysfs("${p.path}/scaling_max_freq", p.origMaxFreqKhz.toString())
+                }
+                hw.gpu.gpufreqFixOppPath?.let { path ->
+                    val ok = safeWriteSysfs(path, "-1")
+                    log(
+                        if (ok) LogLevel.INFO else LogLevel.ERROR,
+                        "GpuOpp",
+                        "Restore GPU control ($path <- -1): ${if (ok) "OK" else "FAILED"}"
+                    )
+                }
             }
-            hw.gpu.gpufreqFixOppPath?.let { path ->
-                val ok = safeWriteSysfs(path, "-1")
-                log(
-                    if (ok) LogLevel.INFO else LogLevel.ERROR,
-                    "GpuOpp",
-                    "Restore GPU control ($path <- -1): ${if (ok) "OK" else "FAILED"}"
+            lastWrittenCpuFreq.clear()
+            lastReassertMs.clear()
+            lastDriftLogMs.clear()
+            policyPinState.clear()
+            lastWrittenGpuOppIndex = null
+            _telemetry.update {
+                it.copy(
+                    isRunning = false,
+                    burstActive = false,
+                    burstRemainingMs = 0L,
+                    tempThrottleActive = false,
+                    powerThrottleActive = false
                 )
             }
+            log(LogLevel.INFO, "Restore", "Original CPU governors and GPU unpinned (-1) restored.")
         }
-        lastWrittenCpuFreq.clear()
-        lastWrittenGpuOppIndex = null
-        _telemetry.update {
-            it.copy(
-                isRunning = false,
-                burstActive = false,
-                burstRemainingMs = 0L,
-                tempThrottleActive = false,
-                powerThrottleActive = false
-            )
-        }
-        log(LogLevel.INFO, "Restore", "Original CPU governors and GPU unpinned (-1) restored.")
     }
 
     private suspend fun restoreFromBackup(backup: OriginalHardwareBackup) {
@@ -327,6 +539,8 @@ class GovernorEngine(context: Context) {
         for (p in hw.cpuPolicies) {
             readPaths.add("${p.path}/scaling_cur_freq")
             readPaths.add("${p.path}/scaling_governor")
+            readPaths.add("${p.path}/scaling_min_freq")
+            readPaths.add("${p.path}/scaling_max_freq")
         }
         hw.gpu.gpufreqStatusPath?.let { readPaths.add(it) }
 
@@ -486,15 +700,154 @@ class GovernorEngine(context: Context) {
             )
 
             val liveGov = batch["${p.path}/scaling_governor"]?.trim().orEmpty().ifBlank { "powersave" }
-            if (liveGov != "powersave") {
-                safeWriteSysfs("${p.path}/scaling_governor", "powersave")
+            var effectiveGov = liveGov
+            val prevWritten = lastWrittenCpuFreq[p.policyId]
+            val liveMin = batch["${p.path}/scaling_min_freq"]?.trim()?.toLongOrNull()
+            val liveMax = batch["${p.path}/scaling_max_freq"]?.trim()?.toLongOrNull()
+            val pinState = policyPinState.getOrPut(p.policyId) { PolicyPinState() }
+            var justSwitchedToPerf = false
+
+            if (pinState.maxOnly && pinState.minWorksInPerformance == null) {
+                val checkTarget = pinState.pendingPerfMinCheckTargetKhz
+                if (checkTarget != null && nowMs - pinState.pendingPerfMinCheckAtMs >= 140L) {
+                    pinState.pendingPerfMinCheckTargetKhz = null
+                    if (liveMin == checkTarget) {
+                        pinState.minWorksInPerformance = true
+                        log(
+                            LogLevel.INFO,
+                            "CpuPin",
+                            "policy${p.policyId}: min sticks under performance governor; pinning min=max."
+                        )
+                    } else {
+                        pinState.minWorksInPerformance = false
+                        log(
+                            LogLevel.WARN,
+                            "CpuPin",
+                            "policy${p.policyId}: min still reverted under performance; pinning max only."
+                        )
+                    }
+                }
             }
 
-            val prevWritten = lastWrittenCpuFreq[p.policyId]
-            if (targetFreq > 0L && targetFreq != prevWritten) {
-                val ok = writeCpuPinnedFreq(p.path, targetFreq, prevWritten)
+            if (!pinState.maxOnly && !pinState.perfUnavailable && prevWritten != null) {
+                if (liveMax == prevWritten && liveMin != null && liveMin != prevWritten) {
+                    pinState.minRevertCount += 1
+                    if (pinState.minRevertCount >= 3) {
+                        val availGovsRaw = rootShell.readFile("${p.path}/scaling_available_governors").orEmpty()
+                        val availGovs = availGovsRaw.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                        val perfAllowed = "performance" in availGovs
+                        val switched = perfAllowed && safeWriteSysfs("${p.path}/scaling_governor", "performance")
+                        if (switched) {
+                            pinState.maxOnly = true
+                            pinState.minRevertCount = 0
+                            pinState.perfStickFailCount = 0
+                            effectiveGov = "performance"
+                            justSwitchedToPerf = true
+                            storage.setPerformancePinPolicy(p.policyId, true)
+                            log(
+                                LogLevel.INFO,
+                                "CpuPin",
+                                "policy${p.policyId}: kernel ignores scaling_min_freq; switching to max-only pinning with performance governor."
+                            )
+                        } else {
+                            pinState.maxOnly = false
+                            pinState.minRevertCount = 0
+                            pinState.perfUnavailable = true
+                            storage.setPerformancePinPolicy(p.policyId, false)
+                            if (liveGov != "powersave") {
+                                failedWriteCooldownUntil.remove("${p.path}/scaling_governor")
+                                if (safeWriteSysfs("${p.path}/scaling_governor", "powersave")) {
+                                    effectiveGov = "powersave"
+                                }
+                            }
+                            log(
+                                LogLevel.WARN,
+                                "CpuPin",
+                                "performance governor unavailable; back to min/max pinning."
+                            )
+                        }
+                    }
+                } else {
+                    pinState.minRevertCount = 0
+                }
+            }
+
+            val desiredGov = if (pinState.maxOnly) "performance" else "powersave"
+            if (effectiveGov != desiredGov) {
+                val govPath = "${p.path}/scaling_governor"
+                val canTryGov = shouldAttemptWrite(govPath, nowMs)
+                val govOk = safeWriteSysfs(govPath, desiredGov)
+                if (govOk) {
+                    effectiveGov = desiredGov
+                } else if (canTryGov && pinState.maxOnly) {
+                    pinState.maxOnly = false
+                    pinState.minRevertCount = 0
+                    pinState.perfUnavailable = true
+                    storage.setPerformancePinPolicy(p.policyId, false)
+                    failedWriteCooldownUntil.remove(govPath)
+                    if (safeWriteSysfs(govPath, "powersave")) {
+                        effectiveGov = "powersave"
+                    }
+                    log(
+                        LogLevel.WARN,
+                        "CpuPin",
+                        "performance governor unavailable; back to min/max pinning."
+                    )
+                }
+            }
+
+            val writeMaxOnly = pinState.maxOnly && pinState.minWorksInPerformance == false
+            val drifted = prevWritten != null && prevWritten == targetFreq &&
+                if (writeMaxOnly) {
+                    liveMax != null && liveMax != targetFreq
+                } else {
+                    (liveMin != null && liveMin != targetFreq) || (liveMax != null && liveMax != targetFreq)
+                }
+            val reassertDue = drifted && nowMs - (lastReassertMs[p.policyId] ?: 0L) >= 400L
+            if (pinState.maxOnly && pinState.minWorksInPerformance != null && prevWritten != null && prevWritten == targetFreq) {
+                if (reassertDue) {
+                    pinState.perfStickFailCount += 1
+                    if (pinState.perfStickFailCount >= 3) {
+                        storage.setPerformancePinPolicy(p.policyId, false)
+                        pinState.maxOnly = false
+                        pinState.minWorksInPerformance = null
+                        pinState.minRevertCount = 0
+                        pinState.perfStickFailCount = 0
+                        pinState.pendingPerfMinCheckTargetKhz = null
+                        failedWriteCooldownUntil.remove("${p.path}/scaling_governor")
+                        if (safeWriteSysfs("${p.path}/scaling_governor", "powersave")) {
+                            effectiveGov = "powersave"
+                        }
+                        log(
+                            LogLevel.WARN,
+                            "CpuPin",
+                            "policy${p.policyId}: pinned min=max stopped sticking; cleared saved performance flag and re-detecting."
+                        )
+                    }
+                } else if (!drifted) {
+                    pinState.perfStickFailCount = 0
+                }
+            }
+            if (targetFreq > 0L && (targetFreq != prevWritten || reassertDue || justSwitchedToPerf)) {
+                if (reassertDue) {
+                    lastReassertMs[p.policyId] = nowMs
+                    if (nowMs - (lastDriftLogMs[p.policyId] ?: 0L) >= 5_000L) {
+                        lastDriftLogMs[p.policyId] = nowMs
+                        log(LogLevel.WARN, "CpuDrift", "policy${p.policyId}: wanted ${targetFreq / 1000} MHz but kernel has min=${liveMin?.div(1000)} max=${liveMax?.div(1000)} MHz; re-asserting.")
+                    }
+                }
+                val ok = if (pinState.maxOnly && pinState.minWorksInPerformance == false) {
+                    safeWriteSysfs("${p.path}/scaling_max_freq", targetFreq.toString())
+                } else {
+                    val raising = if (reassertDue) (liveMax == null || targetFreq >= liveMax) else (prevWritten == null || targetFreq >= prevWritten)
+                    writeCpuPinnedFreq(p.path, targetFreq, raising)
+                }
                 if (ok) {
                     lastWrittenCpuFreq[p.policyId] = targetFreq
+                    if (pinState.maxOnly && pinState.minWorksInPerformance == null) {
+                        pinState.pendingPerfMinCheckTargetKhz = targetFreq
+                        pinState.pendingPerfMinCheckAtMs = nowMs
+                    }
                 }
             }
 
@@ -508,7 +861,7 @@ class GovernorEngine(context: Context) {
                     smoothedLoadPct = smoothed,
                     targetFreqKhz = targetFreq,
                     actualFreqKhz = actualFreq,
-                    governor = liveGov,
+                    governor = effectiveGov,
                     allowedMinKhz = allowedMin,
                     allowedMaxKhz = allowedMax,
                     cappedMaxKhz = cappedMax,
@@ -677,9 +1030,9 @@ class GovernorEngine(context: Context) {
         return (statusUtilFallback ?: 0f) to (if (statusUtilFallback != null) "gpufreq_status" else "none")
     }
 
-    private suspend fun writeCpuPinnedFreq(policyPath: String, targetKhz: Long, prevWrittenKhz: Long?): Boolean {
+    private suspend fun writeCpuPinnedFreq(policyPath: String, targetKhz: Long, raising: Boolean): Boolean {
         val freqStr = targetKhz.toString()
-        return if (prevWrittenKhz == null || targetKhz >= prevWrittenKhz) {
+        return if (raising) {
             val okMax = safeWriteSysfs("$policyPath/scaling_max_freq", freqStr)
             val okMin = safeWriteSysfs("$policyPath/scaling_min_freq", freqStr)
             okMax && okMin
@@ -701,7 +1054,7 @@ class GovernorEngine(context: Context) {
 
         val res = rootShell.writeSysfs(path, value)
         if (!res.isSuccess) {
-            failedWriteCooldownUntil[path] = now + 6_000L
+            failedWriteCooldownUntil[path] = now + if (path.contains("/cpufreq/")) 750L else 6_000L
             log(LogLevel.ERROR, "SysfsWrite", "Write failed [$path <- $value]: ${res.error ?: res.stdout}")
             return false
         }
@@ -709,10 +1062,39 @@ class GovernorEngine(context: Context) {
     }
 
     fun updateConfig(transform: (GovernorConfig) -> GovernorConfig) {
-        val next = transform(_config.value)
+        val prev = _config.value
+        val next = transform(prev)
         _config.value = next
         storage.saveConfig(next)
         _telemetry.update { it.copy(modeOverride = next.modeOverride) }
+
+        if (controlJob?.isActive == true) {
+            if (!next.screenOffSavingEnabled) {
+                sleepWatcherJob?.cancel()
+                sleepWatcherJob = null
+                if (isSleepSaving) {
+                    engineScope.launch {
+                        exitSleepSaving(SleepWakeReason.DISABLED)
+                    }
+                }
+            } else if (!isScreenInteractive) {
+                val screenCfgChanged =
+                    prev.screenOffSavingEnabled != next.screenOffSavingEnabled ||
+                        prev.screenOffDelaySec != next.screenOffDelaySec ||
+                        prev.screenOffExemptMusic != next.screenOffExemptMusic ||
+                        prev.screenOffExemptCharging != next.screenOffExemptCharging
+                if (screenCfgChanged) {
+                    if (isSleepSaving && isSleepExempt(next)) {
+                        engineScope.launch {
+                            exitSleepSaving(SleepWakeReason.EXEMPT)
+                        }
+                    }
+                    if (!isSleepSaving || !prev.screenOffSavingEnabled) {
+                        scheduleScreenOffWatcher()
+                    }
+                }
+            }
+        }
     }
 
     fun cycleModeOverride() {
@@ -793,6 +1175,9 @@ class GovernorEngine(context: Context) {
         smoothedClusterLoad.clear()
         smoothedGpuLoad = 0f
         lastWrittenCpuFreq.clear()
+        lastReassertMs.clear()
+        lastDriftLogMs.clear()
+        policyPinState.clear()
         lastWrittenGpuOppIndex = null
         failedWriteCooldownUntil.clear()
         gedLastValByPath.clear()

@@ -20,12 +20,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.CoreGovernorApp
 import com.example.MainActivity
 import com.example.R
@@ -44,11 +48,29 @@ class GovernorService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var telemetryJob: Job? = null
     private lateinit var engine: GovernorEngine
+    private var screenReceiverRegistered = false
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> engine.onScreenOff()
+                Intent.ACTION_SCREEN_ON -> engine.onScreenOn()
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         engine = (application as CoreGovernorApp).engine
         ensureNotificationChannel()
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        engine.setInitialScreenInteractive(pm.isInteractive)
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        ContextCompat.registerReceiver(this, screenReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        screenReceiverRegistered = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -167,6 +189,13 @@ class GovernorService : Service() {
     }
 
     override fun onDestroy() {
+        if (screenReceiverRegistered) {
+            try {
+                unregisterReceiver(screenReceiver)
+            } catch (_: IllegalArgumentException) {
+            }
+            screenReceiverRegistered = false
+        }
         engine.stopAndRestore()
         telemetryJob?.cancel()
         serviceScope.cancel()

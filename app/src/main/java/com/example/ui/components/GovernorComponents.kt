@@ -283,8 +283,10 @@ fun SettingSliderRow(
     onValueChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
     steps: Int = 0,
+    enabled: Boolean = true,
     testTag: String = ""
 ) {
+    val contentAlpha = if (enabled) 1f else 0.38f
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -294,12 +296,12 @@ fun SettingSliderRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)
             )
             Text(
                 text = valueText,
                 style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelMedium.fontSize),
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.primary.copy(alpha = contentAlpha)
             )
         }
         Slider(
@@ -307,6 +309,7 @@ fun SettingSliderRow(
             onValueChange = onValueChange,
             valueRange = valueRange,
             steps = steps,
+            enabled = enabled,
             modifier = if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier,
             colors = SliderDefaults.colors(
                 thumbColor = MaterialTheme.colorScheme.primary,
@@ -316,7 +319,7 @@ fun SettingSliderRow(
         Text(
             text = explanation,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)
         )
     }
 }
@@ -328,8 +331,10 @@ fun SettingSwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     testTag: String = ""
 ) {
+    val contentAlpha = if (enabled) 1f else 0.38f
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -339,18 +344,19 @@ fun SettingSwitchRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = explanation,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)
             )
         }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            enabled = enabled,
             modifier = if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier
         )
     }

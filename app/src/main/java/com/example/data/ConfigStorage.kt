@@ -49,6 +49,7 @@ class ConfigStorage(private val context: Context) {
     private val configFile = File(context.filesDir, "core_governor_config.json")
     private val presetsFile = File(context.filesDir, "core_governor_presets.json")
     private val backupFile = File(context.filesDir, "original_hardware_backup.json")
+    private val perfPinFile = File(context.filesDir, "performance_pin_policies.json")
 
     fun loadConfig(): GovernorConfig {
         if (!configFile.exists()) return GovernorConfig()
@@ -159,6 +160,32 @@ class ConfigStorage(private val context: Context) {
     fun clearOriginalHardwareBackup() {
         try {
             if (backupFile.exists()) backupFile.delete()
+        } catch (_: Throwable) {
+        }
+    }
+
+    fun loadPerformancePinPolicies(): Set<Int> {
+        if (!perfPinFile.exists()) return emptySet()
+        return try {
+            val arr = JSONArray(perfPinFile.readText())
+            buildSet {
+                for (i in 0 until arr.length()) {
+                    add(arr.getInt(i))
+                }
+            }
+        } catch (_: Throwable) {
+            emptySet()
+        }
+    }
+
+    fun setPerformancePinPolicy(policyId: Int, enabled: Boolean) {
+        val current = loadPerformancePinPolicies().toMutableSet()
+        val changed = if (enabled) current.add(policyId) else current.remove(policyId)
+        if (!changed) return
+        try {
+            val arr = JSONArray()
+            current.sorted().forEach { arr.put(it) }
+            perfPinFile.writeText(arr.toString())
         } catch (_: Throwable) {
         }
     }
@@ -343,6 +370,10 @@ class ConfigStorage(private val context: Context) {
             put("pollIntervalMs", c.pollIntervalMs)
             put("startOnBoot", c.startOnBoot)
             put("cpuLoadUsesBusiestCore", c.cpuLoadUsesBusiestCore)
+            put("screenOffSavingEnabled", c.screenOffSavingEnabled)
+            put("screenOffDelaySec", c.screenOffDelaySec)
+            put("screenOffExemptMusic", c.screenOffExemptMusic)
+            put("screenOffExemptCharging", c.screenOffExemptCharging)
             put("safetyFloorPct", c.safetyFloorPct.toDouble())
             put("selectedTempSensorPath", c.selectedTempSensorPath)
             put("modeOverride", c.modeOverride.name)
@@ -418,6 +449,10 @@ class ConfigStorage(private val context: Context) {
             pollIntervalMs = obj.optLong("pollIntervalMs", default.pollIntervalMs).coerceIn(50L, 1000L),
             startOnBoot = obj.optBoolean("startOnBoot", default.startOnBoot),
             cpuLoadUsesBusiestCore = obj.optBoolean("cpuLoadUsesBusiestCore", default.cpuLoadUsesBusiestCore),
+            screenOffSavingEnabled = obj.optBoolean("screenOffSavingEnabled", default.screenOffSavingEnabled),
+            screenOffDelaySec = obj.optInt("screenOffDelaySec", default.screenOffDelaySec).coerceIn(0, 60),
+            screenOffExemptMusic = obj.optBoolean("screenOffExemptMusic", default.screenOffExemptMusic),
+            screenOffExemptCharging = obj.optBoolean("screenOffExemptCharging", default.screenOffExemptCharging),
             safetyFloorPct = obj.optDouble("safetyFloorPct", default.safetyFloorPct.toDouble()).toFloat().coerceIn(5f, 95f),
             selectedTempSensorPath = obj.optString("selectedTempSensorPath", ""),
             modeOverride = enumOrDefault(obj.optString("modeOverride"), ModeOverride.AUTO),

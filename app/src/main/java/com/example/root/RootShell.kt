@@ -53,6 +53,8 @@ class RootShell {
     var isRootAvailable: Boolean = false
         private set
 
+    private val permissionFixedPaths = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     suspend fun ensureSession(): Boolean = mutex.withLock {
         withContext(dispatcher) {
             ensureSessionLocked()
@@ -147,8 +149,24 @@ class RootShell {
     }
 
     suspend fun writeSysfs(path: String, value: String): ShellResult {
-        val cmd = "printf '%s' ${shellQuote(value)} > ${shellQuote(path)}"
-        return exec(cmd)
+        val q = shellQuote(path)
+        val qVal = shellQuote(value)
+        val printfCmd = "printf '%s' $qVal > $q"
+        val firstTime = permissionFixedPaths.add(path)
+        var res = if (firstTime) {
+            exec("chmod u+w $q 2>/dev/null; $printfCmd")
+        } else {
+            exec(printfCmd)
+        }
+        if (!res.isSuccess) {
+            exec("chmod 0644 $q 2>/dev/null")
+            res = exec(printfCmd)
+            if (!res.isSuccess) {
+                exec("chmod 0666 $q 2>/dev/null")
+                res = exec(printfCmd)
+            }
+        }
+        return res
     }
 
     /**
