@@ -35,8 +35,11 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import com.example.governor.GovernorEngine
+import com.example.model.BatteryState
 import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
+import com.example.model.overlayCompactScaleFor
+import com.example.model.overlayExpandedScaleFor
 import com.example.model.overlayPosPm
 import com.example.model.withOverlayPosPm
 import com.example.model.TelemetryState
@@ -125,7 +128,9 @@ object OverlaySizing {
                     val fpsItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("FPS") + labelGap + compactTextPaint.measureText("240")
                     val powerItemW = maxOf(
                         compactTextPaint.measureText("-10.00W"),
-                        compactTextPaint.measureText("\u221210.00W")
+                        compactTextPaint.measureText("\u221210.00W"),
+                        compactTextPaint.measureText("\u26A1+10.00W"),
+                        compactTextPaint.measureText("PLUG 0.0")
                     )
                     val fm = compactTextPaint.fontMetrics
                     val textH = fm.descent - fm.ascent
@@ -172,7 +177,9 @@ object OverlaySizing {
                         detailedTextPaint.measureText("100%  2000M"),
                         detailedTextPaint.measureText("FPS  120.0"),
                         detailedTextPaint.measureText("PWR  -10.00W"),
-                        detailedTextPaint.measureText("PWR  \u221210.00W")
+                        detailedTextPaint.measureText("PWR  \u221210.00W"),
+                        detailedTextPaint.measureText("PWR  \u26A1+10.00W CHG"),
+                        detailedTextPaint.measureText("PWR  PLUG 0.0")
                     )
                     val rightW = maxOf(refRightW, extraRightColWidthAt1)
                     val subFm = ringSubPaint.fontMetrics
@@ -261,6 +268,7 @@ class OverlayController(
         val view = overlayView ?: return
         val params = layoutParams ?: return
         if (isDragging) return
+        view.refreshScaleForCurrentOrientation()
         view.requestLayout()
         applyPermillePosition(view, params, engine.config.value)
         try {
@@ -292,6 +300,9 @@ class OverlayController(
         val tempC: Float = 0f,
         val wattsCenti: Int = 0,
         val watts: Float = 0f,
+        val chargeWattsCenti: Int = 0,
+        val chargeWatts: Float = 0f,
+        val batteryState: BatteryState = BatteryState.UNKNOWN,
         val ddrMhz: Long = 0L,
         val fps: Float = -1f,
         val refreshHz: Int = 60,
@@ -360,7 +371,12 @@ class OverlayController(
             val view = OverlayPillView(appContext)
             view.setExpanded(cfg.overlayExpanded && !cfg.overlayDetailed)
             view.setDetailed(cfg.overlayDetailed)
-            view.setScales(cfg.overlayCompactScalePct, cfg.overlayExpandedScalePct)
+            view.setScales(
+                compactPortraitPct = cfg.overlayCompactScaleFor(false),
+                expandedPortraitPct = cfg.overlayExpandedScaleFor(false),
+                compactLandscapePct = cfg.overlayCompactScaleFor(true),
+                expandedLandscapePct = cfg.overlayExpandedScaleFor(true)
+            )
             view.setClickThrough(cfg.overlayClickThrough)
             view.alpha = targetAlpha
             view.setBgOpacity(cfg.overlayBgOpacityPct)
@@ -414,7 +430,13 @@ class OverlayController(
                 layoutChanged = true
                 needsReposition = true
             }
-            if (existingView.setScales(cfg.overlayCompactScalePct, cfg.overlayExpandedScalePct)) {
+            if (existingView.setScales(
+                    compactPortraitPct = cfg.overlayCompactScaleFor(false),
+                    expandedPortraitPct = cfg.overlayExpandedScaleFor(false),
+                    compactLandscapePct = cfg.overlayCompactScaleFor(true),
+                    expandedLandscapePct = cfg.overlayExpandedScaleFor(true)
+                )
+            ) {
                 layoutChanged = true
                 needsReposition = true
             }
@@ -565,6 +587,9 @@ class OverlayController(
             tempC = state.temperatureC,
             wattsCenti = wattsCenti,
             watts = state.watts,
+            chargeWattsCenti = (state.chargeWatts * 100f).roundToInt(),
+            chargeWatts = state.chargeWatts,
+            batteryState = state.batteryState,
             ddrMhz = state.ddrFreqMhz,
             fps = state.fps,
             refreshHz = refreshHz,
@@ -582,6 +607,8 @@ class OverlayController(
             prev.gpuFreqMhz != next.gpuFreqMhz ||
             prev.tempDeg != next.tempDeg ||
             prev.wattsCenti != next.wattsCenti ||
+            prev.chargeWattsCenti != next.chargeWattsCenti ||
+            prev.batteryState != next.batteryState ||
             prev.ddrMhz != next.ddrMhz ||
             prevFpsTenth != nextFpsTenth ||
             prev.refreshHz != next.refreshHz ||
@@ -597,8 +624,10 @@ class OverlayController(
         private var expanded = false
         private var detailed = false
         private var clickThrough = false
-        private var compactScalePct = 100
-        private var expandedScalePct = 100
+        private var compactScalePctP = 100
+        private var expandedScalePctP = 100
+        private var compactScalePctL = 100
+        private var expandedScalePctL = 100
         private var effectiveScale = 1f
 
         private var downRawX = 0f
@@ -678,7 +707,12 @@ class OverlayController(
         }
 
         private fun requestedScalePct(): Int {
-            val pct = if (expanded || detailed) expandedScalePct else compactScalePct
+            val land = isLandscapeNow()
+            val pct = if (expanded || detailed) {
+                if (land) expandedScalePctL else expandedScalePctP
+            } else {
+                if (land) compactScalePctL else compactScalePctP
+            }
             return pct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
         }
 
@@ -725,14 +759,9 @@ class OverlayController(
             }
         }
 
-        fun setScales(compactPct: Int, expandedPct: Int): Boolean {
-            val clampedCompact = compactPct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
-            val clampedExpanded = expandedPct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
-            val prevEffective = effectiveScale
-            compactScalePct = clampedCompact
-            expandedScalePct = clampedExpanded
+        fun refreshScaleForCurrentOrientation(): Boolean {
             val nextRequested = requestedScale()
-            if (abs(nextRequested - prevEffective) > 0.0001f) {
+            if (abs(nextRequested - effectiveScale) > 0.0001f) {
                 effectiveScale = nextRequested
                 applyPaintSizes(effectiveScale)
                 requestLayout()
@@ -740,6 +769,19 @@ class OverlayController(
                 return true
             }
             return false
+        }
+
+        fun setScales(
+            compactPortraitPct: Int,
+            expandedPortraitPct: Int,
+            compactLandscapePct: Int,
+            expandedLandscapePct: Int
+        ): Boolean {
+            compactScalePctP = compactPortraitPct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
+            expandedScalePctP = expandedPortraitPct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
+            compactScalePctL = compactLandscapePct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
+            expandedScalePctL = expandedLandscapePct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
+            return refreshScaleForCurrentOrientation()
         }
 
         fun setClickThrough(value: Boolean) {
@@ -794,7 +836,13 @@ class OverlayController(
             }
             val fpsVal = if (dData.fps < 0f) "--" else String.format(Locale.US, "%.1f", dData.fps)
             regularRows.add("FPS  $fpsVal")
-            regularRows.add("PWR  ${formatSignedWatts(dData.watts)}W")
+            val pwrVal = when (dData.batteryState) {
+                BatteryState.CHARGING -> "\u26A1+${String.format(Locale.US, "%.2f", dData.chargeWatts)}W CHG"
+                BatteryState.FULL_PLUGGED -> "PLUG 0.0"
+                BatteryState.DISCHARGING -> "${formatSignedWatts(if (dData.watts > 0.005f) -dData.watts else 0f)}W"
+                BatteryState.UNKNOWN -> "--W"
+            }
+            regularRows.add("PWR  $pwrVal")
             return regularRows to boldRows
         }
 
@@ -806,7 +854,9 @@ class OverlayController(
                 detailedTextPaint.measureText("100%  2000M"),
                 detailedTextPaint.measureText("FPS  120.0"),
                 detailedTextPaint.measureText("PWR  -10.00W"),
-                detailedTextPaint.measureText("PWR  \u221210.00W")
+                detailedTextPaint.measureText("PWR  \u221210.00W"),
+                detailedTextPaint.measureText("PWR  \u26A1+10.00W CHG"),
+                detailedTextPaint.measureText("PWR  PLUG 0.0")
             )
             for (r in regularRows) {
                 maxW = maxOf(maxW, detailedTextPaint.measureText(r))
@@ -900,7 +950,9 @@ class OverlayController(
                 val fpsItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("FPS") + labelGap + compactTextPaint.measureText("240")
                 val powerItemW = maxOf(
                     compactTextPaint.measureText("-10.00W"),
-                    compactTextPaint.measureText("\u221210.00W")
+                    compactTextPaint.measureText("\u221210.00W"),
+                    compactTextPaint.measureText("\u26A1+10.00W"),
+                    compactTextPaint.measureText("PLUG 0.0")
                 )
 
                 val contentW = cpuItemW + itemGap + gpuItemW + itemGap + fpsItemW + itemGap + tempItemW + itemGap + powerItemW
@@ -951,7 +1003,12 @@ class OverlayController(
             val gpuVal = "${data.gpuLoadPct}%"
             val fpsVal = if (data.fps < 0f) "--" else data.fps.roundToInt().toString()
             val tempVal = "${data.tempDeg}°"
-            val powerVal = "${formatSignedWatts(data.watts)}W"
+            val (powerVal, powerColor) = when (data.batteryState) {
+                BatteryState.CHARGING -> "\u26A1+${String.format(Locale.US, "%.2f", data.chargeWatts)}W" to greenColor
+                BatteryState.FULL_PLUGGED -> "PLUG 0.0" to greenColor
+                BatteryState.DISCHARGING -> "${formatSignedWatts(if (data.watts > 0.005f) -data.watts else 0f)}W" to blueColor
+                BatteryState.UNKNOWN -> "--W" to textSecondaryColor
+            }
 
             val cpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("CPU") + labelGap + compactTextPaint.measureText(cpuVal)
             val gpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("GPU") + labelGap + compactTextPaint.measureText(gpuVal)
@@ -984,7 +1041,7 @@ class OverlayController(
             canvas.drawText(tempVal, x, valBaselineY, compactTextPaint)
             x += compactTextPaint.measureText(tempVal) + itemGap
 
-            compactTextPaint.color = blueColor
+            compactTextPaint.color = powerColor
             canvas.drawText(powerVal, x, valBaselineY, compactTextPaint)
         }
 
@@ -1015,7 +1072,9 @@ class OverlayController(
                 ringColor: Int,
                 centerText: String,
                 label: String,
-                subText: String
+                subText: String,
+                centerColor: Int = textPrimaryColor,
+                labelColor: Int = textPrimaryColor
             ) {
                 val cellLeft = hPad + index * (cellWidth + cellGap)
                 val cx = cellLeft + cellWidth / 2f
@@ -1036,6 +1095,7 @@ class OverlayController(
                     canvas.drawArc(arcRect, -90f, sweep, false, arcPaint)
                 }
 
+                ringCenterPaint.color = centerColor
                 ringCenterPaint.textSize = baseCenterSize
                 val centerW = ringCenterPaint.measureText(centerText)
                 if (centerW > maxCenterW && centerW > 0f) {
@@ -1044,7 +1104,9 @@ class OverlayController(
                 val centerFm = ringCenterPaint.fontMetrics
                 val centerBaseline = ringCy - (centerFm.ascent + centerFm.descent) / 2f
                 canvas.drawText(centerText, cx, centerBaseline, ringCenterPaint)
+                ringCenterPaint.color = textPrimaryColor
 
+                ringLabelPaint.color = labelColor
                 ringLabelPaint.textSize = baseLabelSize
                 val labelW = ringLabelPaint.measureText(label)
                 if (labelW > cellWidth && labelW > 0f) {
@@ -1053,6 +1115,7 @@ class OverlayController(
                 val labelFm = ringLabelPaint.fontMetrics
                 val labelBaseline = ringTop + ringSize + labelGap - labelFm.ascent
                 canvas.drawText(label, cx, labelBaseline, ringLabelPaint)
+                ringLabelPaint.color = textPrimaryColor
 
                 if (subText.isNotEmpty()) {
                     ringSubPaint.textSize = baseSubSize
@@ -1098,14 +1161,45 @@ class OverlayController(
                 label = "FPS",
                 subText = "of ${data.refreshHz}Hz"
             )
-            drawRingCell(
-                index = 4,
-                fraction = abs(data.watts) / 10f,
-                ringColor = blueColor,
-                centerText = formatSignedWatts(data.watts),
-                label = "POWER",
-                subText = "watts"
-            )
+            when (data.batteryState) {
+                BatteryState.CHARGING -> drawRingCell(
+                    index = 4,
+                    fraction = data.chargeWatts / 15f,
+                    ringColor = greenColor,
+                    centerText = "\u26A1+${String.format(Locale.US, "%.1f", data.chargeWatts)}",
+                    label = "CHG",
+                    subText = "watts",
+                    centerColor = greenColor,
+                    labelColor = greenColor
+                )
+                BatteryState.FULL_PLUGGED -> drawRingCell(
+                    index = 4,
+                    fraction = 1f,
+                    ringColor = greenColor,
+                    centerText = "0.0",
+                    label = "PLUG 0.0",
+                    subText = "full",
+                    centerColor = greenColor,
+                    labelColor = greenColor
+                )
+                BatteryState.DISCHARGING -> drawRingCell(
+                    index = 4,
+                    fraction = abs(data.watts) / 10f,
+                    ringColor = blueColor,
+                    centerText = formatSignedWatts(if (data.watts > 0.005f) -data.watts else 0f),
+                    label = "POWER",
+                    subText = "watts"
+                )
+                BatteryState.UNKNOWN -> drawRingCell(
+                    index = 4,
+                    fraction = 0f,
+                    ringColor = textSecondaryColor,
+                    centerText = "--",
+                    label = "POWER",
+                    subText = "n/a",
+                    centerColor = textSecondaryColor
+                )
+            }
         }
 
         private fun drawDetailed(canvas: Canvas, d: Float) {
@@ -1245,7 +1339,13 @@ class OverlayController(
 
             val fpsStr = if (data.fps < 0f) "--" else String.format(Locale.US, "%.1f", data.fps)
             drawLabelValueRow("FPS  ", fpsStr, fpsColor(data.fps, data.refreshHz))
-            drawLabelValueRow("PWR  ", "${formatSignedWatts(data.watts)}W", whiteColor)
+            val (pwrStr, pwrColor) = when (data.batteryState) {
+                BatteryState.CHARGING -> "\u26A1+${String.format(Locale.US, "%.2f", data.chargeWatts)}W CHG" to greenColor
+                BatteryState.FULL_PLUGGED -> "PLUG 0.0" to greenColor
+                BatteryState.DISCHARGING -> "${formatSignedWatts(if (data.watts > 0.005f) -data.watts else 0f)}W" to whiteColor
+                BatteryState.UNKNOWN -> "--W" to grayColor
+            }
+            drawLabelValueRow("PWR  ", pwrStr, pwrColor)
         }
 
         private fun fpsColor(fps: Float, refreshHz: Int): Int = when {

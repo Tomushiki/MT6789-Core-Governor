@@ -45,10 +45,19 @@ class MetricsRecorderTest {
         dir.deleteRecursively()
     }
 
-    private fun tel(mode: GovernorMode, pkg: String = "com.game", fps: Float = 60f, running: Boolean = true) =
+    private fun tel(
+        mode: GovernorMode,
+        pkg: String = "com.game",
+        fps: Float = 60f,
+        running: Boolean = true,
+        watts: Float = 4f,
+        chargeWatts: Float = 0f,
+        batteryState: com.example.model.BatteryState = com.example.model.BatteryState.DISCHARGING
+    ) =
         TelemetryState(
             isRunning = running, activeMode = mode, foregroundPackage = pkg,
-            fps = fps, watts = 4f, temperatureC = 40f
+            fps = fps, watts = watts, chargeWatts = chargeWatts,
+            batteryState = batteryState, temperatureC = 40f
         )
 
     private fun feed(from: Long, count: Int, t: TelemetryState) {
@@ -119,5 +128,33 @@ class MetricsRecorderTest {
         waitForSessions(1)
         runBlocking { rec.deleteSession(rec.sessions.value[0]) }
         assertEquals(0, rec.sessions.value.size)
+    }
+
+    @Test
+    fun chargingSamplesAreRecordedForChartButExcludedFromStatsAndFlagged() {
+        feed(
+            7_000_000L, 15,
+            tel(GovernorMode.GAME, watts = 4f, batteryState = com.example.model.BatteryState.DISCHARGING)
+        )
+        feed(
+            7_000_000L + 15_000L, 15,
+            tel(GovernorMode.GAME, watts = 0f, chargeWatts = 12f, batteryState = com.example.model.BatteryState.CHARGING)
+        )
+        rec.onStopped()
+        waitForSessions(1)
+        assertEquals(1, rec.sessions.value.size)
+        val info = rec.sessions.value[0]
+        assertEquals(30, info.summary.sampleCount)
+        assertTrue(info.summary.includesCharging)
+        assertEquals(4f, info.summary.avgWatts, 0.01f)
+        assertEquals(4f, info.summary.maxWatts, 0.01f)
+        // 14 consecutive 1s discharge intervals at 4 W = 56 Ws / 3600 (~0.0156 Wh; CSV header formats %.2f -> 0.02)
+        assertEquals(56f / 3600f, info.summary.energyWh, 0.005f)
+        val samples = runBlocking { rec.loadSession(info) }
+        assertEquals(30, samples.size)
+        assertEquals(56f / 3600f, com.example.governor.MetricsMath.summarize(samples).energyWh, 0.0001f)
+        assertEquals(com.example.model.BatteryState.DISCHARGING, samples[0].batteryState)
+        assertEquals(com.example.model.BatteryState.CHARGING, samples[15].batteryState)
+        assertEquals(12f, samples[15].watts, 0.01f)
     }
 }

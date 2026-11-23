@@ -15,6 +15,7 @@
 
 package com.example.governor
 
+import com.example.model.BatteryState
 import com.example.model.EfficiencyMode
 import com.example.model.ExplorationRate
 import com.example.model.GpuOpp
@@ -73,6 +74,9 @@ data class PowerModelUiSnapshot(
     val backoffActive: Boolean = false,
     val backoffRemainingSec: Int = 0,
     val efficiencySavingsPct: Float = 0f,
+    val samplesSkippedCharging: Long = 0L,
+    val learningPausedCharging: Boolean = false,
+    val batteryState: BatteryState = BatteryState.DISCHARGING,
     val components: List<ComponentPowerSummary> = emptyList()
 )
 
@@ -108,6 +112,7 @@ class PowerModel(
         private const val STEP_COOLDOWN_MS = 600L
         private const val EXPLORE_HOLD_MS = 1_500L
         private const val EXPLORE_COOLDOWN_MS = 6_000L
+        private const val BATTERY_STATE_SETTLE_MS = 5_000L
 
         fun utilBand(utilPct: Float): Int = when {
             utilPct < 10f -> 0
@@ -162,6 +167,7 @@ class PowerModel(
         var timestampMs: Long = 0L
         var watts: Float = 0f
         var isCharging: Boolean = false
+        var batteryState: BatteryState = BatteryState.DISCHARGING
         var isInteractive: Boolean = true
         var isSleepSaving: Boolean = false
         var isGame: Boolean = false
@@ -218,6 +224,9 @@ class PowerModel(
     private var liveActiveScenario = "idle"
     private var liveLearningEnabled = true
     private var liveEfficiencyEnabled = false
+    private var lastTrainBatteryState = BatteryState.DISCHARGING
+    private var lastBatteryFlipMs = 0L
+    private var samplesSkippedCharging = 0L
     private val liveCompFreqMhz = HashMap<String, Int>()
     private val liveCompUtilPct = HashMap<String, Float>()
     private var smoothedSavingsPct = 0f
@@ -325,12 +334,14 @@ class PowerModel(
         clusterCoreCounts: IntArray,
         gpuAvailable: Boolean,
         gpuFreqMhz: Int,
-        gpuUtilPct: Float
+        gpuUtilPct: Float,
+        batteryState: BatteryState = if (isCharging) BatteryState.CHARGING else BatteryState.DISCHARGING
     ) {
         synchronized(stageLock) {
             staging.timestampMs = timestampMs
             staging.watts = watts
             staging.isCharging = isCharging
+            staging.batteryState = batteryState
             staging.isInteractive = isInteractive
             staging.isSleepSaving = isSleepSaving
             staging.isGame = isGame
@@ -357,6 +368,7 @@ class PowerModel(
         var timestampMs = 0L
         var watts = 0f
         var isCharging = false
+        var batteryState = BatteryState.DISCHARGING
         var isInteractive = true
         var isSleepSaving = false
         var isGame = false
@@ -381,6 +393,7 @@ class PowerModel(
             timestampMs = staging.timestampMs
             watts = staging.watts
             isCharging = staging.isCharging
+            batteryState = staging.batteryState
             isInteractive = staging.isInteractive
             isSleepSaving = staging.isSleepSaving
             isGame = staging.isGame
@@ -416,7 +429,8 @@ class PowerModel(
             clusterCoreCounts = coreCounts,
             gpuAvailable = gpuAvailable,
             gpuFreqMhz = gpuFreqMhz,
-            gpuUtilPct = gpuUtilPct
+            gpuUtilPct = gpuUtilPct,
+            batteryState = batteryState
         )
 
         if (jsonToSave != null) {
@@ -451,7 +465,8 @@ class PowerModel(
         clusterCoreCounts: IntArray,
         gpuAvailable: Boolean,
         gpuFreqMhz: Int,
-        gpuUtilPct: Float
+        gpuUtilPct: Float,
+        batteryState: BatteryState = if (isCharging) BatteryState.CHARGING else BatteryState.DISCHARGING
     ): String? {
         val scenarioKey = scenarioKeyFor(fgPkg, isGame, isInteractive)
         val measuredMw = (watts * 1000f).coerceIn(0f, 60_000f)
@@ -464,6 +479,10 @@ class PowerModel(
             liveEfficiencyEnabled = efficiencyEnabled
             liveActiveScenario = scenarioKey
             liveMeasuredMw = measuredMw
+            if (batteryState != lastTrainBatteryState) {
+                lastTrainBatteryState = batteryState
+                lastBatteryFlipMs = timestampMs
+            }
 
             val activeKeys = ArrayList<Long>(clusterCount + 1)
             val activePriors = ArrayList<Float>(clusterCount + 1)
@@ -538,12 +557,19 @@ class PowerModel(
             }
             liveEstimatedMw = estSum
 
+            val isDischargeState = !isCharging && batteryState == BatteryState.DISCHARGING
+            val settledAfterFlip = (timestampMs - lastBatteryFlipMs) >= BATTERY_STATE_SETTLE_MS
+            if (learningEnabled && isInteractive && !isSleepSaving && !isDischargeState) {
+                samplesSkippedCharging += 1L
+            }
+
             val powerValid = watts.isFinite() && watts > 0.05f && watts <= 60f
             val powerJump = wasHasPrev && abs((watts - prevWatts) * 1000f) > 2500f && transientJump
             val sampleClean = learningEnabled &&
                 isInteractive &&
                 !isSleepSaving &&
-                !isCharging &&
+                isDischargeState &&
+                settledAfterFlip &&
                 powerValid &&
                 activeKeys.isNotEmpty() &&
                 !powerJump &&
@@ -616,9 +642,7 @@ class PowerModel(
             }
         }
 
-        if (statusMsg != null) {
-            onLog(LogLevel.INFO, "PowerModel", statusMsg!!)
-        }
+        statusMsg?.let { onLog(LogLevel.INFO, "PowerModel", it) }
         return shouldSaveJson
     }
 
@@ -705,7 +729,8 @@ class PowerModel(
         burstActive: Boolean,
         thermalThrottled: Boolean,
         batteryPct: Int,
-        nowMs: Long
+        nowMs: Long,
+        batteryState: BatteryState = BatteryState.DISCHARGING
     ): Long {
         if (!efficiencyEnabled || availableFreqsKhz.isEmpty()) return standardTargetKhz
         if (burstActive) return standardTargetKhz
@@ -747,8 +772,10 @@ class PowerModel(
             val candidates = availableFreqsKhz.filter { it in allowedMinKhz..cappedMaxKhz }
             if (candidates.size <= 1) return standardTargetKhz
 
-            // Bounded exploration check
-            if (!thermalThrottled && batteryPct > 20 && nowMs < st.exploreUntilMs && st.exploreTargetKhz in allowedMinKhz..cappedMaxKhz) {
+            // Bounded exploration check (discharge only)
+            if (batteryState == BatteryState.DISCHARGING && !thermalThrottled && batteryPct > 20 &&
+                nowMs < st.exploreUntilMs && st.exploreTargetKhz in allowedMinKhz..cappedMaxKhz
+            ) {
                 st.lastTargetKhz = st.exploreTargetKhz
                 st.lastStandardKhz = standardTargetKhz
                 st.lastWasLowered = st.exploreTargetKhz < standardTargetKhz
@@ -828,7 +855,7 @@ class PowerModel(
             }
 
             // Rare bounded exploration into adjacent steps to learn unvisited OPPs
-            if (!thermalThrottled && batteryPct > 20 && nowMs - st.lastExploreAtMs >= EXPLORE_COOLDOWN_MS) {
+            if (batteryState == BatteryState.DISCHARGING && !thermalThrottled && batteryPct > 20 && nowMs - st.lastExploreAtMs >= EXPLORE_COOLDOWN_MS) {
                 val baseProb = when (efficiencyMode) {
                     EfficiencyMode.PERFORMANCE_FIRST -> explorationRate.baseProb * 0.5f
                     else -> explorationRate.baseProb
@@ -869,9 +896,7 @@ class PowerModel(
             chosenKhz = bestKhz
         }
 
-        if (logEvent != null) {
-            onLog(logEvent!!.first, "Efficiency", logEvent!!.second)
-        }
+        logEvent?.let { (lvl, msg) -> onLog(lvl, "Efficiency", msg) }
         return chosenKhz
     }
 
@@ -896,7 +921,8 @@ class PowerModel(
         burstActive: Boolean,
         thermalThrottled: Boolean,
         batteryPct: Int,
-        nowMs: Long
+        nowMs: Long,
+        batteryState: BatteryState = BatteryState.DISCHARGING
     ): Int {
         if (!efficiencyEnabled || sortedOpps.isEmpty() || burstActive) return standardTargetPos
         val minP = allowedMinPos.coerceIn(0, sortedOpps.lastIndex)
@@ -938,7 +964,7 @@ class PowerModel(
                 return standardTargetPos
             }
 
-            if (!thermalThrottled && batteryPct > 20 && nowMs < st.exploreUntilMs) {
+            if (batteryState == BatteryState.DISCHARGING && !thermalThrottled && batteryPct > 20 && nowMs < st.exploreUntilMs) {
                 val expPos = sortedOpps.indexOfFirst { it.freqKhz == st.exploreTargetKhz }
                 if (expPos in minP..maxP) return expPos
             }
@@ -990,7 +1016,7 @@ class PowerModel(
                 }
             }
 
-            if (!thermalThrottled && batteryPct > 20 && nowMs - st.lastExploreAtMs >= EXPLORE_COOLDOWN_MS) {
+            if (batteryState == BatteryState.DISCHARGING && !thermalThrottled && batteryPct > 20 && nowMs - st.lastExploreAtMs >= EXPLORE_COOLDOWN_MS) {
                 val baseProb = if (efficiencyMode == EfficiencyMode.PERFORMANCE_FIRST) {
                     explorationRate.baseProb * 0.5f
                 } else explorationRate.baseProb
@@ -1020,9 +1046,7 @@ class PowerModel(
             chosenPos = bestPos
         }
 
-        if (logEvent != null) {
-            onLog(logEvent!!.first, "Efficiency", logEvent!!.second)
-        }
+        logEvent?.let { (lvl, msg) -> onLog(lvl, "Efficiency", msg) }
         return chosenPos
     }
 
@@ -1162,6 +1186,9 @@ class PowerModel(
                 backoffActive = backoffRem > 0,
                 backoffRemainingSec = backoffRem,
                 efficiencySavingsPct = smoothedSavingsPct.coerceIn(0f, 60f),
+                samplesSkippedCharging = samplesSkippedCharging,
+                learningPausedCharging = lastTrainBatteryState == BatteryState.CHARGING || lastTrainBatteryState == BatteryState.FULL_PLUGGED,
+                batteryState = lastTrainBatteryState,
                 components = comps
             )
         }
@@ -1206,6 +1233,9 @@ class PowerModel(
             liveEstimatedMw = 0f
             smoothedSavingsPct = 0f
             backoffUntilMs = 0L
+            samplesSkippedCharging = 0L
+            lastBatteryFlipMs = 0L
+            lastTrainBatteryState = BatteryState.DISCHARGING
         }
         try {
             if (storageFile.exists()) storageFile.delete()

@@ -25,6 +25,7 @@ import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.CoreGovernorApp
+import com.example.governor.BatteryEstimatorUiSnapshot
 import com.example.governor.MetricSample
 import com.example.governor.PowerModelUiSnapshot
 import com.example.governor.SensorPinner
@@ -45,6 +46,7 @@ import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
 import com.example.model.ThrottleCurveShape
 import com.example.model.withOverlayPosPm
+import com.example.model.withOverlayScalePct
 import com.example.service.GovernorService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,6 +66,7 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     val sensorPin = engine.sensorPinner.state
     val logs: StateFlow<List<LogEntry>> = engine.logs
     val powerModelSnapshot: StateFlow<PowerModelUiSnapshot> = engine.powerModel.uiSnapshot
+    val batterySnapshot: StateFlow<BatteryEstimatorUiSnapshot> = engine.batteryEstimator.snapshot
 
     // Performance Metrics tab
     val metricsLive: StateFlow<List<MetricSample>> = engine.metrics.live
@@ -206,7 +209,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         opacityPct: Int? = null,
         compactScalePct: Int? = null,
         expandedScalePct: Int? = null,
-        bgOpacityPct: Int? = null
+        bgOpacityPct: Int? = null,
+        isLandscape: Boolean = false
     ) {
         if (enabled == true) {
             val ctx = getApplication<Application>()
@@ -220,9 +224,11 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                                 overlayClickThrough = clickThrough ?: cfg.overlayClickThrough,
                                 overlayGameOnly = gameOnly ?: cfg.overlayGameOnly,
                                 overlayOpacityPct = (opacityPct ?: cfg.overlayOpacityPct).coerceIn(30, 100),
-                                overlayBgOpacityPct = (bgOpacityPct ?: cfg.overlayBgOpacityPct).coerceIn(0, 100),
-                                overlayCompactScalePct = (compactScalePct ?: cfg.overlayCompactScalePct).coerceIn(50, 200),
-                                overlayExpandedScalePct = (expandedScalePct ?: cfg.overlayExpandedScalePct).coerceIn(50, 200)
+                                overlayBgOpacityPct = (bgOpacityPct ?: cfg.overlayBgOpacityPct).coerceIn(0, 100)
+                            ).withOverlayScalePct(
+                                landscape = isLandscape,
+                                compactPct = compactScalePct,
+                                expandedPct = expandedScalePct
                             )
                         }
                     } else {
@@ -244,9 +250,11 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                 overlayClickThrough = clickThrough ?: cfg.overlayClickThrough,
                 overlayGameOnly = gameOnly ?: cfg.overlayGameOnly,
                 overlayOpacityPct = (opacityPct ?: cfg.overlayOpacityPct).coerceIn(30, 100),
-                overlayBgOpacityPct = (bgOpacityPct ?: cfg.overlayBgOpacityPct).coerceIn(0, 100),
-                overlayCompactScalePct = (compactScalePct ?: cfg.overlayCompactScalePct).coerceIn(50, 200),
-                overlayExpandedScalePct = (expandedScalePct ?: cfg.overlayExpandedScalePct).coerceIn(50, 200)
+                overlayBgOpacityPct = (bgOpacityPct ?: cfg.overlayBgOpacityPct).coerceIn(0, 100)
+            ).withOverlayScalePct(
+                landscape = isLandscape,
+                compactPct = compactScalePct,
+                expandedPct = expandedScalePct
             )
         }
     }
@@ -366,7 +374,9 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         gpuMaxReductionPct: Float? = null,
         curveShape: ThrottleCurveShape? = null,
         reactionSpeed: Float? = null,
-        hysteresisC: Float? = null
+        hysteresisC: Float? = null,
+        chargingAware: Boolean? = null,
+        chargingStartOffsetC: Float? = null
     ) {
         engine.updateConfig { cfg ->
             val t = cfg.tempThrottle
@@ -381,7 +391,9 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                     gpuMaxReductionPct = gpuMaxReductionPct ?: t.gpuMaxReductionPct,
                     curveShape = curveShape ?: t.curveShape,
                     reactionSpeed = reactionSpeed ?: t.reactionSpeed,
-                    hysteresisC = hysteresisC ?: t.hysteresisC
+                    hysteresisC = hysteresisC ?: t.hysteresisC,
+                    chargingAware = chargingAware ?: t.chargingAware,
+                    chargingStartOffsetC = (chargingStartOffsetC ?: t.chargingStartOffsetC).coerceIn(0f, 5f)
                 )
             )
         }
@@ -451,7 +463,28 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
 
     fun clearLogs() = engine.clearLogs()
 
-    fun setEnergyTabVisible(visible: Boolean) = engine.powerModel.setUiVisible(visible)
+    fun setEnergyTabVisible(visible: Boolean) {
+        engine.powerModel.setUiVisible(visible)
+        engine.batteryEstimator.setUiVisible(visible)
+    }
+
+    fun updateBatterySettings(
+        estimationEnabled: Boolean? = null,
+        designCapacityOverrideMah: Int? = null
+    ) {
+        engine.updateConfig { cfg ->
+            cfg.copy(
+                batteryEstimationEnabled = estimationEnabled ?: cfg.batteryEstimationEnabled,
+                batteryDesignCapacityOverrideMah = (designCapacityOverrideMah ?: cfg.batteryDesignCapacityOverrideMah).coerceAtLeast(0)
+            )
+        }
+    }
+
+    fun resetBatteryEstimate() {
+        viewModelScope.launch(Dispatchers.IO) {
+            engine.batteryEstimator.resetEstimate()
+        }
+    }
 
     fun updateEfficiencySettings(
         learningEnabled: Boolean? = null,

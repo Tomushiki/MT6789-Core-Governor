@@ -64,6 +64,16 @@ enum class ExplorationRate(val baseProb: Float) {
     HIGH(0.08f)
 }
 
+enum class BatteryState {
+    DISCHARGING,
+    CHARGING,
+    FULL_PLUGGED,
+    UNKNOWN;
+
+    val isPluggedOrCharging: Boolean
+        get() = this == CHARGING || this == FULL_PLUGGED
+}
+
 data class CpuPolicySpec(
     val policyId: Int,
     val name: String,
@@ -108,7 +118,10 @@ data class ThermalSensorSpec(
 data class BatteryPowerSpec(
     val currentPath: String? = null,
     val voltagePath: String? = null,
-    val statusPath: String? = null
+    val statusPath: String? = null,
+    val chargeFullPath: String? = null,
+    val chargeFullDesignPath: String? = null,
+    val cycleCountPath: String? = null
 )
 
 data class DdrSpec(
@@ -156,7 +169,9 @@ data class TempThrottleConfig(
     val gpuMaxReductionPct: Float = 65f,
     val curveShape: ThrottleCurveShape = ThrottleCurveShape.LINEAR,
     val reactionSpeed: Float = 0.35f,
-    val hysteresisC: Float = 2.0f
+    val hysteresisC: Float = 2.0f,
+    val chargingAware: Boolean = false,
+    val chargingStartOffsetC: Float = 2.0f
 )
 
 data class PowerThrottleConfig(
@@ -188,6 +203,9 @@ data class GovernorConfig(
     val overlayBgOpacityPct: Int = 100,
     val overlayCompactScalePct: Int = 100,
     val overlayExpandedScalePct: Int = 100,
+    // Landscape overlay sizes (-1 sentinel = same as portrait so existing configs keep current size).
+    val overlayCompactScalePctL: Int = -1,
+    val overlayExpandedScalePctL: Int = -1,
     val overlayCompactXPm: Int = 40,
     val overlayCompactYPm: Int = 60,
     val overlayExpandedXPm: Int = 40,
@@ -237,6 +255,8 @@ data class GovernorConfig(
     val efficiencyMode: EfficiencyMode = EfficiencyMode.BALANCED,
     val minConfidencePct: Int = 60,
     val explorationRate: ExplorationRate = ExplorationRate.LOW,
+    val batteryEstimationEnabled: Boolean = true,
+    val batteryDesignCapacityOverrideMah: Int = 0,
     val gamePackages: Set<String> = emptySet()
 )
 
@@ -314,6 +334,15 @@ data class TelemetryState(
     val temperatureC: Float = 0f,
     val tempSensorLabel: String = "Unassigned",
     val watts: Float = 0f,
+    val chargeWatts: Float = 0f,
+    val signedWatts: Float = 0f,
+    val batteryState: BatteryState = BatteryState.UNKNOWN,
+    val batteryPct: Int = -1,
+    val batteryTempC: Float = 0f,
+    val batteryVoltageMv: Float = 0f,
+    val batteryHealthLabel: String = "n/a",
+    val batteryCycleCount: Int = -1,
+    val chargeCounterMah: Float = -1f,
     val rawCurrentMa: Float = 0f,
     val rawVoltageMv: Float = 0f,
     val tempThrottleActive: Boolean = false,
@@ -360,5 +389,47 @@ fun GovernorConfig.withOverlayPosPm(landscape: Boolean, xPm: Int?, yPm: Int?): G
         overlayDetailed -> if (landscape) copy(overlayDetailedXPmL = x, overlayDetailedYPmL = y) else copy(overlayDetailedXPm = x, overlayDetailedYPm = y)
         overlayExpanded -> if (landscape) copy(overlayExpandedXPmL = x, overlayExpandedYPmL = y) else copy(overlayExpandedXPm = x, overlayExpandedYPm = y)
         else -> if (landscape) copy(overlayCompactXPmL = x, overlayCompactYPmL = y) else copy(overlayCompactXPm = x, overlayCompactYPm = y)
+    }
+}
+
+/** Effective compact overlay scale % for the given orientation (-1 sentinel falls back to portrait). */
+fun GovernorConfig.overlayCompactScaleFor(landscape: Boolean): Int {
+    val raw = if (landscape && overlayCompactScalePctL >= 0) overlayCompactScalePctL else overlayCompactScalePct
+    return raw.coerceIn(50, 200)
+}
+
+/** Effective expanded/detailed overlay scale % for the given orientation (-1 sentinel falls back to portrait). */
+fun GovernorConfig.overlayExpandedScaleFor(landscape: Boolean): Int {
+    val raw = if (landscape && overlayExpandedScalePctL >= 0) overlayExpandedScalePctL else overlayExpandedScalePct
+    return raw.coerceIn(50, 200)
+}
+
+/** Effective overlay scale % for the active style and orientation. */
+fun GovernorConfig.overlayScalePct(landscape: Boolean): Int {
+    return if (overlayExpanded || overlayDetailed) {
+        overlayExpandedScaleFor(landscape)
+    } else {
+        overlayCompactScaleFor(landscape)
+    }
+}
+
+/** Returns a copy with compact and/or expanded scale % updated for one orientation (null keeps old value). */
+fun GovernorConfig.withOverlayScalePct(
+    landscape: Boolean,
+    compactPct: Int? = null,
+    expandedPct: Int? = null
+): GovernorConfig {
+    val nextCompact = compactPct?.coerceIn(50, 200)
+    val nextExpanded = expandedPct?.coerceIn(50, 200)
+    return if (landscape) {
+        copy(
+            overlayCompactScalePctL = nextCompact ?: overlayCompactScalePctL,
+            overlayExpandedScalePctL = nextExpanded ?: overlayExpandedScalePctL
+        )
+    } else {
+        copy(
+            overlayCompactScalePct = nextCompact ?: overlayCompactScalePct,
+            overlayExpandedScalePct = nextExpanded ?: overlayExpandedScalePct
+        )
     }
 }

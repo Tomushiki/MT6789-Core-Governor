@@ -16,6 +16,7 @@
 package com.example
 
 import com.example.governor.PowerModel
+import com.example.model.BatteryState
 import com.example.model.CpuPolicySpec
 import com.example.model.EfficiencyMode
 import com.example.model.ExplorationRate
@@ -229,5 +230,74 @@ class PowerModelTest {
             burstActive = false, thermalThrottled = false, batteryPct = 90, nowMs = 50_000L
         )
         assertTrue(pos in 0..2)
+    }
+
+    @Test
+    fun settlesAfterFlipAndTracksChargingSkipAndBlocksChargingExploration() {
+        val pids = intArrayOf(0)
+        val freqs = intArrayOf(1500)
+        val utils = floatArrayOf(35f)
+        val cores = intArrayOf(6)
+
+        // While charging: skips learning, counts samplesSkippedCharging, exposes learningPausedCharging
+        for (i in 0 until 4) {
+            model.trainStepInternal(
+                timestampMs = 40_000L + i * 1000L, watts = 0f, isCharging = true, isInteractive = true,
+                isSleepSaving = false, isGame = false, fgPkg = "com.app",
+                learningEnabled = true, efficiencyEnabled = false,
+                clusterCount = 1, clusterPolicyIds = pids, clusterFreqMhz = freqs,
+                clusterUtilPct = utils, clusterCoreCounts = cores,
+                gpuAvailable = true, gpuFreqMhz = 600, gpuUtilPct = 30f,
+                batteryState = BatteryState.CHARGING
+            )
+        }
+        model.refreshUiSnapshotNow()
+        assertEquals(0L, model.uiSnapshot.value.totalSamples)
+        assertEquals(4L, model.uiSnapshot.value.samplesSkippedCharging)
+        assertTrue(model.uiSnapshot.value.learningPausedCharging)
+
+        // Flip to DISCHARGING at t = 50_000: first 4.9 s must NOT learn
+        for (dt in listOf(0L, 1000L, 2500L, 4500L)) {
+            model.trainStepInternal(
+                timestampMs = 50_000L + dt, watts = 3.0f, isCharging = false, isInteractive = true,
+                isSleepSaving = false, isGame = false, fgPkg = "com.app",
+                learningEnabled = true, efficiencyEnabled = false,
+                clusterCount = 1, clusterPolicyIds = pids, clusterFreqMhz = freqs,
+                clusterUtilPct = utils, clusterCoreCounts = cores,
+                gpuAvailable = true, gpuFreqMhz = 600, gpuUtilPct = 30f,
+                batteryState = BatteryState.DISCHARGING
+            )
+        }
+        model.refreshUiSnapshotNow()
+        assertEquals(0L, model.uiSnapshot.value.totalSamples)
+        assertFalse(model.uiSnapshot.value.learningPausedCharging)
+
+        // At t = 55_000 (5 s after flip) learning resumes
+        model.trainStepInternal(
+            timestampMs = 55_000L, watts = 3.0f, isCharging = false, isInteractive = true,
+            isSleepSaving = false, isGame = false, fgPkg = "com.app",
+            learningEnabled = true, efficiencyEnabled = false,
+            clusterCount = 1, clusterPolicyIds = pids, clusterFreqMhz = freqs,
+            clusterUtilPct = utils, clusterCoreCounts = cores,
+            gpuAvailable = true, gpuFreqMhz = 600, gpuUtilPct = 30f,
+            batteryState = BatteryState.DISCHARGING
+        )
+        model.refreshUiSnapshotNow()
+        assertEquals(1L, model.uiSnapshot.value.totalSamples)
+
+        // Exploration must never probe away from standard target while charging
+        val avail = listOf(500_000L, 1_000_000L, 1_500_000L, 2_000_000L)
+        for (i in 0 until 60) {
+            val c = model.selectEfficientCpuFreqKhz(
+                policyId = 0, availableFreqsKhz = avail, allowedMinKhz = 500_000L, cappedMaxKhz = 2_000_000L,
+                standardTargetKhz = 1_500_000L, currentFreqKhz = 1_500_000L, rawLoadPct = 20f, coreCount = 6,
+                scenarioKey = "com.app", isGame = false, fps = -1f, targetRefreshHz = 60f,
+                efficiencyEnabled = true, efficiencyMode = EfficiencyMode.BALANCED,
+                minConfidencePct = 60, explorationRate = ExplorationRate.HIGH,
+                burstActive = false, thermalThrottled = false, batteryPct = 90,
+                nowMs = 60_000L + i * 7_000L, batteryState = BatteryState.CHARGING
+            )
+            assertEquals(1_500_000L, c)
+        }
     }
 }

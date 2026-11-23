@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.example.model.BatteryState
 import com.example.model.GovernorConfig
 import com.example.model.HardwareSpec
 import com.example.model.PowerPolarity
@@ -49,6 +50,7 @@ import com.example.ui.components.SettingSliderRow
 import com.example.ui.components.SettingSwitchRow
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoMetricStyle
+import java.util.Locale
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
@@ -66,7 +68,9 @@ fun ThermalThrottleSection(
         gpuMaxReductionPct: Float?,
         curveShape: ThrottleCurveShape?,
         reactionSpeed: Float?,
-        hysteresisC: Float?
+        hysteresisC: Float?,
+        chargingAware: Boolean?,
+        chargingStartOffsetC: Float?
     ) -> Unit
 ) {
     val ext = LocalExtendedColors.current
@@ -85,7 +89,7 @@ fun ThermalThrottleSection(
             title = "Enable Temperature Throttling",
             explanation = "Gradually lowers CPU and GPU max frequency caps as the chosen thermal sensor heats up.",
             checked = t.enabled,
-            onCheckedChange = { onUpdateTempThrottle(it, null, null, null, null, null, null, null) },
+            onCheckedChange = { onUpdateTempThrottle(it, null, null, null, null, null, null, null, null, null) },
             testTag = "temp_throttle_switch"
         )
 
@@ -144,7 +148,7 @@ fun ThermalThrottleSection(
             explanation = "Temperature where cap reduction begins smoothly from 100%.",
             value = t.startTempC,
             valueRange = 30f..65f,
-            onValueChange = { onUpdateTempThrottle(null, it.roundToInt().toFloat(), null, null, null, null, null, null) },
+            onValueChange = { onUpdateTempThrottle(null, it.roundToInt().toFloat(), null, null, null, null, null, null, null, null) },
             testTag = "temp_start_slider"
         )
 
@@ -156,7 +160,7 @@ fun ThermalThrottleSection(
             explanation = "Temperature where thermal throttling reaches its full configured reduction.",
             value = t.fullTempC,
             valueRange = (t.startTempC + 2f)..85f,
-            onValueChange = { onUpdateTempThrottle(null, null, it.roundToInt().toFloat(), null, null, null, null, null) },
+            onValueChange = { onUpdateTempThrottle(null, null, it.roundToInt().toFloat(), null, null, null, null, null, null, null) },
             testTag = "temp_full_slider"
         )
 
@@ -168,7 +172,7 @@ fun ThermalThrottleSection(
             explanation = "Maximum percentage cut applied to CPU clusters at full-strength temperature.",
             value = t.cpuMaxReductionPct,
             valueRange = 5f..85f,
-            onValueChange = { onUpdateTempThrottle(null, null, null, it.roundToInt().toFloat(), null, null, null, null) },
+            onValueChange = { onUpdateTempThrottle(null, null, null, it.roundToInt().toFloat(), null, null, null, null, null, null) },
             testTag = "temp_cpu_strength_slider"
         )
 
@@ -180,7 +184,7 @@ fun ThermalThrottleSection(
             explanation = "Maximum percentage cut applied to Mali GPU frequency range at full-strength temperature.",
             value = t.gpuMaxReductionPct,
             valueRange = 5f..85f,
-            onValueChange = { onUpdateTempThrottle(null, null, null, null, it.roundToInt().toFloat(), null, null, null) },
+            onValueChange = { onUpdateTempThrottle(null, null, null, null, it.roundToInt().toFloat(), null, null, null, null, null) },
             testTag = "temp_gpu_strength_slider"
         )
 
@@ -197,7 +201,7 @@ fun ThermalThrottleSection(
             ThrottleCurveShape.entries.forEach { shape ->
                 FilterChip(
                     selected = t.curveShape == shape,
-                    onClick = { onUpdateTempThrottle(null, null, null, null, null, shape, null, null) },
+                    onClick = { onUpdateTempThrottle(null, null, null, null, null, shape, null, null, null, null) },
                     label = { Text(shape.name.lowercase().replaceFirstChar { it.uppercase() }) },
                     modifier = Modifier
                         .weight(1f)
@@ -219,7 +223,7 @@ fun ThermalThrottleSection(
             explanation = "Controls how quickly the thermal cap adapts to temperature changes.",
             value = t.reactionSpeed,
             valueRange = 0.05f..1.0f,
-            onValueChange = { onUpdateTempThrottle(null, null, null, null, null, null, it, null) },
+            onValueChange = { onUpdateTempThrottle(null, null, null, null, null, null, it, null, null, null) },
             testTag = "temp_reaction_slider"
         )
 
@@ -231,8 +235,41 @@ fun ThermalThrottleSection(
             explanation = "Temperature must cool down by this margin before the thermal cap relaxes.",
             value = t.hysteresisC,
             valueRange = 0.5f..6.0f,
-            onValueChange = { onUpdateTempThrottle(null, null, null, null, null, null, null, it) },
+            onValueChange = { onUpdateTempThrottle(null, null, null, null, null, null, null, it, null, null) },
             testTag = "temp_hysteresis_slider"
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        SettingSwitchRow(
+            title = "Charging-aware thermal",
+            explanation = "Lowers throttle start temp slightly while charging or plugged in to account for charger heat.",
+            checked = t.chargingAware,
+            onCheckedChange = { onUpdateTempThrottle(null, null, null, null, null, null, null, null, it, null) },
+            testTag = "temp_charging_aware_switch"
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        val chgOffset = t.chargingStartOffsetC.coerceIn(0f, 5f)
+        val effectiveChgStart = (t.startTempC - chgOffset).coerceAtLeast(20f)
+        SettingSliderRow(
+            title = "Charging start offset",
+            valueText = "-${String.format(Locale.US, "%.1f", chgOffset)} °C",
+            explanation = if (t.chargingAware) {
+                "Starts thermal throttling at ${"%.1f".format(Locale.US, effectiveChgStart)} °C when charging/plugged."
+            } else {
+                "Enable charging-aware thermal above to offset start temperature when plugged in."
+            },
+            value = chgOffset,
+            valueRange = 0f..5f,
+            steps = 9,
+            onValueChange = { raw ->
+                val snapped = (raw * 2f).roundToInt() / 2f
+                onUpdateTempThrottle(null, null, null, null, null, null, null, null, null, snapped)
+            },
+            enabled = t.chargingAware,
+            testTag = "temp_charging_offset_slider"
         )
     }
 }
@@ -267,8 +304,14 @@ fun PowerThrottleSection(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.secondary
             )
+            val livePwrLabel = when (telemetry.batteryState) {
+                BatteryState.CHARGING -> "\u26A1+${"%.2f".format(Locale.US, telemetry.chargeWatts)} W"
+                BatteryState.FULL_PLUGGED -> "PLUG 0.0 W"
+                BatteryState.DISCHARGING -> "Live: ${"%.2f".format(Locale.US, telemetry.watts)} W"
+                BatteryState.UNKNOWN -> "Live: -- W"
+            }
             Text(
-                text = "Live: ${"%.2f".format(telemetry.watts)} W",
+                text = livePwrLabel,
                 style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelMedium.fontSize),
                 color = if (telemetry.powerThrottleActive) ext.warning else ext.optimal
             )

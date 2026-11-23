@@ -15,6 +15,8 @@
 
 package com.example.governor
 
+import android.os.BatteryManager
+import com.example.model.BatteryState
 import com.example.model.GpuOpp
 import com.example.model.PowerPolarity
 import com.example.model.PowerUnitScale
@@ -53,9 +55,13 @@ data class GpuPositionSelection(
 )
 
 data class PowerReading(
-    val watts: Float,
+    val signedWatts: Float,
+    val dischargeWatts: Float,
+    val chargeWatts: Float,
+    val state: BatteryState,
     val currentMa: Float,
-    val voltageMv: Float
+    val voltageMv: Float,
+    val watts: Float = dischargeWatts
 )
 
 object SysfsParsers {
@@ -343,11 +349,30 @@ object SysfsParsers {
         return if (temp in -30f..150f) temp else null
     }
 
+    private const val FULL_DEADBAND_WATTS = 0.15f
+    private const val FULL_DEADBAND_MA = 50f
+
+    fun parseCapacityMah(raw: String): Int? {
+        val v = raw.trim().toLongOrNull() ?: return null
+        if (v <= 0L) return null
+        // Sysfs charge_full / charge_full_design is usually in uAh (e.g. 5000000), occasionally mAh.
+        val mah = if (v > 50_000L) (v / 1000L).toInt() else v.toInt()
+        return mah.takeIf { it in 500..30_000 }
+    }
+
+    fun parseCycleCount(raw: String): Int? {
+        val v = raw.trim().toIntOrNull() ?: return null
+        return v.takeIf { it >= 0 }
+    }
+
     fun computePowerReading(
         rawCurrent: Long,
         rawVoltage: Long,
         unitScale: PowerUnitScale,
-        polarity: PowerPolarity
+        polarity: PowerPolarity,
+        bmStatus: Int = -1,
+        bmPlugged: Int = -1,
+        learnedDischargeSign: Int = 0
     ): PowerReading {
         val voltageMv = when (unitScale) {
             PowerUnitScale.UA_UV -> rawVoltage / 1000f
@@ -363,18 +388,67 @@ object SysfsParsers {
             PowerUnitScale.AUTO -> if (abs(rawCurrent) > 25_000L) rawCurrent / 1000f else rawCurrent.toFloat()
         }
 
-        val effectiveDischargeMa = when (polarity) {
-            PowerPolarity.AUTO_ABS -> abs(rawCurrentMa)
-            PowerPolarity.DISCHARGE_NEGATIVE -> (-rawCurrentMa).coerceAtLeast(0f)
-            PowerPolarity.DISCHARGE_POSITIVE -> rawCurrentMa.coerceAtLeast(0f)
-            PowerPolarity.INVERT_SIGN -> abs(-rawCurrentMa)
+        val absMa = abs(rawCurrentMa)
+        val absWatts = if (voltageMv > 0f) ((absMa / 1000f) * (voltageMv / 1000f)).coerceIn(0f, 60f) else 0f
+
+        val bmIsCharging = bmStatus == BatteryManager.BATTERY_STATUS_CHARGING
+        val bmIsFull = bmStatus == BatteryManager.BATTERY_STATUS_FULL
+
+        // Positive = battery discharging, negative = battery charging.
+        val dischargeSignedMa = when (polarity) {
+            PowerPolarity.DISCHARGE_NEGATIVE -> -rawCurrentMa
+            PowerPolarity.DISCHARGE_POSITIVE -> rawCurrentMa
+            PowerPolarity.INVERT_SIGN -> {
+                if (learnedDischargeSign != 0) -learnedDischargeSign * rawCurrentMa else -rawCurrentMa
+            }
+            PowerPolarity.AUTO_ABS -> when {
+                learnedDischargeSign != 0 -> learnedDischargeSign * rawCurrentMa
+                bmIsCharging || bmIsFull -> -absMa
+                else -> absMa
+            }
         }
 
-        val watts = (effectiveDischargeMa / 1000f) * (voltageMv / 1000f)
+        val hasExplicitSign = polarity == PowerPolarity.DISCHARGE_NEGATIVE ||
+            polarity == PowerPolarity.DISCHARGE_POSITIVE ||
+            polarity == PowerPolarity.INVERT_SIGN ||
+            learnedDischargeSign != 0
+
+        val state = when {
+            voltageMv <= 0f -> BatteryState.UNKNOWN
+            bmPlugged == 0 -> BatteryState.DISCHARGING
+            bmPlugged > 0 || bmIsCharging || bmIsFull -> when {
+                bmIsFull && absWatts <= 0.35f -> BatteryState.FULL_PLUGGED
+                hasExplicitSign && !bmIsCharging && dischargeSignedMa > 150f && absWatts > 0.35f ->
+                    BatteryState.DISCHARGING
+                absWatts <= FULL_DEADBAND_WATTS && absMa <= FULL_DEADBAND_MA ->
+                    if (bmIsCharging) BatteryState.CHARGING else BatteryState.FULL_PLUGGED
+                hasExplicitSign && dischargeSignedMa > 250f && absWatts > 0.50f && !bmIsCharging ->
+                    BatteryState.DISCHARGING
+                else -> BatteryState.CHARGING
+            }
+            hasExplicitSign -> when {
+                dischargeSignedMa < -FULL_DEADBAND_MA -> BatteryState.CHARGING
+                else -> BatteryState.DISCHARGING
+            }
+            else -> BatteryState.DISCHARGING
+        }
+
+        val dischargeWatts = if (state == BatteryState.DISCHARGING) absWatts else 0f
+        val chargeWatts = if (state == BatteryState.CHARGING) absWatts else 0f
+        val signedWatts = when (state) {
+            BatteryState.DISCHARGING -> -dischargeWatts
+            BatteryState.CHARGING -> chargeWatts
+            BatteryState.FULL_PLUGGED, BatteryState.UNKNOWN -> 0f
+        }
+
         return PowerReading(
-            watts = watts.coerceIn(0f, 60f),
+            signedWatts = signedWatts,
+            dischargeWatts = dischargeWatts,
+            chargeWatts = chargeWatts,
+            state = state,
             currentMa = rawCurrentMa,
-            voltageMv = voltageMv
+            voltageMv = voltageMv,
+            watts = dischargeWatts
         )
     }
 }
@@ -483,11 +557,16 @@ object GovernorMath {
         prevCapCpuPct: Float,
         prevCapGpuPct: Float,
         config: TempThrottleConfig,
-        safetyFloorPct: Float
+        safetyFloorPct: Float,
+        isChargingOrPlugged: Boolean = false
     ): Triple<Float, Float, Float> {
         if (!config.enabled) return Triple(100f, 100f, currentTempC)
 
-        val start = config.startTempC
+        val start = if (isChargingOrPlugged && config.chargingAware) {
+            (config.startTempC - config.chargingStartOffsetC.coerceIn(0f, 5f)).coerceAtLeast(20f)
+        } else {
+            config.startTempC
+        }
         val full = config.fullTempC.coerceAtLeast(start + 1f)
 
         val effectiveTemp = when {

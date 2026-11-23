@@ -59,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -70,6 +71,7 @@ import com.example.governor.MetricSample
 import com.example.governor.MetricSummary
 import com.example.governor.MetricsMath
 import com.example.governor.SessionInfo
+import com.example.model.BatteryState
 import com.example.ui.components.EcuCard
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.LocalExtendedColors
@@ -86,7 +88,9 @@ private data class ChartSeries(
     val unit: String,
     val decimals: Int = 1,
     /** Zero-based lines (FPS, watts) start at 0; temperature fits its own min..max. */
-    val zeroBased: Boolean = true
+    val zeroBased: Boolean = true,
+    val states: List<BatteryState>? = null,
+    val chargingColor: Color? = null
 )
 
 private fun fmt(v: Float, decimals: Int = 1): String =
@@ -137,6 +141,7 @@ fun PerformanceScreen(
     val summary = remember(samples) { MetricsMath.summarize(samples) }
     val tempSeries = remember(samples) { samples.map { it.tempC } }
     val wattSeries = remember(samples) { samples.map { it.watts } }
+    val battStates = remember(samples) { samples.map { it.batteryState } }
     val fpsSeries = remember(samples) { samples.map { if (it.fps >= 0f) it.fps else Float.NaN } }
     val fpwSeries = remember(samples) { MetricsMath.movingAverage(samples.map { it.fpsPerWatt }, 5) }
     val wpwSeries = remember(samples) { MetricsMath.movingAverage(samples.map { it.workPerWatt }, 5) }
@@ -166,7 +171,7 @@ fun PerformanceScreen(
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                if (viewingSaved && selectedSession != null) {
+                if (selectedSession != null) {
                     val name = appLabels[selectedSession.packageName] ?: selectedSession.packageName
                     Text(
                         text = name,
@@ -236,7 +241,7 @@ fun PerformanceScreen(
                         title = "POWER • TEMP • FPS",
                         series = listOf(
                             ChartSeries("FPS", primary, fpsSeries, "", 0),
-                            ChartSeries("Power", ext.optimal, wattSeries, " W", 1),
+                            ChartSeries("Power", ext.optimal, wattSeries, " W", 1, states = battStates, chargingColor = ext.warning),
                             ChartSeries("Temp", ext.throttle, tempSeries, "°C", 1, zeroBased = false)
                         ),
                         timesMs = times,
@@ -349,8 +354,14 @@ private fun formatDate(ms: Long): String =
 private fun SummaryCard(summary: MetricSummary, live: Boolean, last: MetricSample) {
     EcuCard {
         if (live) {
+            val nowPwr = when (last.batteryState) {
+                BatteryState.CHARGING -> "Chg ${fmt(last.watts)} W"
+                BatteryState.FULL_PLUGGED -> "Plug 0.0 W"
+                BatteryState.DISCHARGING -> "${fmt(last.watts)} W"
+                BatteryState.UNKNOWN -> "– W"
+            }
             Text(
-                text = "NOW  ${if (last.fps >= 0f) fmt(last.fps, 0) else "–"} FPS  •  ${fmt(last.watts)} W  •  ${fmt(last.tempC)}°C",
+                text = "NOW  ${if (last.fps >= 0f) fmt(last.fps, 0) else "–"} FPS  •  $nowPwr  •  ${fmt(last.tempC)}°C",
                 style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodyMedium.fontSize),
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -368,8 +379,9 @@ private fun SummaryCard(summary: MetricSummary, live: Boolean, last: MetricSampl
             StatTile("MAX TEMP", fmt(summary.maxTempC) + "°C", Modifier.weight(1f))
         }
         Spacer(modifier = Modifier.height(8.dp))
+        val chgNote = if (summary.includesCharging) " • charging excluded from avg/energy" else ""
         Text(
-            text = "${fmtDuration(summary.durationMs)} shown • ${fmt(summary.energyWh, 2)} Wh used • peak ${fmt(summary.maxWatts)} W",
+            text = "${fmtDuration(summary.durationMs)} shown • ${fmt(summary.energyWh, 2)} Wh used • peak ${fmt(summary.maxWatts)} W$chgNote",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -422,8 +434,9 @@ private fun SessionRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                val chgBadge = if (s.includesCharging) " • incl. charging" else ""
                 Text(
-                    text = "${formatDate(info.startMs)} • ${fmtDuration(s.durationMs)}",
+                    text = "${formatDate(info.startMs)} • ${fmtDuration(s.durationMs)}$chgBadge",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -473,21 +486,29 @@ private fun MetricChart(
         Spacer(modifier = Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             series.forEach { sr ->
-                val v = if (scrubIndex != null) {
-                    sr.values.getOrNull(scrubIndex) ?: Float.NaN
+                val activeIdx = scrubIndex ?: sr.values.indexOfLast { !it.isNaN() }
+                val v = if (activeIdx >= 0) sr.values.getOrNull(activeIdx) ?: Float.NaN else Float.NaN
+                val ptState = if (activeIdx >= 0) sr.states?.getOrNull(activeIdx) else null
+                val dotColor = if (ptState != null && ptState != BatteryState.DISCHARGING && sr.chargingColor != null) {
+                    sr.chargingColor
                 } else {
-                    sr.values.lastOrNull { !it.isNaN() } ?: Float.NaN
+                    sr.color
+                }
+                val itemText = when (ptState) {
+                    BatteryState.CHARGING -> "Chg ${fmt(v, sr.decimals)}${sr.unit}"
+                    BatteryState.FULL_PLUGGED -> "Plug 0.0${sr.unit}"
+                    else -> "${sr.label} ${fmt(v, sr.decimals)}${sr.unit}"
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
                             .size(8.dp)
                             .clip(CircleShape)
-                            .background(sr.color)
+                            .background(dotColor)
                     )
                     Spacer(modifier = Modifier.width(5.dp))
                     Text(
-                        text = "${sr.label} ${fmt(v, sr.decimals)}${sr.unit}",
+                        text = itemText,
                         style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelMedium.fontSize),
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1
@@ -530,29 +551,74 @@ private fun MetricChart(
                 )
             }
             val stepX = size.width / (n - 1).coerceAtLeast(1)
+            val strokePx = 2.5.dp.toPx()
+            val dashEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
             series.forEachIndexed { si, sr ->
                 val (lo, hi) = ranges[si]
-                val path = Path()
-                var penDown = false
-                sr.values.forEachIndexed { i, v ->
-                    if (v.isNaN() || v.isInfinite()) {
-                        penDown = false
-                    } else {
-                        val x = i * stepX
-                        val y = size.height * (1f - ((v - lo) / (hi - lo)).coerceIn(0f, 1f))
-                        if (!penDown) {
-                            path.moveTo(x, y)
-                            penDown = true
+                val states = sr.states
+                val chgColor = sr.chargingColor
+                if (states != null && chgColor != null && states.size == sr.values.size) {
+                    val disPath = Path()
+                    val chgPath = Path()
+                    var prevMode = -1 // 0 = dis, 1 = chg
+                    var prevX = 0f
+                    var prevY = 0f
+                    sr.values.forEachIndexed { i, v ->
+                        if (v.isNaN() || v.isInfinite()) {
+                            prevMode = -1
                         } else {
-                            path.lineTo(x, y)
+                            val x = i * stepX
+                            val y = size.height * (1f - ((v - lo) / (hi - lo)).coerceIn(0f, 1f))
+                            val mode = if (states[i] == BatteryState.DISCHARGING) 0 else 1
+                            val targetPath = if (mode == 0) disPath else chgPath
+                            if (prevMode != mode) {
+                                if (prevMode >= 0) {
+                                    targetPath.moveTo(prevX, prevY)
+                                    targetPath.lineTo(x, y)
+                                } else {
+                                    targetPath.moveTo(x, y)
+                                }
+                            } else {
+                                targetPath.lineTo(x, y)
+                            }
+                            prevMode = mode
+                            prevX = x
+                            prevY = y
                         }
                     }
+                    drawPath(
+                        path = disPath,
+                        color = sr.color,
+                        style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                    )
+                    drawPath(
+                        path = chgPath,
+                        color = chgColor,
+                        style = Stroke(width = strokePx, cap = StrokeCap.Round, pathEffect = dashEffect)
+                    )
+                } else {
+                    val path = Path()
+                    var penDown = false
+                    sr.values.forEachIndexed { i, v ->
+                        if (v.isNaN() || v.isInfinite()) {
+                            penDown = false
+                        } else {
+                            val x = i * stepX
+                            val y = size.height * (1f - ((v - lo) / (hi - lo)).coerceIn(0f, 1f))
+                            if (!penDown) {
+                                path.moveTo(x, y)
+                                penDown = true
+                            } else {
+                                path.lineTo(x, y)
+                            }
+                        }
+                    }
+                    drawPath(
+                        path = path,
+                        color = sr.color,
+                        style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                    )
                 }
-                drawPath(
-                    path = path,
-                    color = sr.color,
-                    style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
-                )
             }
             if (scrubIndex != null) {
                 val x = scrubIndex * stepX

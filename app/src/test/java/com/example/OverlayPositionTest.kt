@@ -16,8 +16,12 @@
 package com.example
 
 import com.example.model.GovernorConfig
+import com.example.model.overlayCompactScaleFor
+import com.example.model.overlayExpandedScaleFor
 import com.example.model.overlayPosPm
+import com.example.model.overlayScalePct
 import com.example.model.withOverlayPosPm
+import com.example.model.withOverlayScalePct
 import com.example.service.OverlaySizing
 import com.example.service.OverlayStyle
 import org.junit.Assert.assertEquals
@@ -67,6 +71,31 @@ class OverlayPositionTest {
         assertEquals(0 to 0, OverlaySizing.computeWindowOriginPx(500, 500, 700, 700, 1000, 1000))
         assertEquals(780 to 2200, OverlaySizing.computeWindowOriginPx(1080, 2400, 300, 200, 1500, 1200))
         assertEquals(390 to 1100, OverlaySizing.computeWindowOriginPx(1080, 2400, 300, 200, 500, 500))
+    }
+
+    @Test fun landscapeScaleFallsBackToPortraitSentinelAndSavesIndependently() {
+        val def = GovernorConfig(overlayCompactScalePct = 115, overlayExpandedScalePct = 90)
+        assertEquals(-1, def.overlayCompactScalePctL)
+        assertEquals(-1, def.overlayExpandedScalePctL)
+        // Sentinel -1 falls back to portrait scale in landscape
+        assertEquals(115, def.overlayCompactScaleFor(landscape = true))
+        assertEquals(90, def.overlayExpandedScaleFor(landscape = true))
+
+        val updated = def.withOverlayScalePct(landscape = true, compactPct = 140, expandedPct = 300)
+        assertEquals(115, updated.overlayCompactScaleFor(landscape = false))
+        assertEquals(90, updated.overlayExpandedScaleFor(landscape = false))
+        assertEquals(140, updated.overlayCompactScaleFor(landscape = true))
+        assertEquals(200, updated.overlayExpandedScaleFor(landscape = true))
+
+        // Active style selection respects compact vs expanded vs detailed
+        assertEquals(140, updated.copy(overlayExpanded = false, overlayDetailed = false).overlayScalePct(true))
+        assertEquals(200, updated.copy(overlayExpanded = true, overlayDetailed = false).overlayScalePct(true))
+        assertEquals(200, updated.copy(overlayExpanded = false, overlayDetailed = true).overlayScalePct(true))
+
+        // Changing positions leaves scales intact
+        val moved = updated.withOverlayPosPm(landscape = true, xPm = 40, yPm = 60)
+        assertEquals(140, moved.overlayCompactScaleFor(landscape = true))
+        assertEquals(115, moved.overlayCompactScaleFor(landscape = false))
     }
 }
 

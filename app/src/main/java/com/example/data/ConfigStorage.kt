@@ -440,6 +440,8 @@ class ConfigStorage(private val context: Context) {
             put("overlayBgOpacityPct", c.overlayBgOpacityPct)
             put("overlayCompactScalePct", c.overlayCompactScalePct)
             put("overlayExpandedScalePct", c.overlayExpandedScalePct)
+            put("overlayCompactScalePctL", c.overlayCompactScalePctL)
+            put("overlayExpandedScalePctL", c.overlayExpandedScalePctL)
             put("overlayCompactXPm", c.overlayCompactXPm)
             put("overlayCompactYPm", c.overlayCompactYPm)
             put("overlayExpandedXPm", c.overlayExpandedXPm)
@@ -470,6 +472,8 @@ class ConfigStorage(private val context: Context) {
                 put("curveShape", c.tempThrottle.curveShape.name)
                 put("reactionSpeed", c.tempThrottle.reactionSpeed.toDouble())
                 put("hysteresisC", c.tempThrottle.hysteresisC.toDouble())
+                put("chargingAware", c.tempThrottle.chargingAware)
+                put("chargingStartOffsetC", c.tempThrottle.chargingStartOffsetC.toDouble())
             })
             put("powerThrottle", JSONObject().apply {
                 put("enabled", c.powerThrottle.enabled)
@@ -487,6 +491,8 @@ class ConfigStorage(private val context: Context) {
             put("efficiencyMode", c.efficiencyMode.name)
             put("minConfidencePct", c.minConfidencePct)
             put("explorationRate", c.explorationRate.name)
+            put("batteryEstimationEnabled", c.batteryEstimationEnabled)
+            put("batteryDesignCapacityOverrideMah", c.batteryDesignCapacityOverrideMah)
             val gamesArr = JSONArray()
             c.gamePackages.sorted().forEach { gamesArr.put(it) }
             put("gamePackages", gamesArr)
@@ -553,6 +559,12 @@ class ConfigStorage(private val context: Context) {
             overlayBgOpacityPct = obj.optInt("overlayBgOpacityPct", default.overlayBgOpacityPct).coerceIn(0, 100),
             overlayCompactScalePct = obj.optInt("overlayCompactScalePct", default.overlayCompactScalePct).coerceIn(50, 200),
             overlayExpandedScalePct = obj.optInt("overlayExpandedScalePct", default.overlayExpandedScalePct).coerceIn(50, 200),
+            overlayCompactScalePctL = obj.optInt("overlayCompactScalePctL", default.overlayCompactScalePctL).let {
+                if (it < 0) -1 else it.coerceIn(50, 200)
+            },
+            overlayExpandedScalePctL = obj.optInt("overlayExpandedScalePctL", default.overlayExpandedScalePctL).let {
+                if (it < 0) -1 else it.coerceIn(50, 200)
+            },
             overlayCompactXPm = obj.optInt("overlayCompactXPm", default.overlayCompactXPm).coerceIn(0, 1000),
             overlayCompactYPm = obj.optInt("overlayCompactYPm", default.overlayCompactYPm).coerceIn(0, 1000),
             overlayExpandedXPm = obj.optInt("overlayExpandedXPm", default.overlayExpandedXPm).coerceIn(0, 1000),
@@ -582,7 +594,9 @@ class ConfigStorage(private val context: Context) {
                 gpuMaxReductionPct = tObj.optDouble("gpuMaxReductionPct", 65.0).toFloat(),
                 curveShape = enumOrDefault(tObj.optString("curveShape"), ThrottleCurveShape.LINEAR),
                 reactionSpeed = tObj.optDouble("reactionSpeed", 0.35).toFloat(),
-                hysteresisC = tObj.optDouble("hysteresisC", 2.0).toFloat()
+                hysteresisC = tObj.optDouble("hysteresisC", 2.0).toFloat(),
+                chargingAware = tObj.optBoolean("chargingAware", false),
+                chargingStartOffsetC = tObj.optDouble("chargingStartOffsetC", 2.0).toFloat().coerceIn(0f, 5f)
             ) else default.tempThrottle,
             powerThrottle = if (pObj != null) PowerThrottleConfig(
                 enabled = pObj.optBoolean("enabled", true),
@@ -600,6 +614,8 @@ class ConfigStorage(private val context: Context) {
             efficiencyMode = enumOrDefault(obj.optString("efficiencyMode"), default.efficiencyMode),
             minConfidencePct = obj.optInt("minConfidencePct", default.minConfidencePct).coerceIn(20, 95),
             explorationRate = enumOrDefault(obj.optString("explorationRate"), default.explorationRate),
+            batteryEstimationEnabled = obj.optBoolean("batteryEstimationEnabled", default.batteryEstimationEnabled),
+            batteryDesignCapacityOverrideMah = obj.optInt("batteryDesignCapacityOverrideMah", default.batteryDesignCapacityOverrideMah).coerceAtLeast(0),
             gamePackages = games
         )
     }

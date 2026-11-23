@@ -70,6 +70,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.model.BatteryState
 import com.example.model.ClusterLiveState
 import com.example.model.GovernorMode
 import com.example.model.HardwareSpec
@@ -81,6 +82,7 @@ import com.example.ui.components.StatusPill
 import com.example.ui.components.TelemetryHistoryGraph
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoMetricStyle
+import java.util.Locale
 
 @Composable
 fun MonitorScreen(
@@ -309,42 +311,69 @@ fun MonitorScreen(
                 }
 
                 EcuCard(modifier = Modifier.weight(1f)) {
+                    val battState = telemetry.batteryState
+                    val pwrTint = when {
+                        battState == BatteryState.CHARGING || battState == BatteryState.FULL_PLUGGED -> ext.optimal
+                        telemetry.powerThrottleActive -> ext.warning
+                        battState == BatteryState.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> ext.optimal
+                    }
+                    val pwrHeader = when (battState) {
+                        BatteryState.CHARGING -> "CHARGING"
+                        BatteryState.FULL_PLUGGED -> "PLUGGED"
+                        BatteryState.DISCHARGING -> "POWER DRAW"
+                        BatteryState.UNKNOWN -> "POWER DRAW"
+                    }
+                    val pwrValue = when (battState) {
+                        BatteryState.CHARGING -> "\u26A1 +${"%.2f".format(Locale.US, telemetry.chargeWatts)} W"
+                        BatteryState.FULL_PLUGGED -> "PLUG 0.0 W"
+                        BatteryState.DISCHARGING -> "${"%.2f".format(Locale.US, telemetry.watts)} W"
+                        BatteryState.UNKNOWN -> "-- W"
+                    }
+                    val pwrValueColor = when {
+                        battState == BatteryState.CHARGING || battState == BatteryState.FULL_PLUGGED -> ext.optimal
+                        telemetry.powerThrottleActive -> ext.warning
+                        battState == BatteryState.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Bolt,
-                            contentDescription = "Power draw",
-                            tint = if (telemetry.powerThrottleActive) ext.warning else ext.optimal,
+                            contentDescription = "Power status",
+                            tint = pwrTint,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "POWER DRAW",
+                            text = pwrHeader,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "${"%.2f".format(telemetry.watts)} W",
+                        text = pwrValue,
                         style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.headlineSmall.fontSize),
-                        color = if (telemetry.powerThrottleActive) ext.warning else MaterialTheme.colorScheme.onSurface
+                        color = pwrValueColor
                     )
                     Text(
-                        text = "${telemetry.rawCurrentMa.toInt()} mA @ ${(telemetry.rawVoltageMv / 1000f).let { "%.2f".format(it) }} V",
+                        text = "${telemetry.rawCurrentMa.toInt()} mA @ ${(telemetry.rawVoltageMv / 1000f).let { "%.2f".format(Locale.US, it) }} V",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
                     )
                     Spacer(modifier = Modifier.height(6.dp))
-                    val pwrStatus = if (telemetry.powerThrottleActive) {
-                        "POWER CAP: ${telemetry.powerCapPct.toInt()}% (-${(100f - telemetry.powerCapPct).toInt()}%)"
-                    } else {
-                        "Power Cap: Inactive (100%)"
+                    val (pwrStatus, pwrStatusColor) = when {
+                        battState == BatteryState.CHARGING -> "Power Cap: Inactive (charging)" to ext.optimal
+                        battState == BatteryState.FULL_PLUGGED -> "Power Cap: Inactive (full, plugged)" to ext.optimal
+                        telemetry.powerThrottleActive -> "POWER CAP: ${telemetry.powerCapPct.toInt()}% (-${(100f - telemetry.powerCapPct).toInt()}%)" to ext.warning
+                        battState == BatteryState.UNKNOWN -> "Waiting for reading…" to MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> "Power Cap: Inactive (100%)" to ext.optimal
                     }
                     Text(
                         text = pwrStatus,
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (telemetry.powerThrottleActive) ext.warning else ext.optimal
+                        color = pwrStatusColor
                     )
                 }
             }

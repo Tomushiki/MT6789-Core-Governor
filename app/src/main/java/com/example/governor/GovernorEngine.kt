@@ -21,12 +21,14 @@ import android.content.IntentFilter
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
 import android.os.BatteryManager
+import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Display
 import com.example.data.ConfigStorage
 import com.example.data.OriginalCpuBackup
 import com.example.data.OriginalHardwareBackup
+import com.example.model.BatteryState
 import com.example.model.ClusterLiveState
 import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
@@ -57,6 +59,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val WHITESPACE_REGEX = Regex("\\s+")
@@ -88,6 +91,11 @@ class GovernorEngine(context: Context) {
 
     /** On-device learned power model & opt-in efficiency governor helper. */
     val powerModel = PowerModel(java.io.File(appContext.filesDir, "power_model.json")) { level, tag, msg ->
+        log(level, tag, msg)
+    }
+
+    /** Long-term battery capacity estimator & charge/discharge energy integrator. */
+    val batteryEstimator = BatteryEstimator(java.io.File(appContext.filesDir, "battery_model.json"), engineScope) { level, tag, msg ->
         log(level, tag, msg)
     }
 
@@ -190,9 +198,22 @@ class GovernorEngine(context: Context) {
     private val pmClusterFreqMhz = IntArray(PowerModel.MAX_CLUSTERS)
     private val pmClusterUtilPct = FloatArray(PowerModel.MAX_CLUSTERS)
     private val pmClusterCoreCounts = IntArray(PowerModel.MAX_CLUSTERS)
-    private var cachedBatteryCharging = false
-    private var cachedBatteryPct = 100
+    private var cachedBatteryPct = -1
     private var lastBatteryCheckMs = 0L
+    private var lastSlowBattSysfsReadMs = 0L
+    private var cachedBmStatus = -1
+    private var cachedBmPlugged = -1
+    private var cachedBattTempC = 0f
+    private var cachedBattVoltMv = 0f
+    private var cachedBattHealthLabel = "n/a"
+    private var cachedChargeCounterMah = -1f
+    private var cachedCycleCount = -1
+    private var stableBatteryState = BatteryState.UNKNOWN
+    private var candidateBatteryState = BatteryState.UNKNOWN
+    private var candidateBatterySinceMs = 0L
+    private var learnedDischargeSign = 0
+    private var dischargeSignScore = 0
+    private var smoothedChargeWatts = 0f
     private val displayRefreshHz: Float =
         (appContext.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
             ?.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate?.takeIf { it >= 30f } ?: 60f
@@ -203,8 +224,11 @@ class GovernorEngine(context: Context) {
 
     init {
         _presets.value = storage.loadPresets(_hardwareSpec.value)
+        val initialCfg = _config.value
+        batteryEstimator.updateConfig(initialCfg.batteryEstimationEnabled, initialCfg.batteryDesignCapacityOverrideMah)
         engineScope.launch(Dispatchers.IO) {
             powerModel.load()
+            batteryEstimator.load()
         }
         powerModel.start(engineScope)
         log(LogLevel.INFO, "Engine", "CoreGovernor v2 initialized (OPP-index GPU control).")
@@ -329,6 +353,7 @@ class GovernorEngine(context: Context) {
             storage.saveOriginalHardwareBackup(backup)
             installCrashRestoreHook()
 
+            batteryEstimator.resetSession()
             resetLoopState()
             for (policy in hw.cpuPolicies) {
                 val availGovsRaw = rootShell.readFile("${policy.path}/scaling_available_governors").orEmpty()
@@ -452,7 +477,7 @@ class GovernorEngine(context: Context) {
             val am = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
             if (am?.isMusicActive == true) return true
         }
-        if (cfg.screenOffExemptCharging && isDeviceCharging()) {
+        if (cfg.screenOffExemptCharging && (stableBatteryState.isPluggedOrCharging || isDeviceCharging())) {
             return true
         }
         return false
@@ -470,21 +495,55 @@ class GovernorEngine(context: Context) {
     }
 
     private fun refreshBatteryStatusIfDue(nowMs: Long) {
-        if (nowMs - lastBatteryCheckMs < 5_000L) return
-        lastBatteryCheckMs = nowMs
         val bm = appContext.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        val quickStatus = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATUS) ?: -1
+        val statusChanged = quickStatus > 0 && cachedBmStatus > 0 && quickStatus != cachedBmStatus
+        if (!statusChanged && lastBatteryCheckMs > 0L && nowMs - lastBatteryCheckMs < 3_000L) return
+        lastBatteryCheckMs = nowMs
+
         val battIntent = appContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val status = battIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-        val plugged = battIntent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
-        cachedBatteryCharging = (bm?.isCharging == true) ||
-            status == BatteryManager.BATTERY_STATUS_CHARGING ||
-            status == BatteryManager.BATTERY_STATUS_FULL ||
-            plugged != 0
+        val intentStatus = battIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        cachedBmStatus = if (intentStatus > 0) intentStatus else quickStatus
+        cachedBmPlugged = battIntent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1) ?: -1
+
         val level = battIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = battIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100)?.coerceAtLeast(1) ?: 100
         if (level >= 0) {
             cachedBatteryPct = ((level * 100f) / scale).roundToInt().coerceIn(0, 100)
         }
+        val rawTemp = battIntent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE) ?: Int.MIN_VALUE
+        if (rawTemp != Int.MIN_VALUE && rawTemp in -300..1200) {
+            cachedBattTempC = rawTemp / 10f
+        }
+        val rawVolt = battIntent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1) ?: -1
+        if (rawVolt > 0) {
+            cachedBattVoltMv = if (rawVolt > 20_000) rawVolt / 1000f else rawVolt.toFloat()
+        }
+        val healthInt = battIntent?.getIntExtra(BatteryManager.EXTRA_HEALTH, BatteryManager.BATTERY_HEALTH_UNKNOWN)
+            ?: BatteryManager.BATTERY_HEALTH_UNKNOWN
+        cachedBattHealthLabel = when (healthInt) {
+            BatteryManager.BATTERY_HEALTH_GOOD -> "Good"
+            BatteryManager.BATTERY_HEALTH_OVERHEAT -> "Overheat"
+            BatteryManager.BATTERY_HEALTH_DEAD -> "Dead"
+            BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "Over voltage"
+            BatteryManager.BATTERY_HEALTH_COLD -> "Cold"
+            else -> "n/a"
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && battIntent != null) {
+            val cyc = battIntent.getIntExtra(BatteryManager.EXTRA_CYCLE_COUNT, -1)
+            if (cyc >= 0) cachedCycleCount = cyc
+        }
+        val ccUah = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER) ?: Int.MIN_VALUE
+        cachedChargeCounterMah = if (ccUah > 0 && ccUah != Int.MIN_VALUE) ccUah / 1000f else -1f
+
+        batteryEstimator.updateBatteryProperties(
+            batteryPct = cachedBatteryPct,
+            tempC = cachedBattTempC,
+            voltageMv = cachedBattVoltMv,
+            healthLabel = cachedBattHealthLabel,
+            chargeCounterMah = cachedChargeCounterMah,
+            cycleCount = cachedCycleCount
+        )
     }
 
     private suspend fun enterSleepSaving() {
@@ -553,6 +612,7 @@ class GovernorEngine(context: Context) {
     fun stopAndRestore() {
         storage.flush()
         powerModel.flush()
+        batteryEstimator.flush()
         metrics.onStopped()
         stopFpsSampler()
         sensorPinner.setServiceRunning(false)
@@ -607,7 +667,6 @@ class GovernorEngine(context: Context) {
             lastWrittenCpuFreq.clear()
             lastReassertMs.clear()
             lastDriftLogMs.clear()
-        driftCount.clear()
             driftCount.clear()
             policyPinState.clear()
             lastWrittenGpuOppIndex = null
@@ -665,12 +724,27 @@ class GovernorEngine(context: Context) {
 
         hw.batteryPower.currentPath?.let { readPaths.add(it) }
         hw.batteryPower.voltagePath?.let { readPaths.add(it) }
+        val readSlowBattSysfs = lastSlowBattSysfsReadMs == 0L || nowMs - lastSlowBattSysfsReadMs >= 600_000L
+        if (readSlowBattSysfs) {
+            lastSlowBattSysfsReadMs = nowMs
+            hw.batteryPower.chargeFullPath?.let { readPaths.add(it) }
+            hw.batteryPower.chargeFullDesignPath?.let { readPaths.add(it) }
+            hw.batteryPower.cycleCountPath?.let { readPaths.add(it) }
+        }
         if (cfg.overlayEnabled && cfg.overlayDetailed) {
             hw.ddr?.curFreqPath?.let { readPaths.add(it) }
         }
 
         val batch = rootShell.readFilesBatch(readPaths.distinct())
         if (batch.isEmpty()) return
+
+        refreshBatteryStatusIfDue(nowMs)
+        if (readSlowBattSysfs) {
+            val fullMah = hw.batteryPower.chargeFullPath?.let { batch[it] }?.let { SysfsParsers.parseCapacityMah(it) }
+            val designMah = hw.batteryPower.chargeFullDesignPath?.let { batch[it] }?.let { SysfsParsers.parseCapacityMah(it) }
+            val sysfsCycles = hw.batteryPower.cycleCountPath?.let { batch[it] }?.let { SysfsParsers.parseCycleCount(it) }
+            batteryEstimator.updateSlowSysfs(fullMah = fullMah, designMah = designMah, cycleCount = sysfsCycles)
+        }
 
         // 1. Foreground app & Mode decision
         val fgPkg = foregroundDetector.detectForegroundPackage(nowMs)
@@ -723,7 +797,90 @@ class GovernorEngine(context: Context) {
         val burstActive = nowMs < burstEndTimeMs
         val burstRemaining = (burstEndTimeMs - nowMs).coerceAtLeast(0L)
 
-        // 4. Temperature & Thermal Throttle
+        // 5. Power & Battery State (with 3s hysteresis)
+        val rawCurrent = hw.batteryPower.currentPath?.let { batch[it]?.toLongOrNull() } ?: 0L
+        val rawVoltage = hw.batteryPower.voltagePath?.let { batch[it]?.toLongOrNull() } ?: 0L
+        val rawReading = if (hw.batteryPower.currentPath != null && hw.batteryPower.voltagePath != null) {
+            SysfsParsers.computePowerReading(
+                rawCurrent = rawCurrent,
+                rawVoltage = rawVoltage,
+                unitScale = cfg.powerThrottle.unitScale,
+                polarity = cfg.powerThrottle.polarity,
+                bmStatus = cachedBmStatus,
+                bmPlugged = cachedBmPlugged,
+                learnedDischargeSign = learnedDischargeSign
+            )
+        } else {
+            val fallbackState = when {
+                cachedBmPlugged == 0 -> BatteryState.DISCHARGING
+                cachedBmStatus == BatteryManager.BATTERY_STATUS_CHARGING -> BatteryState.CHARGING
+                cachedBmStatus == BatteryManager.BATTERY_STATUS_FULL -> BatteryState.FULL_PLUGGED
+                cachedBmPlugged > 0 -> BatteryState.CHARGING
+                else -> BatteryState.UNKNOWN
+            }
+            PowerReading(
+                signedWatts = 0f,
+                dischargeWatts = 0f,
+                chargeWatts = 0f,
+                state = fallbackState,
+                currentMa = 0f,
+                voltageMv = cachedBattVoltMv
+            )
+        }
+
+        // Learn AUTO_ABS sign from clear BatteryManager status vs raw current
+        if (abs(rawReading.currentMa) > 150f) {
+            when (cachedBmStatus) {
+                BatteryManager.BATTERY_STATUS_DISCHARGING -> {
+                    val vote = if (rawReading.currentMa > 0f) 1 else -1
+                    dischargeSignScore = (dischargeSignScore + vote).coerceIn(-5, 5)
+                }
+                BatteryManager.BATTERY_STATUS_CHARGING -> {
+                    val vote = if (rawReading.currentMa < 0f) 1 else -1
+                    dischargeSignScore = (dischargeSignScore + vote).coerceIn(-5, 5)
+                }
+            }
+            if (abs(dischargeSignScore) >= 3) {
+                learnedDischargeSign = if (dischargeSignScore > 0) 1 else -1
+            }
+        }
+
+        val rawState = rawReading.state
+        if (rawState != BatteryState.UNKNOWN) {
+            if (stableBatteryState == BatteryState.UNKNOWN) {
+                stableBatteryState = rawState
+                candidateBatteryState = rawState
+                candidateBatterySinceMs = nowMs
+                log(LogLevel.INFO, "Battery", "Battery state -> ${rawState.name}")
+            } else if (rawState == stableBatteryState) {
+                candidateBatteryState = stableBatteryState
+                candidateBatterySinceMs = nowMs
+            } else {
+                if (candidateBatteryState != rawState) {
+                    candidateBatteryState = rawState
+                    candidateBatterySinceMs = nowMs
+                } else if (nowMs - candidateBatterySinceMs >= 3_000L) {
+                    val prevState = stableBatteryState
+                    stableBatteryState = rawState
+                    wattWindow.clear()
+                    overPowerSinceMs = null
+                    lastDominantComponent = null
+                    if (rawState != BatteryState.DISCHARGING) {
+                        currentPowerCapPct = 100f
+                    }
+                    if (rawState != BatteryState.CHARGING) {
+                        smoothedChargeWatts = 0f
+                    }
+                    log(
+                        LogLevel.INFO,
+                        "Battery",
+                        "Battery: ${prevState.name} -> ${rawState.name} (I=${"%.0f".format(Locale.US, rawReading.currentMa)}mA, V=${"%.0f".format(Locale.US, rawReading.voltageMv)}mV)"
+                    )
+                }
+            }
+        }
+
+        // 4. Temperature & Thermal Throttle (now charging-aware via shared stableBatteryState)
         val tempC = tempSensor?.let { sensor ->
             SysfsParsers.parseTemperatureC(batch[sensor.path].orEmpty(), sensor.divisorToCelsius)
         } ?: _telemetry.value.temperatureC
@@ -734,7 +891,8 @@ class GovernorEngine(context: Context) {
             prevCapCpuPct = currentTempCpuCapPct,
             prevCapGpuPct = currentTempGpuCapPct,
             config = cfg.tempThrottle,
-            safetyFloorPct = cfg.safetyFloorPct
+            safetyFloorPct = cfg.safetyFloorPct,
+            isChargingOrPlugged = stableBatteryState.isPluggedOrCharging
         )
         latchedPeakTempC = nextLatchedPeak
         currentTempCpuCapPct = nextTempCpuCap
@@ -742,53 +900,57 @@ class GovernorEngine(context: Context) {
         val tempThrottleActive = cfg.tempThrottle.enabled &&
             (currentTempCpuCapPct < 99.5f || currentTempGpuCapPct < 99.5f)
 
-        // 5. Power & Gentle Power Throttle
-        val rawCurrent = hw.batteryPower.currentPath?.let { batch[it]?.toLongOrNull() } ?: 0L
-        val rawVoltage = hw.batteryPower.voltagePath?.let { batch[it]?.toLongOrNull() } ?: 0L
-        val powerReading = if (hw.batteryPower.currentPath != null && hw.batteryPower.voltagePath != null) {
-            SysfsParsers.computePowerReading(
-                rawCurrent = rawCurrent,
-                rawVoltage = rawVoltage,
-                unitScale = cfg.powerThrottle.unitScale,
-                polarity = cfg.powerThrottle.polarity
-            )
-        } else {
-            PowerReading(0f, 0f, 0f)
-        }
-
+        // 5b. Gentle Power Throttle (discharging ONLY; release cleanly while charging/plugged)
         val maxWin = cfg.powerThrottle.averagingSamples.coerceIn(2, 40)
-        wattWindow.addLast(powerReading.watts)
-        while (wattWindow.size > maxWin) wattWindow.removeFirst()
-        val avgWatts = if (wattWindow.isNotEmpty()) wattWindow.average().toFloat() else powerReading.watts
-
-        if (cfg.powerThrottle.enabled) {
-            if (avgWatts > cfg.powerThrottle.limitWatts) {
-                val startOver = overPowerSinceMs ?: nowMs.also { overPowerSinceMs = it }
-                if (nowMs - startOver >= cfg.powerThrottle.sustainMs) {
-                    val prevCap = currentPowerCapPct
-                    currentPowerCapPct = (currentPowerCapPct - cfg.powerThrottle.stepPct)
-                        .coerceIn(cfg.safetyFloorPct, 100f)
-                    if (prevCap >= 99.5f && currentPowerCapPct < 99.5f) {
-                        log(
-                            LogLevel.WARN,
-                            "PowerCap",
-                            "Power draw ${"%.2f".format(avgWatts)}W > ${cfg.powerThrottle.limitWatts}W limit; stepping cap down."
-                        )
+        val avgWatts: Float
+        if (stableBatteryState == BatteryState.DISCHARGING) {
+            if (rawState == BatteryState.DISCHARGING) {
+                wattWindow.addLast(rawReading.dischargeWatts)
+                while (wattWindow.size > maxWin) wattWindow.removeFirst()
+            }
+            avgWatts = if (wattWindow.isNotEmpty()) wattWindow.average().toFloat() else rawReading.dischargeWatts
+            smoothedChargeWatts = 0f
+            if (cfg.powerThrottle.enabled) {
+                if (avgWatts > cfg.powerThrottle.limitWatts) {
+                    val startOver = overPowerSinceMs ?: nowMs.also { overPowerSinceMs = it }
+                    if (nowMs - startOver >= cfg.powerThrottle.sustainMs) {
+                        val prevCap = currentPowerCapPct
+                        currentPowerCapPct = (currentPowerCapPct - cfg.powerThrottle.stepPct)
+                            .coerceIn(cfg.safetyFloorPct, 100f)
+                        if (prevCap >= 99.5f && currentPowerCapPct < 99.5f) {
+                            log(
+                                LogLevel.WARN,
+                                "PowerCap",
+                                "Power draw ${"%.2f".format(avgWatts)}W > ${cfg.powerThrottle.limitWatts}W limit; stepping cap down."
+                            )
+                        }
+                        overPowerSinceMs = nowMs - (cfg.powerThrottle.sustainMs / 2L)
                     }
-                    overPowerSinceMs = nowMs - (cfg.powerThrottle.sustainMs / 2L)
+                } else {
+                    overPowerSinceMs = null
+                    if (avgWatts < cfg.powerThrottle.limitWatts * 0.92f && currentPowerCapPct < 100f) {
+                        currentPowerCapPct = (currentPowerCapPct + cfg.powerThrottle.releaseStepPct)
+                            .coerceIn(cfg.safetyFloorPct, 100f)
+                    }
                 }
             } else {
                 overPowerSinceMs = null
-                if (avgWatts < cfg.powerThrottle.limitWatts * 0.92f && currentPowerCapPct < 100f) {
-                    currentPowerCapPct = (currentPowerCapPct + cfg.powerThrottle.releaseStepPct)
-                        .coerceIn(cfg.safetyFloorPct, 100f)
-                }
+                currentPowerCapPct = 100f
             }
         } else {
+            wattWindow.clear()
             overPowerSinceMs = null
             currentPowerCapPct = 100f
+            avgWatts = 0f
+            smoothedChargeWatts = if (stableBatteryState == BatteryState.CHARGING) {
+                val cw = if (rawState == BatteryState.CHARGING) rawReading.chargeWatts else smoothedChargeWatts
+                if (smoothedChargeWatts <= 0f) cw else smoothedChargeWatts + (cw - smoothedChargeWatts) * 0.35f
+            } else {
+                0f
+            }
         }
-        val powerThrottleActive = cfg.powerThrottle.enabled && currentPowerCapPct < 99.5f
+        val powerThrottleActive = stableBatteryState == BatteryState.DISCHARGING &&
+            cfg.powerThrottle.enabled && currentPowerCapPct < 99.5f
 
         val prevTelemetry = _telemetry.value
         val prevGpu = prevTelemetry.gpu
@@ -885,10 +1047,10 @@ class GovernorEngine(context: Context) {
             lastDominantComponent = null
         }
 
-        refreshBatteryStatusIfDue(nowMs)
         val isGameMode = activeMode == GovernorMode.GAME
         val scenarioKey = PowerModel.scenarioKeyFor(fgPkg, isGameMode, isScreenInteractive)
         val latestFps = prevTelemetry.fps
+        val effBatteryPct = cachedBatteryPct.coerceAtLeast(0)
 
         // 6. CPU cluster target selection & write-on-change (min = max)
         val clusterLiveList = mutableListOf<ClusterLiveState>()
@@ -940,8 +1102,9 @@ class GovernorEngine(context: Context) {
                     explorationRate = cfg.explorationRate,
                     burstActive = burstActive,
                     thermalThrottled = tempThrottleActive,
-                    batteryPct = cachedBatteryPct,
-                    nowMs = nowMs
+                    batteryPct = effBatteryPct,
+                    nowMs = nowMs,
+                    batteryState = stableBatteryState
                 )
             } else {
                 stdTargetFreq
@@ -1187,8 +1350,9 @@ class GovernorEngine(context: Context) {
                         explorationRate = cfg.explorationRate,
                         burstActive = burstActive,
                         thermalThrottled = tempThrottleActive,
-                        batteryPct = cachedBatteryPct,
-                        nowMs = nowMs
+                        batteryPct = effBatteryPct,
+                        nowMs = nowMs,
+                        batteryState = stableBatteryState
                     )
                 } else {
                     selection.targetPos
@@ -1242,8 +1406,8 @@ class GovernorEngine(context: Context) {
 
         powerModel.submitTick(
             timestampMs = nowMs,
-            watts = powerReading.watts,
-            isCharging = cachedBatteryCharging,
+            watts = if (stableBatteryState == BatteryState.DISCHARGING) rawReading.dischargeWatts else 0f,
+            isCharging = stableBatteryState.isPluggedOrCharging,
             isInteractive = isScreenInteractive,
             isSleepSaving = isSleepSaving,
             isGame = isGameMode,
@@ -1258,7 +1422,21 @@ class GovernorEngine(context: Context) {
             clusterCoreCounts = pmClusterCoreCounts,
             gpuAvailable = gpuLiveState.available,
             gpuFreqMhz = ((if (gpuLiveState.currentFreqKhz > 0L) gpuLiveState.currentFreqKhz else gpuLiveState.targetFreqKhz) / 1000L).toInt(),
-            gpuUtilPct = gpuLiveState.loadPct
+            gpuUtilPct = gpuLiveState.loadPct,
+            batteryState = stableBatteryState
+        )
+
+        val estVoltMv = if (rawReading.voltageMv > 0f) rawReading.voltageMv else cachedBattVoltMv
+        batteryEstimator.recordTick(
+            nowMs = nowMs,
+            batteryState = stableBatteryState,
+            absCurrentMa = abs(rawReading.currentMa),
+            voltageMv = estVoltMv,
+            dischargeWatts = if (stableBatteryState == BatteryState.DISCHARGING) rawReading.dischargeWatts else 0f,
+            chargeWatts = if (stableBatteryState == BatteryState.CHARGING) rawReading.chargeWatts else 0f,
+            batteryPct = cachedBatteryPct,
+            pollIntervalMs = cfg.pollIntervalMs,
+            estimationEnabled = cfg.batteryEstimationEnabled
         )
 
         // 7b. Keep RAM at max & read DDR frequency if detailed overlay active
@@ -1299,6 +1477,14 @@ class GovernorEngine(context: Context) {
             0L
         }
 
+        val signedWattsOut = when (stableBatteryState) {
+            BatteryState.DISCHARGING -> -avgWatts
+            BatteryState.CHARGING -> smoothedChargeWatts
+            BatteryState.FULL_PLUGGED, BatteryState.UNKNOWN -> 0f
+        }
+        val estSnap = batteryEstimator.snapshot.value
+        val resolvedCycles = if (cachedCycleCount >= 0) cachedCycleCount else estSnap.cycleCount
+
         // 8. Push telemetry & history sample
         val pollDuration = System.currentTimeMillis() - nowMs
         _telemetry.update { prev ->
@@ -1330,8 +1516,17 @@ class GovernorEngine(context: Context) {
                 temperatureC = tempC,
                 tempSensorLabel = tempSensor?.label ?: "Unassigned",
                 watts = avgWatts,
-                rawCurrentMa = powerReading.currentMa,
-                rawVoltageMv = powerReading.voltageMv,
+                chargeWatts = smoothedChargeWatts,
+                signedWatts = signedWattsOut,
+                batteryState = stableBatteryState,
+                batteryPct = cachedBatteryPct,
+                batteryTempC = cachedBattTempC,
+                batteryVoltageMv = cachedBattVoltMv,
+                batteryHealthLabel = cachedBattHealthLabel,
+                batteryCycleCount = resolvedCycles,
+                chargeCounterMah = cachedChargeCounterMah,
+                rawCurrentMa = rawReading.currentMa,
+                rawVoltageMv = rawReading.voltageMv,
                 tempThrottleActive = tempThrottleActive,
                 tempCpuCapPct = currentTempCpuCapPct,
                 tempGpuCapPct = currentTempGpuCapPct,
@@ -1713,6 +1908,12 @@ class GovernorEngine(context: Context) {
         storage.saveConfigDebounced(next)
         _telemetry.update { it.copy(modeOverride = next.modeOverride) }
 
+        if (prev.batteryEstimationEnabled != next.batteryEstimationEnabled ||
+            prev.batteryDesignCapacityOverrideMah != next.batteryDesignCapacityOverrideMah
+        ) {
+            batteryEstimator.updateConfig(next.batteryEstimationEnabled, next.batteryDesignCapacityOverrideMah)
+        }
+
         if (prev.efficiencyLearningEnabled != next.efficiencyLearningEnabled || prev.efficiencyMode != next.efficiencyMode) {
             powerModel.onEfficiencySettingChanged(next.efficiencyLearningEnabled, next.efficiencyMode)
             if (prev.efficiencyLearningEnabled != next.efficiencyLearningEnabled) {
@@ -1855,6 +2056,14 @@ class GovernorEngine(context: Context) {
         currentTempCpuCapPct = 100f
         currentTempGpuCapPct = 100f
         burstEndTimeMs = 0L
+        stableBatteryState = BatteryState.UNKNOWN
+        candidateBatteryState = BatteryState.UNKNOWN
+        candidateBatterySinceMs = 0L
+        learnedDischargeSign = 0
+        dischargeSignScore = 0
+        smoothedChargeWatts = 0f
+        lastSlowBattSysfsReadMs = 0L
+        lastBatteryCheckMs = 0L
     }
 
     private fun installCrashRestoreHook() {

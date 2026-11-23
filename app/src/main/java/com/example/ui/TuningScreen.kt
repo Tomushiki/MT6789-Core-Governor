@@ -91,6 +91,8 @@ import androidx.compose.ui.unit.dp
 import com.example.governor.SensorPinner
 import com.example.model.FreqRange
 import com.example.model.GovernorConfig
+import com.example.model.overlayCompactScaleFor
+import com.example.model.overlayExpandedScaleFor
 import com.example.model.overlayPosPm
 import com.example.model.GovernorMode
 import com.example.model.HardwareSpec
@@ -147,7 +149,8 @@ fun TuningScreen(
         opacityPct: Int?,
         compactScalePct: Int?,
         expandedScalePct: Int?,
-        bgOpacityPct: Int?
+        bgOpacityPct: Int?,
+        isLandscape: Boolean
     ) -> Unit,
     onUpdateOverlayPosition: (Int?, Int?, Boolean) -> Unit,
     onUpdateRamPin: (Boolean?, Boolean?) -> Unit,
@@ -174,7 +177,9 @@ fun TuningScreen(
         gpuMaxReductionPct: Float?,
         curveShape: ThrottleCurveShape?,
         reactionSpeed: Float?,
-        hysteresisC: Float?
+        hysteresisC: Float?,
+        chargingAware: Boolean?,
+        chargingStartOffsetC: Float?
     ) -> Unit,
     onUpdatePowerThrottle: (
         enabled: Boolean?,
@@ -669,7 +674,7 @@ fun TuningScreen(
                             title = "Enable overlay",
                             explanation = "Displays a floating CPU, GPU, thermal, and power monitor over other apps.",
                             checked = config.overlayEnabled,
-                            onCheckedChange = { onUpdateOverlay(it, null, null, null, null, null, null) },
+                            onCheckedChange = { onUpdateOverlay(it, null, null, null, null, null, null, false) },
                             testTag = "overlay_enabled_switch"
                         )
 
@@ -678,7 +683,7 @@ fun TuningScreen(
                             title = "Click-through",
                             explanation = "Lets touches pass through the overlay. Use the notification action to unlock.",
                             checked = config.overlayClickThrough,
-                            onCheckedChange = { onUpdateOverlay(null, it, null, null, null, null, null) },
+                            onCheckedChange = { onUpdateOverlay(null, it, null, null, null, null, null, false) },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_click_through_switch"
                         )
@@ -688,7 +693,7 @@ fun TuningScreen(
                             title = "Show only in Game mode",
                             explanation = "Shows the overlay only when Game mode is active.",
                             checked = config.overlayGameOnly,
-                            onCheckedChange = { onUpdateOverlay(null, null, it, null, null, null, null) },
+                            onCheckedChange = { onUpdateOverlay(null, null, it, null, null, null, null, false) },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_game_only_switch"
                         )
@@ -702,7 +707,7 @@ fun TuningScreen(
                             valueRange = 30f..100f,
                             steps = 69,
                             onValueChange = {
-                                onUpdateOverlay(null, null, null, it.roundToInt().coerceIn(30, 100), null, null, null)
+                                onUpdateOverlay(null, null, null, it.roundToInt().coerceIn(30, 100), null, null, null, false)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_opacity_slider"
@@ -717,7 +722,7 @@ fun TuningScreen(
                             valueRange = 0f..100f,
                             steps = 99,
                             onValueChange = {
-                                onUpdateOverlay(null, null, null, null, null, null, it.roundToInt().coerceIn(0, 100))
+                                onUpdateOverlay(null, null, null, null, null, null, it.roundToInt().coerceIn(0, 100), false)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_bg_opacity_slider"
@@ -760,11 +765,13 @@ fun TuningScreen(
                             )
                             OverlaySizing.maxScalePct(screenW, screenH, expandedStyle, natW, natH)
                         }
-                        val compactDisplayPct = config.overlayCompactScalePct.coerceIn(
+                        val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                        val scaleOrientLabel = if (isLandscape) "landscape" else "portrait"
+                        val compactDisplayPct = config.overlayCompactScaleFor(isLandscape).coerceIn(
                             OverlaySizing.MIN_SCALE_PCT,
                             compactMaxScalePct
                         )
-                        val expandedDisplayPct = config.overlayExpandedScalePct.coerceIn(
+                        val expandedDisplayPct = config.overlayExpandedScaleFor(isLandscape).coerceIn(
                             OverlaySizing.MIN_SCALE_PCT,
                             expandedMaxScalePct
                         )
@@ -804,7 +811,7 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         OverlayFineSliderRow(
-                            title = "Compact size",
+                            title = "Compact size ($scaleOrientLabel)",
                             valueText = "${compactDisplayPct}%",
                             explanation = "Scales the compact overlay pill (${OverlaySizing.MIN_SCALE_PCT}%–${compactMaxScalePct}% on this screen).",
                             value = compactDisplayPct,
@@ -814,7 +821,7 @@ fun TuningScreen(
                             fineHalfWindow = 10,
                             fineMode = fineOverlayControl,
                             onIntValueChange = {
-                                onUpdateOverlay(null, null, null, null, it, null, null)
+                                onUpdateOverlay(null, null, null, null, it, null, null, isLandscape)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_compact_scale_slider"
@@ -822,7 +829,7 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         OverlayFineSliderRow(
-                            title = "Expanded size",
+                            title = "Expanded size ($scaleOrientLabel)",
                             valueText = "${expandedDisplayPct}%",
                             explanation = "Scales the expanded overlay card (${OverlaySizing.MIN_SCALE_PCT}%–${expandedMaxScalePct}% on this screen).",
                             value = expandedDisplayPct,
@@ -832,13 +839,12 @@ fun TuningScreen(
                             fineHalfWindow = 10,
                             fineMode = fineOverlayControl,
                             onIntValueChange = {
-                                onUpdateOverlay(null, null, null, null, null, it, null)
+                                onUpdateOverlay(null, null, null, null, null, it, null, isLandscape)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_expanded_scale_slider"
                         )
 
-                        val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
                         val posStyle = (when {
                             config.overlayDetailed -> "detailed"
                             config.overlayExpanded -> "expanded"

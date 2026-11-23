@@ -346,7 +346,27 @@ class HardwareDiscovery(private val rootShell: RootShell) {
             "/sys/class/power_supply/mtk-gauge/voltage_now",
             "/sys/class/power_supply/bms/voltage_now"
         )
-        val all = candidatesCurrent + candidatesVoltage + listOf("/sys/class/power_supply/battery/status")
+        val candidatesChargeFull = listOf(
+            "/sys/class/power_supply/battery/charge_full",
+            "/sys/class/power_supply/Battery/charge_full",
+            "/sys/class/power_supply/mtk-gauge/charge_full",
+            "/sys/class/power_supply/bms/charge_full"
+        )
+        val candidatesChargeFullDesign = listOf(
+            "/sys/class/power_supply/battery/charge_full_design",
+            "/sys/class/power_supply/Battery/charge_full_design",
+            "/sys/class/power_supply/mtk-gauge/charge_full_design",
+            "/sys/class/power_supply/bms/charge_full_design"
+        )
+        val candidatesCycleCount = listOf(
+            "/sys/class/power_supply/battery/cycle_count",
+            "/sys/class/power_supply/Battery/cycle_count",
+            "/sys/class/power_supply/mtk-gauge/cycle_count",
+            "/sys/class/power_supply/bms/cycle_count"
+        )
+        val all = candidatesCurrent + candidatesVoltage +
+            listOf("/sys/class/power_supply/battery/status") +
+            candidatesChargeFull + candidatesChargeFullDesign + candidatesCycleCount
         val existsRes = rootShell.exec(
             all.joinToString("; ") { p -> "[ -r '$p' ] && echo 'EXISTS:$p'" }
         )
@@ -358,6 +378,9 @@ class HardwareDiscovery(private val rootShell: RootShell) {
         val curPath = candidatesCurrent.firstOrNull { it in existing }
         val voltPath = candidatesVoltage.firstOrNull { it in existing }
         val statusPath = "/sys/class/power_supply/battery/status".takeIf { it in existing }
+        val chargeFullPath = candidatesChargeFull.firstOrNull { it in existing }
+        val chargeFullDesignPath = candidatesChargeFullDesign.firstOrNull { it in existing }
+        val cycleCountPath = candidatesCycleCount.firstOrNull { it in existing }
 
         notes.add(
             if (curPath != null && voltPath != null) {
@@ -369,7 +392,10 @@ class HardwareDiscovery(private val rootShell: RootShell) {
         return BatteryPowerSpec(
             currentPath = curPath,
             voltagePath = voltPath,
-            statusPath = statusPath
+            statusPath = statusPath,
+            chargeFullPath = chargeFullPath,
+            chargeFullDesignPath = chargeFullDesignPath,
+            cycleCountPath = cycleCountPath
         )
     }
 }

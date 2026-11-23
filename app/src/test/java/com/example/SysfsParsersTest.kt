@@ -15,14 +15,17 @@
 
 package com.example
 
+import android.os.BatteryManager
 import com.example.governor.GovernorMath
 import com.example.governor.SysfsParsers
+import com.example.model.BatteryState
 import com.example.model.PowerPolarity
 import com.example.model.PowerUnitScale
 import com.example.model.TempThrottleConfig
 import com.example.model.ThrottleCurveShape
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -150,5 +153,92 @@ class SysfsParsersTest {
         val (cpuLatched, _, nextPeak) = GovernorMath.stepTempCap(48.5f, peak, cpuCap, gpuCap, cfg, 20f)
         assertEquals(75f, cpuLatched, 0.5f)
         assertEquals(50f, nextPeak, 0.1f)
+    }
+
+    @Test
+    fun powerReadingDistinguishesDischargingChargingFullPluggedAndUnknown() {
+        // Discharging with learned negative current polarity
+        val dis = SysfsParsers.computePowerReading(
+            rawCurrent = -1_500_000L,
+            rawVoltage = 4_000_000L,
+            unitScale = PowerUnitScale.AUTO,
+            polarity = PowerPolarity.AUTO_ABS,
+            bmStatus = BatteryManager.BATTERY_STATUS_DISCHARGING,
+            bmPlugged = 0,
+            learnedDischargeSign = -1
+        )
+        assertEquals(BatteryState.DISCHARGING, dis.state)
+        assertEquals(6.0f, dis.dischargeWatts, 0.05f)
+        assertEquals(0f, dis.chargeWatts, 0.001f)
+        assertEquals(-6.0f, dis.signedWatts, 0.05f)
+
+        // Charging with positive current
+        val chg = SysfsParsers.computePowerReading(
+            rawCurrent = 2_500_000L,
+            rawVoltage = 4_000_000L,
+            unitScale = PowerUnitScale.AUTO,
+            polarity = PowerPolarity.AUTO_ABS,
+            bmStatus = BatteryManager.BATTERY_STATUS_CHARGING,
+            bmPlugged = 2,
+            learnedDischargeSign = -1
+        )
+        assertEquals(BatteryState.CHARGING, chg.state)
+        assertEquals(10.0f, chg.chargeWatts, 0.05f)
+        assertEquals(0f, chg.dischargeWatts, 0.001f)
+        assertEquals(10.0f, chg.signedWatts, 0.05f)
+
+        // Full & plugged within deadband (<= 0.15 W and <= 50 mA) -> FULL_PLUGGED
+        val full = SysfsParsers.computePowerReading(
+            rawCurrent = 20L,
+            rawVoltage = 4_350_000L,
+            unitScale = PowerUnitScale.AUTO,
+            polarity = PowerPolarity.AUTO_ABS,
+            bmStatus = BatteryManager.BATTERY_STATUS_FULL,
+            bmPlugged = 2,
+            learnedDischargeSign = -1
+        )
+        assertEquals(BatteryState.FULL_PLUGGED, full.state)
+        assertEquals(0f, full.dischargeWatts, 0.001f)
+        assertEquals(0f, full.chargeWatts, 0.001f)
+
+        // Invalid voltage -> UNKNOWN
+        val unk = SysfsParsers.computePowerReading(
+            rawCurrent = 0L,
+            rawVoltage = 0L,
+            unitScale = PowerUnitScale.AUTO,
+            polarity = PowerPolarity.AUTO_ABS
+        )
+        assertEquals(BatteryState.UNKNOWN, unk.state)
+    }
+
+    @Test
+    fun chargingAwareTempThrottleAppliesClampedOffset() {
+        val cfg = TempThrottleConfig(
+            enabled = true,
+            startTempC = 42f,
+            fullTempC = 52f,
+            cpuMaxReductionPct = 50f,
+            gpuMaxReductionPct = 50f,
+            curveShape = ThrottleCurveShape.LINEAR,
+            reactionSpeed = 1.0f,
+            hysteresisC = 2f,
+            chargingAware = true,
+            chargingStartOffsetC = 8f // Clamped to max 5 C -> effective start 37 C
+        )
+        val (cpuDis, _, _) = GovernorMath.stepTempCap(40f, 30f, 100f, 100f, cfg, 20f, isChargingOrPlugged = false)
+        assertEquals(100f, cpuDis, 0.01f)
+
+        val (cpuChg, _, _) = GovernorMath.stepTempCap(40f, 30f, 100f, 100f, cfg, 20f, isChargingOrPlugged = true)
+        assertEquals(90f, cpuChg, 0.2f)
+    }
+
+    @Test
+    fun sysfsCapacityAndCycleParsersHandleUnitsAndInvalidInput() {
+        assertEquals(5000, SysfsParsers.parseCapacityMah("5000000"))
+        assertEquals(4500, SysfsParsers.parseCapacityMah("4500"))
+        assertNull(SysfsParsers.parseCapacityMah("0"))
+        assertNull(SysfsParsers.parseCapacityMah("abc"))
+        assertEquals(42, SysfsParsers.parseCycleCount("42"))
+        assertNull(SysfsParsers.parseCycleCount("-1"))
     }
 }

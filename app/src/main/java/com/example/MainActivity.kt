@@ -121,6 +121,7 @@ class MainActivity : ComponentActivity() {
         val engine = (application as CoreGovernorApp).engine
         engine.storage.flush()
         engine.powerModel.flush()
+        engine.batteryEstimator.flush()
     }
 }
 
@@ -301,13 +302,17 @@ fun CoreGovernorRootScreen(
             }
             NavTab.ENERGY -> {
                 val energySnapshot by vm.powerModelSnapshot.collectAsStateWithLifecycle()
+                val batterySnapshot by vm.batterySnapshot.collectAsStateWithLifecycle()
                 EnergyScreen(
                     snapshot = energySnapshot,
+                    batterySnapshot = batterySnapshot,
                     config = config,
                     isRunning = telemetry.isRunning,
                     onUpdateSettings = vm::updateEfficiencySettings,
                     onResetModel = vm::resetPowerModel,
                     onExportJson = vm::exportPowerModelJson,
+                    onUpdateBatterySettings = vm::updateBatterySettings,
+                    onResetBatteryEstimate = vm::resetBatteryEstimate,
                     modifier = Modifier
                 )
             }

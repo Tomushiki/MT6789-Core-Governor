@@ -34,6 +34,7 @@ import com.example.CoreGovernorApp
 import com.example.MainActivity
 import com.example.R
 import com.example.governor.GovernorEngine
+import com.example.model.BatteryState
 import com.example.model.TelemetryState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -211,7 +212,13 @@ class GovernorService : Service() {
             "P${c.policyId}:${c.targetFreqKhz / 1000}M"
         }
         val gpuText = if (state.gpu.available) "GPU:${state.gpu.targetFreqKhz / 1000}M" else ""
-        val telemetryLine = "${"%.1f".format(state.temperatureC)}°C • ${"%.2f".format(state.watts)}W • $clustersSummary $gpuText".trim()
+        val powerText = when (state.batteryState) {
+            BatteryState.CHARGING -> "\u26A1+${"%.2f".format(state.chargeWatts)}W chg"
+            BatteryState.FULL_PLUGGED -> "PLUG 0.0"
+            BatteryState.DISCHARGING -> "${"%.2f".format(state.watts)}W"
+            BatteryState.UNKNOWN -> "--W"
+        }
+        val telemetryLine = "${"%.1f".format(state.temperatureC)}°C • $powerText • $clustersSummary $gpuText".trim()
         val cfg = engine.config.value
         val showUnlock = cfg.overlayEnabled && cfg.overlayClickThrough
         val key = "$statusTitle\u0000$telemetryLine\u0000$showUnlock"
@@ -276,6 +283,7 @@ class GovernorService : Service() {
         engine.stopAndRestore()
         engine.storage.flush()
         engine.powerModel.flush()
+        engine.batteryEstimator.flush()
         overlayNotifyJob?.cancel()
         telemetryJob?.cancel()
         serviceScope.cancel()

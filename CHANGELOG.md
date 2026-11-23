@@ -2,6 +2,19 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.6.2] - 2026-11-23
+
+### Added
+- **Landscape overlay size (`overlayCompactScalePctL`, `overlayExpandedScalePctL`).** Compact and expanded/detailed overlay sizes are now stored separately per orientation (existing setups keep their portrait size on landscape via a `-1` fallback sentinel). The Tuning sliders, `-`/`+` nudge buttons, and Fine toggle edit the active orientation and indicate `(Portrait)` or `(Landscape)`. `Reset position` leaves sizes intact.
+- **Explicit charging vs discharging detection (`BatteryState`).** Derived once per tick from `BatteryManager` status/plugged state and current polarity (with `AUTO_ABS` sign learning, 3-second debounce hysteresis, and `FULL_PLUGGED` deadband `<= 0.15 W` / `<= 50 mA`). Overlay (all 3 styles), Monitor hero card, notification, and Power Throttle card clearly show charging (`⚡ +X.XX W` green), plugged/full (`PLUG 0.0` green), or discharge watts.
+- **Charging-aware thermal throttle (opt-in).** Added a **Charging-aware thermal** toggle and **Charging start offset** (`0–5 °C`) in Tuning to lower the thermal throttle start temperature while plugged in or charging.
+- **Battery capacity estimator & Energy tab Battery card.** Passively estimates real battery capacity (`mAh` / `Wh`), State of Health, remaining energy, ~2-minute EMA ETAs (`Time left` / `To full`), and session/lifetime `In`/`Out` counters across uninterrupted `>= 8%` and `>= 3 min` charge/discharge segments with weighted median + MAD outlier filtering and atomic `battery_model.json` persistence. Includes an optional design-capacity override (`0 = auto`), enable toggle, and reset dialog on the Energy tab.
+
+### Changed
+- **Discharge-only watt governors & learning.** Power throttling, watt averaging window, PowerSplit, PowerModel passive training (plus a 5-second settling gate after flipping back to discharging), Efficiency exploration probes, and Metrics average/max power, `Wh`, `FPS/W`, and `Work/W` summaries now use discharging power only.
+- **Metrics chart & session badges.** Charging/plugged periods are still recorded on the power chart with dashed amber strokes and scrub labels, and mixed sessions are marked as `• incl. charging`. CSV rows remain backward compatible with earlier 7-column and 15-field files.
+- Version 2.6.2 (versionCode 40).
+
 ## [2.6.1] - 2026-11-23
 
 ### Changed

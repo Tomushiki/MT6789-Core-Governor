@@ -47,8 +47,9 @@ Temperature throttling
 - Full-Strength Temperature: where the reduction reaches its maximum.
 - CPU Max Reduction and GPU Max Reduction: how much it can cut at full strength.
 - Thermal Reaction Speed and Recovery Hysteresis: how quickly it reacts, and how far the phone must cool before it lets go.
+- Charging-aware thermal (off by default): optionally lowers Throttle Start Temperature by `0–5 °C` while plugged in or charging to compensate for charger heat.
 
-Power throttling (controls power usage, not charging)
+Power throttling (controls battery discharge draw only, released while charging)
 - Power Budget Limit: the average watts the phone may draw.
 - Sustain Time Above Limit: how long the draw must stay over the limit before it reacts.
 - Throttle Step Size: how much it cuts each step.
@@ -73,8 +74,8 @@ A small always-visible strip showing CPU, GPU, temperature and power. It is off 
 - The compact strip shows CPU, GPU, FPS, temperature and power. Tap it to cycle to the medium and detailed styles.
 - Click-through: touches pass through the overlay. Use the Unlock overlay button in the notification to move it again.
 - Show only in Game mode: hides it in Normal mode.
-- Opacity, Compact size and Expanded size: change how it looks. The overlay always stays on screen.
-- Horizontal and Vertical position: each style remembers its own position. It snaps to the screen edges when you drag it. Press Reset position to bring it back.
+- Opacity, Compact size and Expanded size: change how it looks. Portrait and landscape each keep their own overlay sizes (as well as positions), and the sliders automatically edit the orientation you are currently holding. The overlay always stays on screen.
+- Horizontal and Vertical position: each style remembers its own position per orientation. It snaps to the screen edges when you drag it. Press Reset position to bring it back without changing your sizes.
 
 
 ## 7b. Nifty features: sensor pinning
@@ -91,7 +92,7 @@ Some phones read the gyroscope slowly until an app asks for faster data. This op
 
 The Metrics tab shows how the phone behaves over time, so you can see what a tuning change did.
 
-- Power, temperature and FPS are drawn together. Each line has its own scale, written under the graph.
+- Power, temperature and FPS are drawn together. Each line has its own scale, written under the graph. Charging or plugged periods draw as a dashed amber line on the power graph and are excluded from average watts, peak watts, total Wh, FPS/W, and Work/W.
 - FPS per watt is how many frames you get for each watt drawn. Higher is better.
 - Work per watt is an estimate of how much the CPU and GPU did per watt. It is not a benchmark, so only compare it on this phone, and use it to compare settings against each other.
 - Drag on a graph to read the values at that moment. The same moment is marked on all graphs. Double-tap to clear.
@@ -102,14 +103,15 @@ The Metrics tab shows how the phone behaves over time, so you can see what a tun
 
 A good way to use it: play the same game for a few minutes with one setting, change one thing in Tuning, play again, and compare the two saved sessions (FPS/W, 5% low, peak temperature).
 
-## 7d. Energy tab: learned power model and efficiency governor
+## 7d. Energy tab: Battery health estimator, learned power model, and efficiency governor
 
-CoreGovernor can passively learn how much power each CPU cluster and the GPU actually draw on your specific phone across frequencies, loads, and apps.
+CoreGovernor estimates your battery's real usable capacity and passively learns how much power each CPU cluster and the GPU draw on your specific phone.
 
-- **Learn power model (on by default):** records ~1 Hz samples while the screen is on and the phone is discharging (skipping charging and sudden spikes). High confidence across most frequencies and apps takes several hours of everyday use and gaming.
-- **Efficiency governor (off by default):** once enabled, it uses the learned power/performance model to pick lower-energy frequencies inside your allowed min/max bounds and thermal/power caps whenever confidence is above your chosen threshold. If it sees an FPS drop or overload, it backs off immediately and falls back to standard scaling.
+- **Battery card & Capacity estimation:** integrates charge and discharge flow across uninterrupted segments of at least **8% change** and **3 minutes** (resetting if interrupted or plugged/unplugged), rejecting outliers and combining charge + discharge segments over time. Shows estimated mAh/Wh, State of Health (with optional manual design capacity override), remaining Wh, smoothed time remaining / to full, OS charge-counter second opinion, and session/lifetime In & Out totals.
+- **Learn power model (on by default):** records ~1 Hz samples while the screen is on and the phone is discharging (skipping charging/plugged periods and a 5-second settling window after unplugging). High confidence across most frequencies and apps takes several hours of everyday use and gaming.
+- **Efficiency governor (off by default):** once enabled, it uses the learned power/performance model to pick lower-energy frequencies inside your allowed min/max bounds and thermal/power caps whenever confidence is above your chosen threshold. Exploration probes only run while discharging. If it sees an FPS drop or overload, it backs off immediately and falls back to standard scaling.
 - **Modes:** *Balanced* targets best work per watt, *Aggressive saver* leans toward lower power draw, and *Performance-first* guards responsiveness and frame rate.
-- **Export / Reset:** copy `power_model.json` to the clipboard or reset the learned model at any time.
+- **Export / Reset:** copy `power_model.json` to the clipboard or reset either the learned power model or battery capacity estimate at any time.
 
 ## 8. Suggested starting points
 

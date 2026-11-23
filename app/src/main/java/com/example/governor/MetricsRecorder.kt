@@ -15,6 +15,7 @@
 
 package com.example.governor
 
+import com.example.model.BatteryState
 import com.example.model.ClusterLiveState
 import com.example.model.GovernorMode
 import com.example.model.GpuLiveState
@@ -41,15 +42,19 @@ data class MetricSample(
     val fps: Float,
     val cpuLoadPct: Float,
     val gpuLoadPct: Float,
-    val work: Float
+    val work: Float,
+    val batteryState: BatteryState = BatteryState.DISCHARGING
 ) {
-    /** Frames per watt, or NaN when FPS or power is not available. */
-    val fpsPerWatt: Float
-        get() = if (fps >= 0f) MetricsMath.ratio(fps, watts) else Float.NaN
+    val isDischarge: Boolean
+        get() = batteryState == BatteryState.DISCHARGING
 
-    /** Estimated work per watt (busy GHz per watt), or NaN when power is not available. */
+    /** Frames per watt, or NaN when FPS or discharge power is not available. */
+    val fpsPerWatt: Float
+        get() = if (fps >= 0f && isDischarge) MetricsMath.ratio(fps, watts) else Float.NaN
+
+    /** Estimated work per watt (busy GHz per watt), or NaN when discharge power is not available. */
     val workPerWatt: Float
-        get() = MetricsMath.ratio(work, watts)
+        get() = if (isDischarge) MetricsMath.ratio(work, watts) else Float.NaN
 }
 
 data class MetricSummary(
@@ -64,7 +69,8 @@ data class MetricSummary(
     val maxWatts: Float,
     val avgFpsPerWatt: Float,
     val avgWorkPerWatt: Float,
-    val energyWh: Float
+    val energyWh: Float,
+    val includesCharging: Boolean = false
 )
 
 /** A saved game session. The summary lives in the file header so listing never has to read the samples. */
@@ -132,46 +138,54 @@ object MetricsMath {
 
     fun summarize(samples: List<MetricSample>): MetricSummary {
         if (samples.isEmpty()) {
-            return MetricSummary(0L, 0, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, 0f)
+            return MetricSummary(0L, 0, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, 0f, false)
         }
         var sumTemp = 0.0
         var maxTemp = Float.NEGATIVE_INFINITY
         var sumW = 0.0
+        var wattN = 0
         var maxW = 0f
         var sumFps = 0.0
         var fpsN = 0
         var minFps = Float.POSITIVE_INFINITY
         val fpsValues = ArrayList<Float>()
-        // For the efficiency averages only samples with a usable power reading count, and the
+        // For the efficiency averages only discharging samples with a usable power reading count, and the
         // average is total-output / total-power, which is the honest "frames per joule" figure.
         var ratioFps = 0.0
         var ratioWattsForFps = 0.0
         var ratioWork = 0.0
         var ratioWattsForWork = 0.0
         var energyWs = 0.0
+        var includesCharging = false
 
         for ((i, s) in samples.withIndex()) {
             sumTemp += s.tempC
             if (s.tempC > maxTemp) maxTemp = s.tempC
-            sumW += s.watts
-            if (s.watts > maxW) maxW = s.watts
+            if (s.batteryState == BatteryState.CHARGING || s.batteryState == BatteryState.FULL_PLUGGED) {
+                includesCharging = true
+            }
+            if (s.isDischarge) {
+                sumW += s.watts
+                wattN++
+                if (s.watts > maxW) maxW = s.watts
+                if (s.watts >= MIN_WATTS_FOR_RATIO) {
+                    ratioWork += s.work
+                    ratioWattsForWork += s.watts
+                    if (s.fps >= 0f) {
+                        ratioFps += s.fps
+                        ratioWattsForFps += s.watts
+                    }
+                }
+                if (i > 0 && samples[i - 1].isDischarge) {
+                    val dt = (s.tMs - samples[i - 1].tMs).coerceIn(0L, MAX_ENERGY_GAP_MS)
+                    energyWs += s.watts * (dt / 1000.0)
+                }
+            }
             if (s.fps >= 0f) {
                 sumFps += s.fps
                 fpsN++
                 fpsValues.add(s.fps)
                 if (s.fps < minFps) minFps = s.fps
-            }
-            if (s.watts >= MIN_WATTS_FOR_RATIO) {
-                ratioWork += s.work
-                ratioWattsForWork += s.watts
-                if (s.fps >= 0f) {
-                    ratioFps += s.fps
-                    ratioWattsForFps += s.watts
-                }
-            }
-            if (i > 0) {
-                val dt = (s.tMs - samples[i - 1].tMs).coerceIn(0L, MAX_ENERGY_GAP_MS)
-                energyWs += s.watts * (dt / 1000.0)
             }
         }
         fpsValues.sort()
@@ -185,11 +199,12 @@ object MetricsMath {
             p5Fps = p5,
             avgTempC = (sumTemp / n).toFloat(),
             maxTempC = maxTemp,
-            avgWatts = (sumW / n).toFloat(),
-            maxWatts = maxW,
+            avgWatts = if (wattN == 0) Float.NaN else (sumW / wattN).toFloat(),
+            maxWatts = if (wattN == 0) Float.NaN else maxW,
             avgFpsPerWatt = if (ratioWattsForFps > 0.0) (ratioFps / ratioWattsForFps).toFloat() else Float.NaN,
             avgWorkPerWatt = if (ratioWattsForWork > 0.0) (ratioWork / ratioWattsForWork).toFloat() else Float.NaN,
-            energyWh = (energyWs / 3600.0).toFloat()
+            energyWh = (energyWs / 3600.0).toFloat(),
+            includesCharging = includesCharging
         )
     }
 
@@ -198,8 +213,22 @@ object MetricsMath {
     private fun f(v: Float): String =
         if (v.isNaN()) "NaN" else String.format(Locale.ROOT, "%.2f", v)
 
+    private fun stateToCode(s: BatteryState): String = when (s) {
+        BatteryState.DISCHARGING -> "D"
+        BatteryState.CHARGING -> "C"
+        BatteryState.FULL_PLUGGED -> "F"
+        BatteryState.UNKNOWN -> "U"
+    }
+
+    private fun codeToState(code: String?): BatteryState = when (code?.trim()) {
+        "C" -> BatteryState.CHARGING
+        "F" -> BatteryState.FULL_PLUGGED
+        "U" -> BatteryState.UNKNOWN
+        else -> BatteryState.DISCHARGING
+    }
+
     fun encodeSample(s: MetricSample): String =
-        "${s.tMs},${f(s.tempC)},${f(s.watts)},${f(s.fps)},${f(s.cpuLoadPct)},${f(s.gpuLoadPct)},${f(s.work)}"
+        "${s.tMs},${f(s.tempC)},${f(s.watts)},${f(s.fps)},${f(s.cpuLoadPct)},${f(s.gpuLoadPct)},${f(s.work)},${stateToCode(s.batteryState)}"
 
     fun decodeSample(line: String): MetricSample? {
         val p = line.split(',')
@@ -207,14 +236,16 @@ object MetricsMath {
         val t = p[0].toLongOrNull() ?: return null
         val v = FloatArray(6)
         for (i in 0 until 6) v[i] = p[i + 1].toFloatOrNull() ?: return null
-        return MetricSample(t, v[0], v[1], v[2], v[3], v[4], v[5])
+        val state = if (p.size >= 8) codeToState(p[7]) else BatteryState.DISCHARGING
+        return MetricSample(t, v[0], v[1], v[2], v[3], v[4], v[5], state)
     }
 
     fun encodeHeader(pkg: String, startMs: Long, endMs: Long, s: MetricSummary): String =
         listOf(
             "#CG1", pkg.replace('|', '_').replace('\n', ' '), startMs, endMs, s.sampleCount,
             f(s.avgFps), f(s.minFps), f(s.p5Fps), f(s.avgTempC), f(s.maxTempC),
-            f(s.avgWatts), f(s.maxWatts), f(s.avgFpsPerWatt), f(s.avgWorkPerWatt), f(s.energyWh)
+            f(s.avgWatts), f(s.maxWatts), f(s.avgFpsPerWatt), f(s.avgWorkPerWatt), f(s.energyWh),
+            if (s.includesCharging) "1" else "0"
         ).joinToString("|")
 
     fun decodeHeader(fileName: String, line: String): SessionInfo? {
@@ -224,6 +255,7 @@ object MetricsMath {
         val end = p[3].toLongOrNull() ?: return null
         val n = p[4].toIntOrNull() ?: return null
         fun g(i: Int) = p[i].toFloatOrNull() ?: Float.NaN
+        val hasCharging = p.getOrNull(15) == "1"
         return SessionInfo(
             fileName = fileName,
             packageName = p[1],
@@ -236,7 +268,8 @@ object MetricsMath {
                 avgTempC = g(8), maxTempC = g(9),
                 avgWatts = g(10), maxWatts = g(11),
                 avgFpsPerWatt = g(12), avgWorkPerWatt = g(13),
-                energyWh = g(14)
+                energyWh = g(14),
+                includesCharging = hasCharging
             )
         )
     }
@@ -299,14 +332,20 @@ class MetricsRecorder(
         }
         lastSampleMs = nowMs
 
+        val recordedWatts = when (t.batteryState) {
+            BatteryState.CHARGING -> t.chargeWatts
+            BatteryState.FULL_PLUGGED -> 0f
+            BatteryState.DISCHARGING, BatteryState.UNKNOWN -> t.watts
+        }
         val sample = MetricSample(
             tMs = nowMs,
             tempC = t.temperatureC,
-            watts = t.watts,
+            watts = recordedWatts,
             fps = t.fps,
             cpuLoadPct = t.totalCpuLoadPct,
             gpuLoadPct = t.gpu.smoothedLoadPct,
-            work = MetricsMath.workScore(t.clusters, t.gpu)
+            work = MetricsMath.workScore(t.clusters, t.gpu),
+            batteryState = t.batteryState
         )
 
         liveBuf.addLast(sample)

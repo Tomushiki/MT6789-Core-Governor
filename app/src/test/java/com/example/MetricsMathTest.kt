@@ -17,9 +17,11 @@ package com.example
 
 import com.example.governor.MetricSample
 import com.example.governor.MetricsMath
+import com.example.model.BatteryState
 import com.example.model.ClusterLiveState
 import com.example.model.GpuLiveState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -127,5 +129,52 @@ class MetricsMathTest {
         assertTrue(info.summary.avgFps.isNaN())
         assertEquals(sum.avgWatts, info.summary.avgWatts, 0.01f)
         assertNull(MetricsMath.decodeHeader("f.csv", "not a header"))
+    }
+
+    @Test
+    fun chargingAndPluggedSamplesExcludedFromPowerStatsAndEnergy() {
+        val list = listOf(
+            MetricSample(0L, 40f, 5f, 60f, 50f, 50f, 4f, BatteryState.DISCHARGING),
+            MetricSample(1_000L, 41f, 5f, 60f, 50f, 50f, 4f, BatteryState.DISCHARGING),
+            MetricSample(2_000L, 42f, 15f, 60f, 50f, 50f, 4f, BatteryState.CHARGING),
+            MetricSample(3_000L, 42f, 0f, 60f, 50f, 50f, 4f, BatteryState.FULL_PLUGGED)
+        )
+        assertTrue(list[2].fpsPerWatt.isNaN())
+        assertTrue(list[2].workPerWatt.isNaN())
+        assertTrue(list[3].fpsPerWatt.isNaN())
+
+        val sum = MetricsMath.summarize(list)
+        assertTrue(sum.includesCharging)
+        assertEquals(5f, sum.avgWatts, 0.001f)
+        assertEquals(5f, sum.maxWatts, 0.001f)
+        assertEquals(12f, sum.avgFpsPerWatt, 0.01f)
+        assertEquals(5f / 3600f, sum.energyWh, 0.0001f)
+    }
+
+    @Test
+    fun backwardCompatibleWithLegacyCsvRowsAndHeaders() {
+        val legacyRow = "1000,40.00,4.50,60.00,50.00,55.00,4.00"
+        val decodedRow = MetricsMath.decodeSample(legacyRow)
+        assertNotNull(decodedRow)
+        assertEquals(BatteryState.DISCHARGING, decodedRow!!.batteryState)
+        assertEquals(4.5f, decodedRow.watts, 0.01f)
+
+        assertEquals(BatteryState.CHARGING, MetricsMath.decodeSample("2000,41.00,12.00,60.00,50.00,55.00,4.00,C")!!.batteryState)
+        assertEquals(BatteryState.FULL_PLUGGED, MetricsMath.decodeSample("3000,41.00,0.00,60.00,50.00,55.00,4.00,F")!!.batteryState)
+
+        val legacyHeader = "#CG1|com.game|0|1000|2|60.00|58.00|59.00|40.00|41.00|4.00|5.00|15.00|1.00|0.01"
+        val legacyInfo = MetricsMath.decodeHeader("f.csv", legacyHeader)
+        assertNotNull(legacyInfo)
+        assertFalse(legacyInfo!!.summary.includesCharging)
+
+        val sum = MetricsMath.summarize(
+            listOf(
+                MetricSample(0L, 40f, 4f, 60f, 50f, 50f, 4f, BatteryState.DISCHARGING),
+                MetricSample(1000L, 41f, 10f, 60f, 50f, 50f, 4f, BatteryState.CHARGING)
+            )
+        )
+        val encoded = MetricsMath.encodeHeader("com.game", 0L, 1000L, sum)
+        val decoded = MetricsMath.decodeHeader("f.csv", encoded)
+        assertTrue(decoded!!.summary.includesCharging)
     }
 }
