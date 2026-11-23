@@ -2,6 +2,15 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.2] - 2026-11-23
+
+### Fixed
+- **FPS counter stuck at 0.** FPS is now measured from the real frame present timestamps of the app's display layer (the same method other FPS monitors use). The old frame-counter method is kept as a backup.
+- The Log tab (tag `FPS`) shows which method and layers are being used.
+
+### Changed
+- Version 1.12.2 (versionCode 16).
+
 ## [1.12.1] - 2026-11-23
 
 ### Fixed

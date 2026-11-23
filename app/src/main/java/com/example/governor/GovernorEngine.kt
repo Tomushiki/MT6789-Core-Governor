@@ -1199,13 +1199,22 @@ class GovernorEngine(context: Context) {
     }
 
     private suspend fun runFpsSamplerLoop() {
-        var prevLayerFrames = emptyMap<String, Long>()
-        var lastSampleRt = 0L
         var lastPkg = ""
-        var consecutiveErrors = 0
-        var retryAtRt = 0L
         var inactivePublished = false
         var lastDiag = ""
+        var lastLayerListRt = 0L
+        var layerNames = emptyList<String>()
+        val lastPresentTs = mutableMapOf<String, Long>()
+        var prevTimestats = emptyMap<String, Long>()
+        var consecutiveErrors = 0
+
+        val ignored = listOf(
+            "StatusBar", "NavigationBar", "ScreenDecor", "Wallpaper", "InputMethod",
+            "com.android.systemui", "Letterbox", "Dim Layer", "Splash", "Background for",
+            "Display Overlay", "ActivityRecord", "Task=", "WindowToken", "DefaultTaskDisplayArea",
+            "RootWrapper", "mWindowContainer", "ImeContainer", "OneHanded", "Bounds for"
+        )
+
         fun diag(msg: String) {
             if (msg != lastDiag) {
                 lastDiag = msg
@@ -1213,6 +1222,103 @@ class GovernorEngine(context: Context) {
             }
         }
 
+        fun q(raw: String): String = "'" + raw.replace("'", "'\"'\"'") + "'"
+
+        // Method 1: dumpsys SurfaceFlinger --latency <layer> (exact present timestamps)
+        suspend fun sampleLatency(pkg: String): Float? {
+            val now = SystemClock.elapsedRealtime()
+            if (layerNames.isEmpty() || now - lastLayerListRt > 5_000L) {
+                val r = rootShell.exec("dumpsys SurfaceFlinger --list 2>/dev/null")
+                if (r.stdout.isNotBlank()) {
+                    layerNames = r.stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }
+                    lastLayerListRt = now
+                }
+            }
+            if (layerNames.isEmpty()) return null
+            var cands = layerNames.filter { it.contains(pkg) }
+            var usedFallback = false
+            if (cands.isEmpty()) {
+                usedFallback = true
+                cands = layerNames.filter { n ->
+                    ignored.none { n.contains(it, ignoreCase = true) } &&
+                        (n.contains("SurfaceView") || n.contains("/"))
+                }
+            }
+            if (cands.isEmpty()) return null
+            cands = cands.sortedByDescending { it.contains("SurfaceView") }.take(6)
+
+            var best: Float? = null
+            var parsedAny = false
+            for (name in cands) {
+                val r = rootShell.exec("dumpsys SurfaceFlinger --latency ${q(name)} 2>/dev/null")
+                val rows = r.stdout.lines().drop(1).map { it.trim().split(Regex("\\s+")) }
+                var ts = emptyList<Long>()
+                for (col in intArrayOf(1, 2, 0)) {
+                    ts = rows.mapNotNull { p -> p.getOrNull(col)?.toLongOrNull() }
+                        .filter { it in 1L until (Long.MAX_VALUE / 2) }
+                    if (ts.isNotEmpty()) break
+                }
+                if (ts.isEmpty()) continue
+                parsedAny = true
+                val newest = ts.maxOrNull() ?: continue
+                val prevNewest = lastPresentTs[name]
+                lastPresentTs[name] = newest
+                if (prevNewest == null) continue
+                val newFrames = ts.count { it > prevNewest }
+                val spanSec = (newest - prevNewest) / 1_000_000_000f
+                val f = if (newFrames > 0 && spanSec > 0f) newFrames / spanSec else 0f
+                if (best == null || f > best!!) best = f
+            }
+            diag(
+                "latency method: ${cands.size} layer(s)" +
+                    (if (usedFallback) " (no package match, fallback)" else "") +
+                    ", parsed=$parsedAny: ${cands.take(3).joinToString(" | ")}"
+            )
+            return if (parsedAny) (best ?: 0f) else null
+        }
+
+        // Method 2: SurfaceFlinger timestats frame counters
+        suspend fun sampleTimestats(pkg: String): Float? {
+            if (!timestatsEnabled) {
+                rootShell.exec("dumpsys SurfaceFlinger --timestats -enable")
+                timestatsEnabled = true
+            }
+            val res = rootShell.exec("dumpsys SurfaceFlinger --timestats -dump | grep -E '^layerName|^totalFrames'")
+            if (res.stdout.isBlank()) return null
+            val currentLayers = mutableMapOf<String, Long>()
+            var currentLayer: String? = null
+            res.stdout.lineSequence().forEach { line ->
+                val trimmed = line.trim()
+                if (trimmed.startsWith("layerName")) {
+                    val name = trimmed.substringAfter("=", "").trim()
+                    if (name.isNotEmpty()) currentLayer = name
+                } else if (trimmed.startsWith("totalFrames")) {
+                    val cl = currentLayer
+                    if (cl != null) {
+                        val frames = trimmed.substringAfter("=", "").trim().toLongOrNull()
+                        if (frames != null) currentLayers[cl] = frames
+                        currentLayer = null
+                    }
+                }
+            }
+            val prev = prevTimestats
+            prevTimestats = currentLayers
+            if (prev.isEmpty() || currentLayers.isEmpty()) return null
+            var matching = currentLayers.filterKeys { it.contains(pkg) }
+            if (matching.isEmpty()) {
+                matching = currentLayers.filterKeys { n -> ignored.none { n.contains(it, ignoreCase = true) } }
+            }
+            var maxDelta = 0L
+            for ((name, count) in matching) {
+                val p = prev[name] ?: continue
+                val d = (count - p).coerceAtLeast(0L)
+                if (d > maxDelta) maxDelta = d
+            }
+            diag("timestats method: ${currentLayers.size} layer(s) seen: ${currentLayers.keys.take(3).joinToString(" | ")}")
+            return maxDelta.toFloat()
+        }
+
+        var lastSampleRt = 0L
         while (engineScope.isActive && controlJob?.isActive == true) {
             val cfg = _config.value
             val active = cfg.overlayEnabled && (cfg.overlayExpanded || cfg.overlayDetailed) && isScreenInteractive
@@ -1221,119 +1327,49 @@ class GovernorEngine(context: Context) {
                     _telemetry.update { it.copy(fps = -1f) }
                     inactivePublished = true
                 }
-                prevLayerFrames = emptyMap()
-                lastSampleRt = 0L
                 lastPkg = ""
+                lastPresentTs.clear()
+                prevTimestats = emptyMap()
+                lastSampleRt = 0L
                 consecutiveErrors = 0
-                retryAtRt = 0L
                 delay(1000L)
                 continue
             }
-
             inactivePublished = false
-            val nowRt = SystemClock.elapsedRealtime()
-            if (retryAtRt > 0L && nowRt < retryAtRt) {
-                delay(1000L)
-                continue
-            }
 
-            if (!timestatsEnabled) {
-                rootShell.exec("dumpsys SurfaceFlinger --timestats -enable")
-                timestatsEnabled = true
-            }
-
-            val res = rootShell.exec("dumpsys SurfaceFlinger --timestats -dump | grep -E '^layerName|^totalFrames'")
-            if (!res.isSuccess || res.stdout.isBlank()) {
-                diag("SurfaceFlinger timestats returned nothing (exit=${res.isSuccess}); retrying")
-                consecutiveErrors++
-                if (consecutiveErrors >= 3) {
-                    _telemetry.update { it.copy(fps = -1f) }
-                    retryAtRt = SystemClock.elapsedRealtime() + 15_000L
-                    prevLayerFrames = emptyMap()
-                    lastSampleRt = 0L
-                }
-                delay(1000L)
-                continue
-            }
-
-            consecutiveErrors = 0
-            retryAtRt = 0L
-
-            val currentLayers = mutableMapOf<String, Long>()
-            var currentLayer: String? = null
-            res.stdout.lineSequence().forEach { line ->
-                val trimmed = line.trim()
-                if (trimmed.startsWith("layerName")) {
-                    val name = trimmed.substringAfter("=", "").trim()
-                    if (name.isNotEmpty()) {
-                        currentLayer = name
-                    }
-                } else if (trimmed.startsWith("totalFrames")) {
-                    if (currentLayer != null) {
-                        val frames = trimmed.substringAfter("=", "").trim().toLongOrNull()
-                        if (frames != null) {
-                            currentLayers[currentLayer!!] = frames
-                        }
-                        currentLayer = null
-                    }
-                }
-            }
-
-            val sampleRt = SystemClock.elapsedRealtime()
             val pkg = _telemetry.value.foregroundPackage
             if (pkg.isBlank()) {
                 diag("No foreground package detected yet")
                 _telemetry.update { it.copy(fps = -1f) }
-                prevLayerFrames = currentLayers
-                lastSampleRt = sampleRt
-                lastPkg = ""
                 delay(1000L)
                 continue
             }
-
-            if (lastSampleRt <= 0L || pkg != lastPkg || prevLayerFrames.isEmpty()) {
-                _telemetry.update { it.copy(fps = 0f) }
-                prevLayerFrames = currentLayers
-                lastSampleRt = sampleRt
+            if (pkg != lastPkg) {
                 lastPkg = pkg
-                delay(1000L)
-                continue
+                lastPresentTs.clear()
+                prevTimestats = emptyMap()
+                lastSampleRt = 0L
+                lastLayerListRt = 0L
+                _telemetry.update { it.copy(fps = 0f) }
             }
 
-            val elapsedSeconds = (sampleRt - lastSampleRt) / 1000f
-            var matching = currentLayers.filterKeys { it.contains(pkg) }
-            if (matching.isEmpty()) {
-                // Fallback: some ROMs/games name layers without the package id.
-                // Use the busiest non-system layer instead.
-                val ignored = listOf(
-                    "StatusBar", "NavigationBar", "ScreenDecor", "Wallpaper", "InputMethod",
-                    "com.android.systemui", "Letterbox", "Dim Layer", "Splash", "Background for",
-                    "Display Overlay", "ActivityRecord"
-                )
-                val candidates = currentLayers.filterKeys { name -> ignored.none { name.contains(it, ignoreCase = true) } }
-                val best = candidates.maxByOrNull { (name, count) ->
-                    (count - (prevLayerFrames[name] ?: count)).coerceAtLeast(0L)
-                }
-                if (best != null) matching = mapOf(best.key to best.value)
-                diag("No layer matched $pkg; using fallback layer ${best?.key ?: "none"}. Layers seen: ${currentLayers.keys.take(6).joinToString(" | ")}")
+            val a = sampleLatency(pkg)
+            val sampleRt = SystemClock.elapsedRealtime()
+            val fpsVal: Float = if (a != null && a > 0f) {
+                a
             } else {
-                diag("Tracking ${matching.size} layer(s) for $pkg: ${matching.keys.take(3).joinToString(" | ")}")
+                val b = sampleTimestats(pkg)
+                val elapsed = if (lastSampleRt > 0L) (sampleRt - lastSampleRt) / 1000f else 0f
+                if (b != null && elapsed > 0f) b / elapsed else (a ?: 0f)
             }
-            val fpsVal = if (matching.isEmpty() || elapsedSeconds <= 0f) {
-                0f
-            } else {
-                var maxDelta = 0L
-                for ((layerName, count) in matching) {
-                    val prevCount = prevLayerFrames[layerName] ?: continue
-                    val delta = (count - prevCount).coerceAtLeast(0L)
-                    if (delta > maxDelta) maxDelta = delta
-                }
-                (maxDelta.toFloat() / elapsedSeconds).coerceAtLeast(0f)
-            }
-
-            prevLayerFrames = currentLayers
             lastSampleRt = sampleRt
-            lastPkg = pkg
+
+            if (a == null && fpsVal == 0f) {
+                consecutiveErrors++
+                if (consecutiveErrors >= 5) diag("Both FPS methods returned no data for $pkg (root dumpsys may be blocked)")
+            } else {
+                consecutiveErrors = 0
+            }
             _telemetry.update { it.copy(fps = fpsVal) }
             delay(1000L)
         }
