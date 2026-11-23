@@ -2,6 +2,15 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.5] - 2026-11-23
+
+### Fixed
+- **FPS counter stuck at 0 on Android 16.** SurfaceFlinger lists the same layer several times (one entry per refresh-rate bucket) and the counter only read the last one. The entries are now added together, so the real frame count of the app is used.
+
+### Changed
+- Removed the slower per-layer `--latency` method, which returns no data on newer Android. FPS now uses one light query per second.
+- Version 1.12.5 (versionCode 19).
+
 ## [1.12.4] - 2026-11-23
 
 ### Fixed

@@ -1279,81 +1279,9 @@ class GovernorEngine(context: Context) {
             return (frames - prevFrames) * 1000f / (now - prevRt)
         }
 
-        // Method 1: dumpsys SurfaceFlinger --latency <layer> (exact present timestamps)
-        suspend fun sampleLatency(pkg: String): Float? {
-            val now = SystemClock.elapsedRealtime()
-            if (layerNames.isEmpty() || now - lastLayerListRt > 5_000L) {
-                val r = rootShell.exec("dumpsys SurfaceFlinger --list 2>/dev/null")
-                var names = r.stdout.lines().map { it.trim() }.filter {
-                    it.isNotEmpty() && it.length < 200 &&
-                        !it.contains("RequestedLayerState") && !it.contains("parentId=")
-                }
-                if (names.isEmpty()) {
-                    // Newer Android prints a verbose dump for --list; take real layer names from timestats instead.
-                    if (!timestatsEnabled) {
-                        rootShell.exec("dumpsys SurfaceFlinger --timestats -enable")
-                        timestatsEnabled = true
-                    }
-                    val t = rootShell.exec("dumpsys SurfaceFlinger --timestats -dump | grep -E '^layerName'")
-                    names = t.stdout.lines().mapNotNull { l ->
-                        l.trim().takeIf { it.startsWith("layerName") }?.substringAfter("=", "")?.trim()
-                    }.filter { it.isNotEmpty() }
-                }
-                if (names.isNotEmpty()) {
-                    layerNames = names
-                    lastLayerListRt = now
-                }
-            }
-            if (layerNames.isEmpty()) return null
-            var cands = layerNames.filter { it.contains(pkg) }
-            var usedFallback = false
-            if (cands.isEmpty()) {
-                usedFallback = true
-                cands = layerNames.filter { n ->
-                    ignored.none { n.contains(it, ignoreCase = true) } &&
-                        (n.contains("SurfaceView") || n.contains("/"))
-                }
-            }
-            if (cands.isEmpty()) return null
-            cands = cands.sortedByDescending { it.contains("SurfaceView") }.take(6)
-
-            var best: Float? = null
-            var parsedAny = false
-            for (name in cands) {
-                val r = rootShell.exec("dumpsys SurfaceFlinger --latency ${q(name)} 2>/dev/null")
-                val rows = r.stdout.lines().drop(1).map { it.trim().split(Regex("\\s+")) }
-                var ts = emptyList<Long>()
-                for (col in intArrayOf(1, 2, 0)) {
-                    ts = rows.mapNotNull { p -> p.getOrNull(col)?.toLongOrNull() }
-                        .filter { it in 1L until (Long.MAX_VALUE / 2) }
-                    if (ts.isNotEmpty()) break
-                }
-                if (ts.isEmpty()) {
-                    val rawKey = "$name|${r.stdout.take(120)}"
-                    if (loggedRaw.size < 20 && loggedRaw.add(rawKey)) {
-                        log(LogLevel.INFO, "FPS", "latency raw for ${name.take(80)}: ${r.stdout.take(120).replace("\n", " / ")}")
-                    }
-                    continue
-                }
-                parsedAny = true
-                val newest = ts.maxOrNull() ?: continue
-                val prevNewest = lastPresentTs[name]
-                lastPresentTs[name] = newest
-                if (prevNewest == null) continue
-                val newFrames = ts.count { it > prevNewest }
-                val spanSec = (newest - prevNewest) / 1_000_000_000f
-                val f = if (newFrames > 0 && spanSec > 0f) newFrames / spanSec else 0f
-                if (best == null || f > best!!) best = f
-            }
-            diag(
-                "latency method: ${cands.size} layer(s)" +
-                    (if (usedFallback) " (no package match, fallback)" else "") +
-                    ", parsed=$parsedAny: ${cands.take(3).joinToString(" | ")}"
-            )
-            return if (parsedAny) (best ?: 0f) else null
-        }
-
-        // Method 2: SurfaceFlinger timestats frame counters
+        // Main method: SurfaceFlinger timestats frame counters.
+        // Android 16 lists the same layer several times (one entry per render-rate bucket),
+        // so the counters of all entries with the same layer name are added together.
         suspend fun sampleTimestats(pkg: String): Float? {
             if (!timestatsEnabled) {
                 rootShell.exec("dumpsys SurfaceFlinger --timestats -enable")
@@ -1372,7 +1300,7 @@ class GovernorEngine(context: Context) {
                     val cl = currentLayer
                     if (cl != null) {
                         val frames = trimmed.substringAfter("=", "").trim().toLongOrNull()
-                        if (frames != null) currentLayers[cl] = frames
+                        if (frames != null) currentLayers[cl] = (currentLayers[cl] ?: 0L) + frames
                         currentLayer = null
                     }
                 }
@@ -1381,16 +1309,26 @@ class GovernorEngine(context: Context) {
             prevTimestats = currentLayers
             if (prev.isEmpty() || currentLayers.isEmpty()) return null
             var matching = currentLayers.filterKeys { it.contains(pkg) }
+            var usedFallback = false
             if (matching.isEmpty()) {
+                usedFallback = true
                 matching = currentLayers.filterKeys { n -> ignored.none { n.contains(it, ignoreCase = true) } }
             }
             var maxDelta = 0L
+            var bestName = ""
             for ((name, count) in matching) {
                 val p = prev[name] ?: continue
                 val d = (count - p).coerceAtLeast(0L)
-                if (d > maxDelta) maxDelta = d
+                if (d > maxDelta) {
+                    maxDelta = d
+                    bestName = name
+                }
             }
-            diag("timestats method: ${currentLayers.size} layer(s) seen: ${currentLayers.keys.take(3).joinToString(" | ")}")
+            diag(
+                "timestats method: ${matching.size} layer(s) for $pkg" +
+                    (if (usedFallback) " (no package match, fallback)" else "") +
+                    ": ${matching.keys.take(3).joinToString(" | ")}"
+            )
             return maxDelta.toFloat()
         }
 
@@ -1431,25 +1369,18 @@ class GovernorEngine(context: Context) {
 
             val g = sampleKernel() ?: sampleServiceCall()
             var source = "kernel/service"
-            var a: Float? = null
             val sampleRt = SystemClock.elapsedRealtime()
             val fpsVal: Float = if (g != null && g > 0f) {
                 g
             } else {
-                a = sampleLatency(pkg)
-                if (a != null && a > 0f) {
-                    source = "latency"
-                    a
+                val b = sampleTimestats(pkg)
+                val elapsed = if (lastSampleRt > 0L) (sampleRt - lastSampleRt) / 1000f else 0f
+                if (b != null && elapsed > 0f) {
+                    source = "timestats"
+                    b / elapsed
                 } else {
-                    val b = sampleTimestats(pkg)
-                    val elapsed = if (lastSampleRt > 0L) (sampleRt - lastSampleRt) / 1000f else 0f
-                    if (b != null && b > 0f && elapsed > 0f) {
-                        source = "timestats"
-                        b / elapsed
-                    } else {
-                        source = "idle"
-                        g ?: a ?: 0f
-                    }
+                    source = "waiting"
+                    g ?: 0f
                 }
             }
             if (source != lastSource) {
@@ -1458,7 +1389,7 @@ class GovernorEngine(context: Context) {
             }
             lastSampleRt = sampleRt
 
-            if (g == null && a == null && fpsVal == 0f) {
+            if (g == null && source == "waiting") {
                 consecutiveErrors++
                 if (consecutiveErrors >= 5) diag("Both FPS methods returned no data for $pkg (root dumpsys may be blocked)")
             } else {

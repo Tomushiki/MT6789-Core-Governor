@@ -31,8 +31,8 @@ android {
     applicationId = "com.aistudio.coregovernor.mt6789"
     minSdk = 24
     targetSdk = 36
-    versionCode = 18
-    versionName = "1.12.4"
+    versionCode = 19
+    versionName = "1.12.5"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
