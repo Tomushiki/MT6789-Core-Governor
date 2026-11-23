@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import com.example.governor.SensorPinner
 import com.example.model.FreqRange
 import com.example.model.GovernorConfig
+import com.example.model.overlayPosPm
 import com.example.model.GovernorMode
 import com.example.model.HardwareSpec
 import com.example.model.PowerPolarity
@@ -712,21 +713,16 @@ fun TuningScreen(
                             testTag = "overlay_expanded_scale_slider"
                         )
 
-                        val posStyle = when {
+                        val isLandscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+                            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                        val posStyle = (when {
                             config.overlayDetailed -> "detailed"
                             config.overlayExpanded -> "expanded"
                             else -> "compact"
-                        }
-                        val posXPct = (when {
-                            config.overlayDetailed -> config.overlayDetailedXPm
-                            config.overlayExpanded -> config.overlayExpandedXPm
-                            else -> config.overlayCompactXPm
-                        } / 10).coerceIn(0, 100)
-                        val posYPct = (when {
-                            config.overlayDetailed -> config.overlayDetailedYPm
-                            config.overlayExpanded -> config.overlayExpandedYPm
-                            else -> config.overlayCompactYPm
-                        } / 10).coerceIn(0, 100)
+                        }) + if (isLandscape) ", landscape" else ", portrait"
+                        val (posXPm, posYPm) = config.overlayPosPm(isLandscape)
+                        val posXPct = (posXPm / 10).coerceIn(0, 100)
+                        val posYPct = (posYPm / 10).coerceIn(0, 100)
 
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingSliderRow(

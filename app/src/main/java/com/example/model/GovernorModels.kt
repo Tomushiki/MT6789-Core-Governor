@@ -182,6 +182,13 @@ data class GovernorConfig(
     val overlayExpandedYPm: Int = 60,
     val overlayDetailedXPm: Int = 40,
     val overlayDetailedYPm: Int = 60,
+    // Landscape positions are stored separately from portrait ones (suffix L).
+    val overlayCompactXPmL: Int = 40,
+    val overlayCompactYPmL: Int = 60,
+    val overlayExpandedXPmL: Int = 40,
+    val overlayExpandedYPmL: Int = 60,
+    val overlayDetailedXPmL: Int = 40,
+    val overlayDetailedYPmL: Int = 60,
     val overlayX: Int = 24,
     val overlayY: Int = 120,
     val ramPinMax: Boolean = false,
@@ -316,3 +323,25 @@ data class InstalledAppInfo(
     val label: String,
     val isSystemApp: Boolean
 )
+
+/** Saved overlay position (permille of free screen space) for the active style and orientation. */
+fun GovernorConfig.overlayPosPm(landscape: Boolean): Pair<Int, Int> {
+    val (x, y) = when {
+        overlayDetailed -> if (landscape) overlayDetailedXPmL to overlayDetailedYPmL else overlayDetailedXPm to overlayDetailedYPm
+        overlayExpanded -> if (landscape) overlayExpandedXPmL to overlayExpandedYPmL else overlayExpandedXPm to overlayExpandedYPm
+        else -> if (landscape) overlayCompactXPmL to overlayCompactYPmL else overlayCompactXPm to overlayCompactYPm
+    }
+    return x.coerceIn(0, 1000) to y.coerceIn(0, 1000)
+}
+
+/** Returns a copy with the active style's position for one orientation changed (null keeps the old value). */
+fun GovernorConfig.withOverlayPosPm(landscape: Boolean, xPm: Int?, yPm: Int?): GovernorConfig {
+    val (cx, cy) = overlayPosPm(landscape)
+    val x = (xPm ?: cx).coerceIn(0, 1000)
+    val y = (yPm ?: cy).coerceIn(0, 1000)
+    return when {
+        overlayDetailed -> if (landscape) copy(overlayDetailedXPmL = x, overlayDetailedYPmL = y) else copy(overlayDetailedXPm = x, overlayDetailedYPm = y)
+        overlayExpanded -> if (landscape) copy(overlayExpandedXPmL = x, overlayExpandedYPmL = y) else copy(overlayExpandedXPm = x, overlayExpandedYPm = y)
+        else -> if (landscape) copy(overlayCompactXPmL = x, overlayCompactYPmL = y) else copy(overlayCompactXPm = x, overlayCompactYPm = y)
+    }
+}

@@ -41,6 +41,7 @@ import com.example.model.PowerPolarity
 import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
 import com.example.model.ThrottleCurveShape
+import com.example.model.withOverlayPosPm
 import com.example.service.GovernorService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -247,31 +248,20 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun updateOverlayPosition(xPm: Int?, yPm: Int?, reset: Boolean = false) {
+        val landscape = getApplication<Application>().resources.configuration.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
         engine.updateConfig { cfg ->
             if (reset) {
                 cfg.copy(
-                    overlayCompactXPm = 40,
-                    overlayCompactYPm = 60,
-                    overlayExpandedXPm = 40,
-                    overlayExpandedYPm = 60,
-                    overlayDetailedXPm = 40,
-                    overlayDetailedYPm = 60
-                )
-            } else if (cfg.overlayDetailed) {
-                cfg.copy(
-                    overlayDetailedXPm = (xPm ?: cfg.overlayDetailedXPm).coerceIn(0, 1000),
-                    overlayDetailedYPm = (yPm ?: cfg.overlayDetailedYPm).coerceIn(0, 1000)
-                )
-            } else if (cfg.overlayExpanded) {
-                cfg.copy(
-                    overlayExpandedXPm = (xPm ?: cfg.overlayExpandedXPm).coerceIn(0, 1000),
-                    overlayExpandedYPm = (yPm ?: cfg.overlayExpandedYPm).coerceIn(0, 1000)
+                    overlayCompactXPm = 40, overlayCompactYPm = 60,
+                    overlayExpandedXPm = 40, overlayExpandedYPm = 60,
+                    overlayDetailedXPm = 40, overlayDetailedYPm = 60,
+                    overlayCompactXPmL = 40, overlayCompactYPmL = 60,
+                    overlayExpandedXPmL = 40, overlayExpandedYPmL = 60,
+                    overlayDetailedXPmL = 40, overlayDetailedYPmL = 60
                 )
             } else {
-                cfg.copy(
-                    overlayCompactXPm = (xPm ?: cfg.overlayCompactXPm).coerceIn(0, 1000),
-                    overlayCompactYPm = (yPm ?: cfg.overlayCompactYPm).coerceIn(0, 1000)
-                )
+                cfg.withOverlayPosPm(landscape, xPm, yPm)
             }
         }
     }

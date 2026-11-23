@@ -2,6 +2,18 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.3.0] - 2026-11-23
+
+### Added
+- **Separate overlay positions for portrait and landscape.** Each overlay style (compact, medium, detailed) now remembers one position in portrait and a different one in landscape. Dragging the overlay saves into the orientation you are in; rotating the phone moves it to that orientation's saved spot. The Tuning position sliders edit the current orientation and say which one in their title.
+- Existing saved positions are copied to landscape the first time, so nothing jumps after updating.
+
+### Changed
+- The overlay can now reach the very top edge (over the status bar and notch area) and every other edge, in both orientations.
+- Edge snapping is much smaller (about 1% instead of 2.5%) so the overlay stays exactly where you leave it.
+- "Reset position" resets both orientations.
+- Version 2.3.0 (versionCode 35).
+
 ## [2.2.0] - 2026-11-23
 
 ### Added

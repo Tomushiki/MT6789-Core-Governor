@@ -16,7 +16,9 @@
 package com.example.service
 
 import android.annotation.SuppressLint
+import android.content.ComponentCallbacks
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PixelFormat
@@ -35,6 +37,8 @@ import android.view.WindowManager
 import com.example.governor.GovernorEngine
 import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
+import com.example.model.overlayPosPm
+import com.example.model.withOverlayPosPm
 import com.example.model.TelemetryState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -70,6 +74,32 @@ class OverlayController(
     private var lastAppliedXPm: Int = -1
     private var lastAppliedYPm: Int = -1
 
+    // Re-applies the saved position for the new orientation after a rotation.
+    private val rotationCallbacks = object : ComponentCallbacks {
+        override fun onConfigurationChanged(newConfig: Configuration) {
+            // Window metrics settle a moment after the callback, so apply twice.
+            mainHandler.removeCallbacks(repositionRunnable)
+            mainHandler.postDelayed(repositionRunnable, 150L)
+            mainHandler.postDelayed(repositionRunnable, 600L)
+        }
+        @Suppress("OVERRIDE_DEPRECATION")
+        override fun onLowMemory() {}
+    }
+    private var rotationRegistered = false
+    private val repositionRunnable = Runnable { repositionForCurrentScreen() }
+
+    private fun repositionForCurrentScreen() {
+        val view = overlayView ?: return
+        val params = layoutParams ?: return
+        if (isDragging) return
+        view.requestLayout()
+        applyPermillePosition(view, params, engine.config.value)
+        try {
+            windowManager.updateViewLayout(view, params)
+        } catch (_: Throwable) {
+        }
+    }
+
     private var lastAppliedDisplay: DisplayData? = null
     private var lastApplyTimeMs: Long = 0L
 
@@ -101,6 +131,10 @@ class OverlayController(
 
     fun start() {
         if (visibilityJob?.isActive == true) return
+        if (!rotationRegistered) {
+            appContext.registerComponentCallbacks(rotationCallbacks)
+            rotationRegistered = true
+        }
         visibilityJob = scope.launch(Dispatchers.Main.immediate) {
             combine(
                 engine.config,
@@ -135,6 +169,11 @@ class OverlayController(
     fun stop() {
         visibilityJob?.cancel()
         visibilityJob = null
+        if (rotationRegistered) {
+            try { appContext.unregisterComponentCallbacks(rotationCallbacks) } catch (_: Throwable) {}
+            rotationRegistered = false
+        }
+        mainHandler.removeCallbacks(repositionRunnable)
         if (Looper.myLooper() == Looper.getMainLooper()) {
             hide()
         } else {
@@ -171,6 +210,12 @@ class OverlayController(
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
+                // Let the overlay reach the status bar / notch area in both orientations.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
             }
             applyPermillePosition(view, params, cfg)
 
@@ -225,14 +270,13 @@ class OverlayController(
         }
     }
 
-    private fun currentPosPm(cfg: GovernorConfig): Pair<Int, Int> {
-        val (xPm, yPm) = when {
-            cfg.overlayDetailed -> cfg.overlayDetailedXPm to cfg.overlayDetailedYPm
-            cfg.overlayExpanded -> cfg.overlayExpandedXPm to cfg.overlayExpandedYPm
-            else -> cfg.overlayCompactXPm to cfg.overlayCompactYPm
-        }
-        return xPm.coerceIn(0, 1000) to yPm.coerceIn(0, 1000)
+    private fun isLandscapeNow(): Boolean {
+        val (w, h) = getScreenSize()
+        return w > h
     }
+
+    private fun currentPosPm(cfg: GovernorConfig): Pair<Int, Int> =
+        cfg.overlayPosPm(isLandscapeNow())
 
     private fun getScreenSize(): Pair<Int, Int> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -310,7 +354,8 @@ class OverlayController(
 
     private fun buildFlags(clickThrough: Boolean): Int {
         var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
         if (clickThrough) {
             flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         }
@@ -1108,14 +1153,14 @@ class OverlayController(
                         var xPm = if (freeW <= 0) 0 else (params.x * 1000f / max(1, freeW)).roundToInt().coerceIn(0, 1000)
                         var yPm = if (freeH <= 0) 0 else (params.y * 1000f / max(1, freeH)).roundToInt().coerceIn(0, 1000)
                         xPm = when {
-                            xPm <= 25 -> 0
-                            xPm >= 975 -> 1000
-                            abs(xPm - 500) <= 20 -> 500
+                            xPm <= 8 -> 0
+                            xPm >= 992 -> 1000
+                            abs(xPm - 500) <= 8 -> 500
                             else -> xPm
                         }
                         yPm = when {
-                            yPm <= 25 -> 0
-                            yPm >= 975 -> 1000
+                            yPm <= 8 -> 0
+                            yPm >= 992 -> 1000
                             else -> yPm
                         }
                         params.x = (xPm / 1000f * freeW).roundToInt()
@@ -1126,12 +1171,10 @@ class OverlayController(
                             windowManager.updateViewLayout(this, params)
                         } catch (_: Throwable) {
                         }
+                        val land = screenW > screenH
                         engine.updateConfig {
-                            when {
-                                detailed -> it.copy(overlayDetailedXPm = xPm, overlayDetailedYPm = yPm)
-                                expanded -> it.copy(overlayExpandedXPm = xPm, overlayExpandedYPm = yPm)
-                                else -> it.copy(overlayCompactXPm = xPm, overlayCompactYPm = yPm)
-                            }
+                            // Save into the slot for the orientation the user dragged in.
+                            it.withOverlayPosPm(land, xPm, yPm)
                         }
                     } else {
                         engine.updateConfig {

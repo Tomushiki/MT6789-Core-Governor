@@ -389,6 +389,12 @@ class ConfigStorage(private val context: Context) {
             put("overlayExpandedYPm", c.overlayExpandedYPm)
             put("overlayDetailedXPm", c.overlayDetailedXPm)
             put("overlayDetailedYPm", c.overlayDetailedYPm)
+            put("overlayCompactXPmL", c.overlayCompactXPmL)
+            put("overlayCompactYPmL", c.overlayCompactYPmL)
+            put("overlayExpandedXPmL", c.overlayExpandedXPmL)
+            put("overlayExpandedYPmL", c.overlayExpandedYPmL)
+            put("overlayDetailedXPmL", c.overlayDetailedXPmL)
+            put("overlayDetailedYPmL", c.overlayDetailedYPmL)
             put("overlayX", c.overlayX)
             put("overlayY", c.overlayY)
             put("ramPinMax", c.ramPinMax)
@@ -491,6 +497,12 @@ class ConfigStorage(private val context: Context) {
             overlayExpandedYPm = obj.optInt("overlayExpandedYPm", default.overlayExpandedYPm).coerceIn(0, 1000),
             overlayDetailedXPm = obj.optInt("overlayDetailedXPm", default.overlayDetailedXPm).coerceIn(0, 1000),
             overlayDetailedYPm = obj.optInt("overlayDetailedYPm", default.overlayDetailedYPm).coerceIn(0, 1000),
+            overlayCompactXPmL = obj.optInt("overlayCompactXPmL", obj.optInt("overlayCompactXPm", default.overlayCompactXPmL)).coerceIn(0, 1000),
+            overlayCompactYPmL = obj.optInt("overlayCompactYPmL", obj.optInt("overlayCompactYPm", default.overlayCompactYPmL)).coerceIn(0, 1000),
+            overlayExpandedXPmL = obj.optInt("overlayExpandedXPmL", obj.optInt("overlayExpandedXPm", default.overlayExpandedXPmL)).coerceIn(0, 1000),
+            overlayExpandedYPmL = obj.optInt("overlayExpandedYPmL", obj.optInt("overlayExpandedYPm", default.overlayExpandedYPmL)).coerceIn(0, 1000),
+            overlayDetailedXPmL = obj.optInt("overlayDetailedXPmL", obj.optInt("overlayDetailedXPm", default.overlayDetailedXPmL)).coerceIn(0, 1000),
+            overlayDetailedYPmL = obj.optInt("overlayDetailedYPmL", obj.optInt("overlayDetailedYPm", default.overlayDetailedYPmL)).coerceIn(0, 1000),
             overlayX = obj.optInt("overlayX", default.overlayX),
             overlayY = obj.optInt("overlayY", default.overlayY),
             ramPinMax = obj.optBoolean("ramPinMax", default.ramPinMax),
