@@ -2,6 +2,18 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.12] - 2026-11-23
+
+### Fixed
+- **FPS flickered between values, 0 and "waiting".** When a screen was static the helper re-scanned every layer on each pass (about 11 `dumpsys` calls), so its numbers went stale and the overlay dropped back to the slow backup methods. Layer scanning now runs on its own thread; the main loop only re-measures the one chosen layer, twice a second.
+- **Old app's FPS leaked into the next app.** Every reading is now tagged with its task, and only readings for the app on screen are used.
+- **Apps other than the one game were not followed.** The helper's own focused-app detection now drives FPS for every app (except the system UI), so it no longer lags behind app switches. Once the helper has data, the old backup methods are not used any more, which also removes the "no package match" fallback noise.
+
+### Changed
+- FPS is lightly smoothed and refreshed twice a second instead of once.
+- Log: the helper's notes are shown at most every 10 s, and `Compare:` now names the task.
+- Version 1.12.12 (versionCode 26).
+
 ## [1.12.11] - 2026-11-23
 
 ### Fixed

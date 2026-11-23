@@ -1221,6 +1221,10 @@ class GovernorEngine(context: Context) {
         var sfLastRt = 0L
         var sfUnsupported = false
         var lastLatDetailRt = 0L
+        var smoothedFps = 0f
+        var lastTid = -2
+        var lastHelperNote = ""
+        var lastHelperNoteRt = 0L
 
         val ignored = listOf(
             "StatusBar", "NavigationBar", "ScreenDecor", "Wallpaper", "InputMethod",
@@ -1361,10 +1365,20 @@ class GovernorEngine(context: Context) {
             }
             inactivePublished = false
 
-            val pkg = _telemetry.value.foregroundPackage
+            val enginePkg = _telemetry.value.foregroundPackage
+            // The helper knows the focused task itself, so prefer its package: it never lags behind the app switch.
+            val helperPkg = fpsDaemon?.takeIf { it.isAlive }?.taskPkg.orEmpty()
+            val pkg = if (helperPkg.isNotBlank() && helperPkg != "?" && helperPkg != "focused-root") helperPkg else enginePkg
             if (pkg.isBlank()) {
                 diag("No foreground package detected yet")
                 _telemetry.update { it.copy(fps = -1f) }
+                delay(1000L)
+                continue
+            }
+            // Every app is measured except the system UI itself.
+            if (pkg == "com.android.systemui") {
+                _telemetry.update { it.copy(fps = -1f) }
+                lastPkg = pkg
                 delay(1000L)
                 continue
             }
@@ -1397,34 +1411,39 @@ class GovernorEngine(context: Context) {
                         d.stop()
                         fpsDaemon = null
                     } else if (d.fpsAtRt > 0L || d.latencyAtRt > 0L) {
-                        diag("Task-FPS helper: task=${d.taskInfo} err=${d.lastError}")
-                        val cbFresh = d.fpsAtRt > 0L && nowRt - d.fpsAtRt < 2500L
-                        val latFresh = d.latencyAtRt > 0L && nowRt - d.latencyAtRt < 2500L
-                        val v: Float
-                        val src: String
-                        if (cbFresh && d.fps > 0f && latFresh && d.latencyFps > 0f) {
-                            // Both are live: the task callback can under-report in games, so take the higher one.
-                            if (d.latencyFps > d.fps) { v = d.latencyFps; src = "sf-latency" }
-                            else { v = d.fps; src = "task-callback" }
+                        diag("Task-FPS helper: task=${d.taskInfo}")
+                        if (d.lastError.isNotBlank() && d.lastError != lastHelperNote && nowRt - lastHelperNoteRt > 10000L) {
+                            lastHelperNote = d.lastError
+                            lastHelperNoteRt = nowRt
+                            log(LogLevel.INFO, "FPS", "Helper note: ${d.lastError}")
                         }
-                        else if (cbFresh && d.fps > 0f) { v = d.fps; src = "task-callback" }
-                        else if (latFresh) { v = d.latencyFps; src = "sf-latency" }
-                        else if (cbFresh) { v = d.fps; src = "task-callback" }
-                        else { v = 0f; src = "idle" }
+                        val tid = d.taskId
+                        if (tid != lastTid) { lastTid = tid; smoothedFps = 0f }
+                        // Only values that belong to the app on screen right now are used (never the previous app's).
+                        val cbFresh = d.fpsAtRt > 0L && d.fpsTask == tid && nowRt - d.fpsAtRt < 3500L
+                        val latFresh = d.latencyAtRt > 0L && d.latencyTask == tid && nowRt - d.latencyAtRt < 1500L
+                        val cbV = if (cbFresh) d.fps else -1f
+                        val latV = if (latFresh) d.latencyFps else -1f
+                        // The task callback can under-report in games, the layer value can be missing in some apps: take the higher.
+                        val raw = maxOf(cbV, latV, 0f)
+                        val src = when {
+                            cbV > latV && cbV >= 0f -> "task-callback"
+                            latV >= 0f -> "sf-latency"
+                            else -> "no-frames"
+                        }
+                        // Light smoothing so the number is steady but still reacts within about a second.
+                        smoothedFps = if (raw <= 0f) 0f else if (smoothedFps <= 0f) raw else smoothedFps + (raw - smoothedFps) * 0.55f
+                        if (src != lastSource) {
+                            lastSource = src
+                            log(LogLevel.INFO, "FPS", "Source: $src (${d.taskInfo}) ${if (src == "sf-latency") d.latencyLayer else ""}")
+                        }
                         if (nowRt - lastLatDetailRt > 8000L) {
                             lastLatDetailRt = nowRt
-                            log(LogLevel.INFO, "FPS", "Compare: callback=${if (cbFresh) d.fps.toInt().toString() else "none"} latency=${if (latFresh) d.latencyFps.toInt().toString() else "none"} shown=${v.toInt()} layer=${d.latencyLayer}")
+                            log(LogLevel.INFO, "FPS", "Compare: task=${d.taskInfo} callback=${if (cbFresh) d.fps.toInt().toString() else "none"} layer=${if (latFresh) d.latencyFps.toInt().toString() else "none"} shown=${smoothedFps.toInt()} via=${d.latencyLayer.substringBefore(" |")}")
                         }
-                        if (src != "idle") {
-                            if (src != lastSource) {
-                                lastSource = src
-                                log(LogLevel.INFO, "FPS", "Source: $src (${d.taskInfo}) ${if (src == "sf-latency") d.latencyLayer else ""}")
-                            }
-                            _telemetry.update { it.copy(fps = v) }
-                            delay(1000L)
-                            continue
-                        }
-                        // helper has nothing fresh: fall through to the older methods below
+                        _telemetry.update { it.copy(fps = smoothedFps) }
+                        delay(500L)
+                        continue
                     } else {
                         diag("Task-FPS helper: task=${d.taskInfo} err=${d.lastError}")
                         if (nowRt - fpsDaemonStartRt > 8000L) diag("Task-FPS helper running (${d.taskInfo.ifBlank { "no task" }}) but no callback data yet; err=${d.lastError.ifBlank { d.rawTail() }}")

@@ -42,9 +42,6 @@ object FpsDaemon {
     @Volatile private var currentPkg = ""
     @Volatile private var lastCbRt = 0L
     @Volatile private var lastCbFps = 0f
-    private var layerCache = emptyList<String>()
-    private var layerCacheRt = 0L
-    private var layerCachePkg = ""
     private var wm: Any? = null
     private var atm: Any? = null
     private var registerM: Method? = null
@@ -116,12 +113,13 @@ object FpsDaemon {
         return null
     }
 
-    private var bestLayer = ""
-    private var bestScanRt = 0L
-    @Volatile private var lastDetail = ""
-    @Volatile private var lastCmdError = ""
-    @Volatile private var listSample = ""
-    @Volatile private var latSample = ""
+    // ---- Layer measurement (SurfaceFlinger frame timestamps) ----
+    @Volatile private var bestLayer = ""
+    @Volatile private var scanNow = true
+    @Volatile private var lastScanErr = ""
+    private var layerCache = emptyList<String>()
+
+    private class Meas(val fps: Float, val detail: String, val sample: String)
 
     private fun oneLine(t: String): String =
         t.trim().replace('\n', '|').replace('\r', ' ').let { if (it.length > 170) it.substring(0, 170) else it }
@@ -133,21 +131,17 @@ object FpsDaemon {
         p.waitFor()
         out
     } catch (t: Throwable) {
-        lastCmdError = "${t.javaClass.simpleName}: ${t.message}"
         ""
     }
 
     // On newer Android, `dumpsys SurfaceFlinger --list` can print a long debug dump
     // (RequestedLayerState{...}) instead of plain layer names, so real names are pulled out with a regex.
-    private val layerRegex = Regex("SurfaceView\\[[^\\]]*\\](?:\\(BLAST\\))?#\\d+|[\\w.\$]+/[\\w.\$]+(?:\\(BLAST\\))?#\\d+")
+    private val layerRegex = Regex("SurfaceView\\[[^\\]]*\\](?:\\(BLAST\\))?#\\d+|[\\w.\\$]+/[\\w.\\$]+(?:\\(BLAST\\))?#\\d+")
     private val skipWords = listOf("InputSink", "Splash", "Letterbox", "Background for", "Bounds for", "Dim Layer", "Task=", "Wallpaper")
 
-    /** Layers of the focused app (SurfaceView layers first), cached for a few seconds. */
+    /** Layers of the app (SurfaceView layers first, then newest), up to 6. Only called from the scan thread. */
     private fun candidateLayers(pkg: String): List<String> {
-        val now = SystemClock.elapsedRealtime()
-        if (pkg == layerCachePkg && now - layerCacheRt < 5000L) return layerCache
         val out = dumpsys("SurfaceFlinger", "--list")
-        listSample = oneLine(out)
         val names = LinkedHashSet<String>()
         for (raw in out.lineSequence()) {
             val line = raw.trim()
@@ -159,9 +153,7 @@ object FpsDaemon {
         }
         layerCache = names.sortedWith(
             compareBy<String>({ if (it.startsWith("SurfaceView")) 0 else 1 }, { -(it.substringAfterLast('#').toIntOrNull() ?: 0) })
-        ).take(8)
-        layerCachePkg = pkg
-        layerCacheRt = now
+        ).take(6)
         return layerCache
     }
 
@@ -169,8 +161,7 @@ object FpsDaemon {
     private fun rate(ts: List<Long>, nowNs: Long): Float {
         val recent = ts.filter { nowNs - it in -100_000_000L..1_000_000_000L }.sorted()
         if (recent.isEmpty()) return 0f
-        // SurfaceFlinger keeps only the last 128 frames per layer. At high frame rates the whole
-        // buffer fits inside one second, so a plain count would be capped; use the frame spacing instead.
+        // SurfaceFlinger keeps only the last 128 frames per layer, so at high frame rates use the frame spacing.
         if (recent.size >= 20) {
             val span = recent.last() - recent.first()
             if (span > 0L) return (recent.size - 1) * 1_000_000_000f / span
@@ -178,8 +169,8 @@ object FpsDaemon {
         return recent.size.toFloat()
     }
 
-    /** FPS of one layer from SurfaceFlinger frame timestamps (best of presented / ready times). -1 = no data. */
-    private fun layerFps(name: String): Float {
+    /** FPS of one layer from SurfaceFlinger frame timestamps (best of presented / ready times). fps -1 = no data. */
+    private fun layerFps(name: String): Meas {
         val text = dumpsys("SurfaceFlinger", "--latency", name)
         val nowNs = System.nanoTime()
         val present = ArrayList<Long>()
@@ -192,15 +183,56 @@ object FpsDaemon {
             val r = parts[2].toLongOrNull()
             if (r != null && r > 0L && r != Long.MAX_VALUE) ready.add(r)
         }
-        if (present.isEmpty() && ready.isEmpty()) {
-            latSample = oneLine(text)
-            return -1f
-        }
+        if (present.isEmpty() && ready.isEmpty()) return Meas(-1f, "", oneLine(text))
         val fp = rate(present, nowNs)
         val fr = rate(ready, nowNs)
-        lastDetail = "rows=${present.size}/${ready.size} presented=${fp.toInt()} ready=${fr.toInt()}"
-        return maxOf(fp, fr)
+        return Meas(maxOf(fp, fr), "rows=${present.size}/${ready.size} presented=${fp.toInt()} ready=${fr.toInt()}", "")
     }
+
+    /**
+     * Background thread: finds the layer of the current app that is producing frames.
+     * Fast (1.2 s) while nothing is found or the app is idle, slow (4 s) while a layer is busy.
+     */
+    private fun scanLoop() {
+        var lastScanRt = 0L
+        var scannedTask = -2
+        while (true) {
+            try {
+                val pkg = currentPkg
+                val task = currentTask
+                val now = SystemClock.elapsedRealtime()
+                val busy = bestLayer.isNotEmpty() && lastBestFps > 3f
+                val due = scanNow || task != scannedTask || now - lastScanRt >= (if (busy) 4000L else 1200L)
+                if (pkg.isNotEmpty() && pkg != "?" && task >= 0 && due) {
+                    scanNow = false
+                    scannedTask = task
+                    val cands = candidateLayers(pkg)
+                    var best = -1f
+                    var bestName = ""
+                    var sample = ""
+                    for (n in cands) {
+                        if (task != currentTask) break
+                        val m = layerFps(n)
+                        if (m.fps < 0f) { if (sample.isEmpty()) sample = m.sample; continue }
+                        if (m.fps > best) { best = m.fps; bestName = n }
+                    }
+                    if (task == currentTask) {
+                        bestLayer = bestName
+                        lastScanRt = SystemClock.elapsedRealtime()
+                        if (bestName.isEmpty()) {
+                            val msg = if (cands.isEmpty()) "no layers match $pkg" else "no frame rows for ${cands.size} layer(s) of $pkg; first=${cands.first()}; sample=$sample"
+                            if (msg != lastScanErr) { lastScanErr = msg; emit("E $msg") }
+                        } else lastScanErr = ""
+                    }
+                }
+            } catch (t: Throwable) {
+                emit("E scan failed: ${t.javaClass.simpleName}: ${t.message}")
+            }
+            SystemClock.sleep(250L)
+        }
+    }
+
+    @Volatile private var lastBestFps = 0f
 
     private fun unregisterCurrent() {
         val p = currentProxy ?: return
@@ -235,7 +267,8 @@ object FpsDaemon {
         currentTask = taskId
         currentPkg = pkg
         bestLayer = ""
-        layerCachePkg = ""
+        lastBestFps = 0f
+        scanNow = true
         emit("T $taskId $pkg")
     }
 
@@ -263,6 +296,7 @@ object FpsDaemon {
         }.apply { isDaemon = true; start() }
 
         emit("OK")
+        Thread { scanLoop() }.apply { isDaemon = true; name = "cg-fps-scan"; start() }
         val binder = FpsBinder()
         var lastErr = ""
         while (true) {
@@ -279,49 +313,28 @@ object FpsDaemon {
                 if (msg != lastErr) { lastErr = msg; emit("E $msg") }
                 currentTask = -1
             }
-            // Backup for apps (games) where the callback is silent or reports 0: SurfaceFlinger layer timestamps.
+            // Layer FPS for ANY app: re-measure only the layer picked by the scan thread, twice a second.
             try {
-                // Always measure the layers too: the task callback can report a lower number than the real
-                // frame rate in games, so the app compares both and shows the higher one.
-                if (currentTask >= 0 && currentPkg.isNotEmpty() && currentPkg != "?") {
-                    var best = -1f
-                    var bestName = ""
-                    var bestDetail = ""
-                    // Normal case: re-measure only the layer that was busiest at the last full scan.
-                    if (bestLayer.isNotEmpty() && SystemClock.elapsedRealtime() - bestScanRt < 5000L) {
-                        val f = layerFps(bestLayer)
-                        if (f > 0f) { best = f; bestName = bestLayer; bestDetail = lastDetail }
-                    }
-                    // Otherwise (first time, new app, layer went quiet, every 5 s): scan all layers of the app.
-                    if (best <= 0f) {
-                        val noRows = bestLayer.isNotEmpty() && layerFps(bestLayer) < 0f
-                        if (noRows) layerCacheRt = 0L
-                        bestLayer = ""
-                        for (n in candidateLayers(currentPkg)) {
-                            val f = layerFps(n)
-                            if (f > best) { best = f; bestName = n; bestDetail = lastDetail }
-                        }
-                        bestScanRt = SystemClock.elapsedRealtime()
-                        if (best >= 0f) bestLayer = bestName
-                    }
-                    if (best >= 0f) {
-                        emit("L $best $bestName | $bestDetail")
-                    } else {
-                        val cands = candidateLayers(currentPkg)
-                        val msg = if (cands.isEmpty())
-                            "no layers match $currentPkg; cmdErr=$lastCmdError; list=$listSample"
-                        else
-                            "no latency rows for ${cands.first()}; sample=$latSample"
-                        if (msg != lastErr) { lastErr = msg; emit("E $msg") }
+                val task = currentTask
+                val layer = bestLayer
+                if (task >= 0 && currentPkg.isNotEmpty() && currentPkg != "?" && layer.isNotEmpty()) {
+                    val m = layerFps(layer)
+                    if (task == currentTask && m.fps >= 0f) {
+                        lastBestFps = m.fps
+                        emit("L ${m.fps} $task $layer | ${m.detail}")
+                    } else if (m.fps < 0f) {
+                        bestLayer = ""        // layer is gone: let the scan thread pick again right away
+                        scanNow = true
                     }
                 }
             } catch (t: Throwable) {
-                emit("E latency fallback failed: ${t.javaClass.simpleName}: ${t.message}")
+                emit("E latency measure failed: ${t.javaClass.simpleName}: ${t.message}")
             }
-            SystemClock.sleep(1000L)
+            SystemClock.sleep(450L)
         }
     }
 }
+
 
 /** App-side handle: starts [FpsDaemon] as root and keeps the latest FPS sample. */
 class FpsDaemonClient(private val apkPath: String) {
@@ -331,6 +344,11 @@ class FpsDaemonClient(private val apkPath: String) {
     @Volatile var latencyAtRt: Long = 0L; private set
     @Volatile var latencyLayer: String = ""; private set
     @Volatile var taskInfo: String = ""; private set
+    @Volatile var taskId: Int = -1; private set
+    @Volatile var taskPkg: String = ""; private set
+    @Volatile var taskSinceRt: Long = 0L; private set
+    @Volatile var fpsTask: Int = -1; private set
+    @Volatile var latencyTask: Int = -1; private set
     @Volatile var started: Boolean = false; private set
     @Volatile var lastError: String = ""; private set
     private val tail = ArrayDeque<String>()
@@ -354,19 +372,27 @@ class FpsDaemonClient(private val apkPath: String) {
                             line.startsWith("F ") -> {
                                 val parts = line.split(' ')
                                 parts.getOrNull(1)?.toFloatOrNull()?.let {
+                                    fpsTask = parts.getOrNull(2)?.toIntOrNull() ?: -1
                                     fps = it
                                     fpsAtRt = SystemClock.elapsedRealtime()
                                 }
                             }
                             line.startsWith("L ") -> {
-                                val parts = line.split(' ', limit = 3)
+                                val parts = line.split(' ', limit = 4)
                                 parts.getOrNull(1)?.toFloatOrNull()?.let {
+                                    latencyTask = parts.getOrNull(2)?.toIntOrNull() ?: -1
                                     latencyFps = it
                                     latencyAtRt = SystemClock.elapsedRealtime()
-                                    latencyLayer = parts.getOrNull(2) ?: ""
+                                    latencyLayer = parts.getOrNull(3) ?: ""
                                 }
                             }
-                            line.startsWith("T ") -> taskInfo = line.substring(2)
+                            line.startsWith("T ") -> {
+                                val parts = line.substring(2).split(' ', limit = 2)
+                                taskId = parts.getOrNull(0)?.toIntOrNull() ?: -1
+                                taskPkg = parts.getOrNull(1) ?: ""
+                                taskSinceRt = SystemClock.elapsedRealtime()
+                                taskInfo = line.substring(2)
+                            }
                             line.startsWith("E ") -> lastError = line.substring(2)
                             else -> synchronized(tail) {
                                 tail.addLast(line)
