@@ -2,6 +2,28 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.1] - 2026-11-23
+
+### Fixed
+- **FPS counter not updating.** If no frame layer matches the foreground app's package name, the counter now falls back to the busiest non-system layer instead of staying stuck.
+- The FPS sampler now writes what it is tracking (or why it can't) to the Log tab, so problems can be diagnosed.
+
+### Changed
+- Version 1.12.1 (versionCode 15).
+
+## [1.12.0] - 2026-11-23
+
+### Added
+- **Three overlay styles.** Tap the overlay to cycle compact, medium, detailed. Each style remembers its own position.
+- **Medium overlay** with CPU, GPU, TEMP, FPS and PWR rings.
+- **Detailed overlay** with per-cluster CPU rows, DDR (memory) frequency, FPS and PWR.
+- **Memory (DDR) frequency monitor** (auto-discovered devfreq node).
+- **FPS counter** for the foreground app.
+- **Keep RAM at max frequency** (Tuning > Memory (RAM)). Off by default, "Only in Game mode" on by default. Released when the screen turns off, the option is switched off or the service stops.
+
+### Changed
+- Version 1.12 (versionCode 14).
+
 ## [1.11.0] - 2026-11-23
 
 ### Added

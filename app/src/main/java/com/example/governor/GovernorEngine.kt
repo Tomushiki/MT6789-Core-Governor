@@ -1205,6 +1205,13 @@ class GovernorEngine(context: Context) {
         var consecutiveErrors = 0
         var retryAtRt = 0L
         var inactivePublished = false
+        var lastDiag = ""
+        fun diag(msg: String) {
+            if (msg != lastDiag) {
+                lastDiag = msg
+                log(LogLevel.INFO, "FPS", msg)
+            }
+        }
 
         while (engineScope.isActive && controlJob?.isActive == true) {
             val cfg = _config.value
@@ -1237,6 +1244,7 @@ class GovernorEngine(context: Context) {
 
             val res = rootShell.exec("dumpsys SurfaceFlinger --timestats -dump | grep -E '^layerName|^totalFrames'")
             if (!res.isSuccess || res.stdout.isBlank()) {
+                diag("SurfaceFlinger timestats returned nothing (exit=${res.isSuccess}); retrying")
                 consecutiveErrors++
                 if (consecutiveErrors >= 3) {
                     _telemetry.update { it.copy(fps = -1f) }
@@ -1274,6 +1282,7 @@ class GovernorEngine(context: Context) {
             val sampleRt = SystemClock.elapsedRealtime()
             val pkg = _telemetry.value.foregroundPackage
             if (pkg.isBlank()) {
+                diag("No foreground package detected yet")
                 _telemetry.update { it.copy(fps = -1f) }
                 prevLayerFrames = currentLayers
                 lastSampleRt = sampleRt
@@ -1292,7 +1301,24 @@ class GovernorEngine(context: Context) {
             }
 
             val elapsedSeconds = (sampleRt - lastSampleRt) / 1000f
-            val matching = currentLayers.filterKeys { it.contains(pkg) }
+            var matching = currentLayers.filterKeys { it.contains(pkg) }
+            if (matching.isEmpty()) {
+                // Fallback: some ROMs/games name layers without the package id.
+                // Use the busiest non-system layer instead.
+                val ignored = listOf(
+                    "StatusBar", "NavigationBar", "ScreenDecor", "Wallpaper", "InputMethod",
+                    "com.android.systemui", "Letterbox", "Dim Layer", "Splash", "Background for",
+                    "Display Overlay", "ActivityRecord"
+                )
+                val candidates = currentLayers.filterKeys { name -> ignored.none { name.contains(it, ignoreCase = true) } }
+                val best = candidates.maxByOrNull { (name, count) ->
+                    (count - (prevLayerFrames[name] ?: count)).coerceAtLeast(0L)
+                }
+                if (best != null) matching = mapOf(best.key to best.value)
+                diag("No layer matched $pkg; using fallback layer ${best?.key ?: "none"}. Layers seen: ${currentLayers.keys.take(6).joinToString(" | ")}")
+            } else {
+                diag("Tracking ${matching.size} layer(s) for $pkg: ${matching.keys.take(3).joinToString(" | ")}")
+            }
             val fpsVal = if (matching.isEmpty() || elapsedSeconds <= 0f) {
                 0f
             } else {
