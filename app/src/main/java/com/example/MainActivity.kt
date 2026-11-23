@@ -113,6 +113,7 @@ fun CoreGovernorRootScreen(
     val config by vm.config.collectAsStateWithLifecycle()
     val presets by vm.presets.collectAsStateWithLifecycle()
     val telemetry by vm.telemetry.collectAsStateWithLifecycle()
+    val sensorPin by vm.sensorPin.collectAsStateWithLifecycle()
     val logs by vm.logs.collectAsStateWithLifecycle()
     val installedApps by vm.installedApps.collectAsStateWithLifecycle()
     val isLoadingApps by vm.isLoadingApps.collectAsStateWithLifecycle()
@@ -232,6 +233,8 @@ fun CoreGovernorRootScreen(
                 onExportJson = vm::exportJson,
                 onImportJson = vm::importJson,
                 onRediscoverHardware = vm::rediscoverHardware,
+                sensorPin = sensorPin,
+                onUpdateSensorPin = vm::updateSensorPin,
                 modifier = Modifier.padding(innerPadding)
             )
             NavTab.OPPS -> OppTableScreen(

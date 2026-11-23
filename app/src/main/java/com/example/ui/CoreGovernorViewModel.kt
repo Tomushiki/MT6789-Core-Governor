@@ -25,6 +25,7 @@ import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.CoreGovernorApp
+import com.example.governor.SensorPinner
 import com.example.model.FreqRange
 import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
@@ -52,6 +53,7 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     val config = engine.config
     val presets = engine.presets
     val telemetry = engine.telemetry
+    val sensorPin = engine.sensorPinner.state
     val logs: StateFlow<List<LogEntry>> = engine.logs
 
     private val _installedApps = MutableStateFlow<List<InstalledAppInfo>>(emptyList())
@@ -211,6 +213,30 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                     overlayCompactYPm = (yPm ?: cfg.overlayCompactYPm).coerceIn(0, 1000)
                 )
             }
+        }
+    }
+
+    fun updateSensorPin(
+        enabled: Boolean? = null,
+        rate: SensorPinner.Rate? = null,
+        toggleType: Int? = null,
+        pauseWhenScreenOff: Boolean? = null
+    ) {
+        engine.sensorPinner.setConfig { cfg ->
+            val types = if (toggleType == null) {
+                cfg.sensorTypes
+            } else if (toggleType in cfg.sensorTypes) {
+                // Keep at least one sensor selected.
+                if (cfg.sensorTypes.size > 1) cfg.sensorTypes - toggleType else cfg.sensorTypes
+            } else {
+                cfg.sensorTypes + toggleType
+            }
+            cfg.copy(
+                enabled = enabled ?: cfg.enabled,
+                rate = rate ?: cfg.rate,
+                sensorTypes = types,
+                pauseWhenScreenOff = pauseWhenScreenOff ?: cfg.pauseWhenScreenOff
+            )
         }
     }
 

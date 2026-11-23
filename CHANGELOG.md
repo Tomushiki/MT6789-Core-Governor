@@ -2,6 +2,20 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.0.0] - 2026-11-23
+
+### Added
+- **Sensor pinning ("Nifty" tab).** Ported from SwiftSense's Boost Sensors: while the governor runs, CoreGovernor keeps a listener registered on the chosen sensors (default: gyroscope) at a fixed fast sampling period, so the sensor hub runs them fast for every app. Events are received on their own display-priority thread with no batching. Releasing drops the hub back to the normal rate. Rates: Max, 200, 100, 50 and about 16 Hz. It can pause while the screen is off (on by default). The measured rate per sensor is published once a second. Settings are stored separately, so existing configs are untouched. Off by default.
+- New **Nifty** chip on the Tuning screen with the on/off switch, rate, sensor choice, pause-while-screen-off, and the measured Hz per sensor.
+- Manifest now declares `android.permission.HIGH_SAMPLING_RATE_SENSORS` (needed for rates above 200 Hz).
+- Version 2.0.0 (versionCode 30). Includes the 1.12.14 drift-log change, which was never released separately.
+
+## [1.12.14] - 2026-11-23
+
+### Changed
+- **CPU drift warnings are now a once-a-minute summary.** The kernel or system changing the CPU limits now and then is normal. The app still fixes each one immediately (that behaviour is unchanged), but it no longer writes a warning every few seconds. It now logs one INFO line per policy per minute with the number of times it happened. This also stops the drift lines from pushing useful lines out of the 400-line log buffer.
+- Version 1.12.14 (versionCode 28).
+
 ## [1.12.13] - 2026-11-23
 
 ### Fixed

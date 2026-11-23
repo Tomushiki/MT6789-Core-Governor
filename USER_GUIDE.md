@@ -74,6 +74,17 @@ A small always-visible strip showing CPU, GPU, temperature and power. It is off 
 - Opacity, Compact size and Expanded size: change how it looks. The overlay always stays on screen.
 - Horizontal and Vertical position: each style remembers its own position. It snaps to the screen edges when you drag it. Press Reset position to bring it back.
 
+
+## 7b. Nifty features: sensor pinning
+
+Some phones read the gyroscope slowly until an app asks for faster data. This option keeps the chosen sensors (gyroscope by default) running at a fast, fixed rate for every app, so aiming and tilt controls respond quicker. It needs no root.
+
+- Pin sensor refresh rate: turns it on. It runs while the governor service is running.
+- Rate: Max asks for the sensor's fastest rate. Lower rates use less battery.
+- Sensors: pick which motion sensors to pin. At least one stays selected.
+- Pause while the screen is off: releases the sensors when the screen turns off. On by default.
+- The card shows the measured Hz per sensor, so you can see whether it worked. The hardware limit shown next to it is what the sensor reports as its maximum.
+
 ## 8. Suggested starting points
 
 Daily use: start from the Balanced preset. Leave temperature and power throttling on. Keep Normal mode maximums below the top step if the phone gets warm.

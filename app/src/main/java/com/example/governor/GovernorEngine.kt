@@ -71,6 +71,9 @@ class GovernorEngine(context: Context) {
     private val discovery = HardwareDiscovery(rootShell)
     private val foregroundDetector = ForegroundDetector(appContext, rootShell)
 
+    /** Sensor pinning (Nifty features). Own settings; runs only while the governor is running. */
+    val sensorPinner = SensorPinner(appContext) { level, tag, msg -> log(level, tag, msg) }
+
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var controlJob: Job? = null
 
@@ -118,6 +121,7 @@ class GovernorEngine(context: Context) {
     private val lastWrittenCpuFreq = mutableMapOf<Int, Long>()
     private val lastReassertMs = mutableMapOf<Int, Long>()
     private val lastDriftLogMs = mutableMapOf<Int, Long>()
+    private val driftCount = mutableMapOf<Int, Int>()
     private val policyPinState = mutableMapOf<Int, PolicyPinState>()
     private var lastWrittenGpuOppIndex: Int? = null
     private val failedWriteCooldownUntil = mutableMapOf<String, Long>()
@@ -325,6 +329,8 @@ class GovernorEngine(context: Context) {
                 scheduleScreenOffWatcher()
             }
             startFpsSampler()
+            sensorPinner.setScreenInteractive(isScreenInteractive)
+            sensorPinner.setServiceRunning(true)
 
             try {
                 while (isActive) {
@@ -348,6 +354,7 @@ class GovernorEngine(context: Context) {
                 }
             } finally {
                 stopFpsSampler()
+                sensorPinner.setServiceRunning(false)
                 sleepWatcherJob?.cancel()
                 sleepWatcherJob = null
                 isSleepSaving = false
@@ -362,6 +369,7 @@ class GovernorEngine(context: Context) {
 
     fun onScreenOff() {
         isScreenInteractive = false
+        sensorPinner.setScreenInteractive(false)
         if (controlJob?.isActive == true && _config.value.screenOffSavingEnabled) {
             scheduleScreenOffWatcher()
         }
@@ -369,6 +377,7 @@ class GovernorEngine(context: Context) {
 
     fun onScreenOn() {
         isScreenInteractive = true
+        sensorPinner.setScreenInteractive(true)
         sleepWatcherJob?.cancel()
         sleepWatcherJob = null
         if (isSleepSaving) {
@@ -493,6 +502,7 @@ class GovernorEngine(context: Context) {
 
     fun stopAndRestore() {
         stopFpsSampler()
+        sensorPinner.setServiceRunning(false)
         sleepWatcherJob?.cancel()
         sleepWatcherJob = null
         isSleepSaving = false
@@ -544,6 +554,8 @@ class GovernorEngine(context: Context) {
             lastWrittenCpuFreq.clear()
             lastReassertMs.clear()
             lastDriftLogMs.clear()
+        driftCount.clear()
+            driftCount.clear()
             policyPinState.clear()
             lastWrittenGpuOppIndex = null
             _telemetry.update {
@@ -981,9 +993,14 @@ class GovernorEngine(context: Context) {
             if (targetFreq > 0L && (targetFreq != prevWritten || reassertDue || justSwitchedToPerf)) {
                 if (reassertDue) {
                     lastReassertMs[p.policyId] = nowMs
-                    if (nowMs - (lastDriftLogMs[p.policyId] ?: 0L) >= 5_000L) {
+                    // The kernel/system overriding the limits now and then is normal and is fixed on the spot, so it is
+                    // only counted here and summarised once a minute (keeps the log, and the 400-line buffer, free for real events).
+                    val n = (driftCount[p.policyId] ?: 0) + 1
+                    driftCount[p.policyId] = n
+                    if (nowMs - (lastDriftLogMs[p.policyId] ?: 0L) >= 60_000L) {
                         lastDriftLogMs[p.policyId] = nowMs
-                        log(LogLevel.WARN, "CpuDrift", "policy${p.policyId}: wanted ${targetFreq / 1000} MHz but kernel has min=${liveMin?.div(1000)} max=${liveMax?.div(1000)} MHz; re-asserting.")
+                        driftCount[p.policyId] = 0
+                        log(LogLevel.INFO, "CpuDrift", "policy${p.policyId}: kernel changed the limits $n time(s) since the last note; each one was re-asserted (normal). Last: wanted ${targetFreq / 1000} MHz, kernel had min=${liveMin?.div(1000)} max=${liveMax?.div(1000)} MHz.")
                     }
                 }
                 val ok = if (pinState.maxOnly && pinState.minWorksInPerformance == false) {

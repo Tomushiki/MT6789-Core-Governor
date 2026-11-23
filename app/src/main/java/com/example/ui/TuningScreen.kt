@@ -54,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.example.governor.SensorPinner
 import com.example.model.FreqRange
 import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
@@ -75,6 +76,7 @@ private enum class TuningCategory(val label: String) {
     CONTROL("Control"),
     SCREEN_OFF("Screen-off"),
     OVERLAY("Overlay"),
+    NIFTY("Nifty"),
     THERMAL("Thermal"),
     POWER("Power"),
     PRESETS("Presets & HW")
@@ -149,6 +151,13 @@ fun TuningScreen(
     onExportJson: (android.net.Uri) -> Boolean,
     onImportJson: (android.net.Uri) -> Boolean,
     onRediscoverHardware: () -> Unit,
+    sensorPin: SensorPinner.State,
+    onUpdateSensorPin: (
+        enabled: Boolean?,
+        rate: SensorPinner.Rate?,
+        toggleType: Int?,
+        pauseWhenScreenOff: Boolean?
+    ) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -762,6 +771,17 @@ fun TuningScreen(
                             Text("Reset position")
                         }
                     }
+                }
+            }
+
+            // 2d. Nifty features (sensor pinning)
+            if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.NIFTY) {
+                item {
+                    SensorPinSection(
+                        state = sensorPin,
+                        telemetry = telemetry,
+                        onUpdate = onUpdateSensorPin
+                    )
                 }
             }
 
