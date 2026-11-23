@@ -2,6 +2,30 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.11] - 2026-11-23
+
+### Fixed
+- **FPS in games still read about 62 when the game ran at about 140.** The task callback can under-report in games, and the SurfaceFlinger layer measurement only ran when the callback was silent. The layer measurement now runs for every app all the time, and the app shows the higher of the two live values. Frame spacing is used for the rate whenever 20 or more frames are in the window, so it is not limited to 128 frames per second.
+- This works for every app you open, not only one game: the helper follows the foreground task and re-picks its busiest layer.
+
+### Added
+- The Log tab (`FPS`) now shows a `Compare:` line every 8 s with the callback value, the layer value, the value shown and the layer used.
+
+### Changed
+- Version 1.12.11 (versionCode 25).
+
+## [1.12.10] - 2026-11-23
+
+### Fixed
+- **FPS looked capped on high-refresh games (62 shown while the game ran at about 140).** SurfaceFlinger only keeps the last 128 frames of a layer, so counting frames in one second can never exceed that. When the buffer is nearly full the rate is now taken from the spacing between frames, and the best of the presented and ready timestamps is used.
+- **FPS for every app, not only one game.** The helper now ranks all layers of the foreground app (newest first, SurfaceView layers first, up to 8), follows the busiest one, re-scans every 5 s or when it goes quiet, and refreshes the layer list right away when an app is launched fresh instead of waiting.
+
+### Added
+- The Log tab (`FPS`) shows a `Latency detail` line every 8 s with the layer used and the row counts, so numbers can be checked against another FPS meter.
+
+### Changed
+- Version 1.12.10 (versionCode 24).
+
 ## [1.12.9] - 2026-11-23
 
 ### Fixed

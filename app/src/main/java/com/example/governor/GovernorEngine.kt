@@ -1220,6 +1220,7 @@ class GovernorEngine(context: Context) {
         var sfLastFrames = -1L
         var sfLastRt = 0L
         var sfUnsupported = false
+        var lastLatDetailRt = 0L
 
         val ignored = listOf(
             "StatusBar", "NavigationBar", "ScreenDecor", "Wallpaper", "InputMethod",
@@ -1401,10 +1402,19 @@ class GovernorEngine(context: Context) {
                         val latFresh = d.latencyAtRt > 0L && nowRt - d.latencyAtRt < 2500L
                         val v: Float
                         val src: String
-                        if (cbFresh && d.fps > 0f) { v = d.fps; src = "task-callback" }
+                        if (cbFresh && d.fps > 0f && latFresh && d.latencyFps > 0f) {
+                            // Both are live: the task callback can under-report in games, so take the higher one.
+                            if (d.latencyFps > d.fps) { v = d.latencyFps; src = "sf-latency" }
+                            else { v = d.fps; src = "task-callback" }
+                        }
+                        else if (cbFresh && d.fps > 0f) { v = d.fps; src = "task-callback" }
                         else if (latFresh) { v = d.latencyFps; src = "sf-latency" }
                         else if (cbFresh) { v = d.fps; src = "task-callback" }
                         else { v = 0f; src = "idle" }
+                        if (nowRt - lastLatDetailRt > 8000L) {
+                            lastLatDetailRt = nowRt
+                            log(LogLevel.INFO, "FPS", "Compare: callback=${if (cbFresh) d.fps.toInt().toString() else "none"} latency=${if (latFresh) d.latencyFps.toInt().toString() else "none"} shown=${v.toInt()} layer=${d.latencyLayer}")
+                        }
                         if (src != "idle") {
                             if (src != lastSource) {
                                 lastSource = src
