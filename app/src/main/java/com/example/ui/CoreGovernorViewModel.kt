@@ -25,7 +25,9 @@ import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.CoreGovernorApp
+import com.example.governor.MetricSample
 import com.example.governor.SensorPinner
+import com.example.governor.SessionInfo
 import com.example.model.FreqRange
 import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
@@ -55,6 +57,17 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     val telemetry = engine.telemetry
     val sensorPin = engine.sensorPinner.state
     val logs: StateFlow<List<LogEntry>> = engine.logs
+
+    // Performance Metrics tab
+    val metricsLive: StateFlow<List<MetricSample>> = engine.metrics.live
+    val metricsSessions: StateFlow<List<SessionInfo>> = engine.metrics.sessions
+    val metricsRecording: StateFlow<Boolean> = engine.metrics.recording
+
+    private val _selectedSession = MutableStateFlow<SessionInfo?>(null)
+    val selectedSession: StateFlow<SessionInfo?> = _selectedSession.asStateFlow()
+
+    private val _selectedSamples = MutableStateFlow<List<MetricSample>>(emptyList())
+    val selectedSamples: StateFlow<List<MetricSample>> = _selectedSamples.asStateFlow()
 
     private val _installedApps = MutableStateFlow<List<InstalledAppInfo>>(emptyList())
     val installedApps: StateFlow<List<InstalledAppInfo>> = _installedApps.asStateFlow()
@@ -396,6 +409,29 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun clearLogs() = engine.clearLogs()
+
+    fun selectSession(info: SessionInfo?) {
+        _selectedSession.value = info
+        _selectedSamples.value = emptyList()
+        if (info == null) return
+        viewModelScope.launch {
+            val samples = engine.metrics.loadSession(info)
+            // Ignore the result if another session was picked while loading.
+            if (_selectedSession.value?.fileName == info.fileName) _selectedSamples.value = samples
+        }
+    }
+
+    fun deleteSession(info: SessionInfo) {
+        if (_selectedSession.value?.fileName == info.fileName) selectSession(null)
+        viewModelScope.launch { engine.metrics.deleteSession(info) }
+    }
+
+    fun deleteAllSessions() {
+        selectSession(null)
+        viewModelScope.launch { engine.metrics.deleteAllSessions() }
+    }
+
+    fun clearLiveMetrics() = engine.metrics.clearLive()
 
     fun loadInstalledApps() {
         viewModelScope.launch {

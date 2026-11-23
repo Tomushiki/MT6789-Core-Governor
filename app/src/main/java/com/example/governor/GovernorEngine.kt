@@ -77,6 +77,11 @@ class GovernorEngine(context: Context) {
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var controlJob: Job? = null
 
+    /** Live and saved history for the Performance Metrics tab. */
+    val metrics = MetricsRecorder(java.io.File(appContext.filesDir, "metrics_sessions"), engineScope) { level, tag, msg ->
+        log(level, tag, msg)
+    }
+
     private val _hardwareSpec = MutableStateFlow(HardwareSpec())
     val hardwareSpec: StateFlow<HardwareSpec> = _hardwareSpec.asStateFlow()
 
@@ -353,6 +358,7 @@ class GovernorEngine(context: Context) {
                     delay(sleepMs)
                 }
             } finally {
+                metrics.onStopped()
                 stopFpsSampler()
                 sensorPinner.setServiceRunning(false)
                 sleepWatcherJob?.cancel()
@@ -501,6 +507,7 @@ class GovernorEngine(context: Context) {
     }
 
     fun stopAndRestore() {
+        metrics.onStopped()
         stopFpsSampler()
         sensorPinner.setServiceRunning(false)
         sleepWatcherJob?.cancel()
@@ -1203,6 +1210,7 @@ class GovernorEngine(context: Context) {
                 history = nextHistory
             )
         }
+        metrics.onTelemetry(_telemetry.value, nowMs)
     }
 
     private fun startFpsSampler() {

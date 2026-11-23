@@ -32,6 +32,8 @@ No external rule engine, profile daemon, or competing writer runs inside the app
   - **Temperature Throttling**: Smooth continuous curve (`Linear`, `Gentle`, or `Aggressive`) between start and full-strength temperatures, independent CPU/GPU max reduction strength, reaction speed, and recovery hysteresis.
   - **Power-Draw Throttling**: Rolling-average wattage (`current × voltage`) with unit-scale and sign-polarity calibration, sustain timer, small step-down cuts, and slow recovery below budget.
   - Both caps stack (`min` cap wins) and never drop below your **Safety Floor %**.
+- **Performance Metrics**:
+  - A Metrics tab with live and saved-session graphs for power, temperature, FPS, FPS per watt and an estimated work-per-watt, with a shared drag-to-inspect cursor. Game sessions are saved automatically.
 - **Presets, JSON Backup & Diagnostics**:
   - Built-in and user-named presets with full **JSON export and import** via Storage Access Framework.
   - Dedicated **OPPs** screen showing every parsed GPU OPP entry and a copyable raw `/proc/gpufreqv2/gpufreq_status` debug readout.

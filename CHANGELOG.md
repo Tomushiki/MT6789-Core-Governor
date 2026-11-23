@@ -2,6 +2,24 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.1.0] - 2026-11-23
+
+### Added
+- **Performance Metrics tab ("Metrics").** A new tab with history graphs that share one time axis:
+  - **Power, temperature and FPS** together on one plot (each line has its own scale, shown under the graph).
+  - **FPS per watt**: measured FPS divided by measured power draw.
+  - **Work per watt**: an estimate of work done (CPU cluster frequency x cores x load, plus GPU frequency x load, in busy GHz) divided by power. It works in any app, not only games, but it is an estimate and not a benchmark.
+  - Drag on any graph to inspect a moment; the same moment is marked on every graph. Double-tap to clear.
+  - Summary tiles: average FPS, 5% low FPS, average power, FPS/W, work/W, peak temperature, and energy used in Wh.
+- **Live history** of the last 5, 15 or 30 minutes (one point per second, kept in memory only).
+- **Saved game sessions.** While a game is in the foreground, the session is recorded and saved when it ends (at least 20 seconds). The newest 40 are kept. Open one to see its graphs, or delete it. A new session starts when you switch to a different game or after a pause longer than 15 seconds (for example screen-off saving).
+- Ratios use a 5-second average and stay blank while power is below 0.3 W or there is no FPS reading.
+- Unit tests for the efficiency maths, the session file format and the recorder.
+- Version 2.1.0 (versionCode 32).
+
+### Notes
+- No extra hardware polling: the recorder reads the values the control loop already has, builds at most one point per second and writes a small file only when a game session ends.
+
 ## [2.0.1] - 2026-11-23
 
 ### Fixed

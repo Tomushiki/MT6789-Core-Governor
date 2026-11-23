@@ -12,6 +12,7 @@ A plain-English guide to what each part of CoreGovernor does and how to start. E
 ## 2. The screens
 
 - Monitor: live CPU and GPU frequencies, load, temperature and power. Start and stop the service here and switch between Auto, Normal and Game.
+- Metrics: history graphs for power, temperature, FPS, FPS per watt and work per watt, plus saved game sessions (see section 7c).
 - Tuning: all the settings explained below.
 - OPPs: the list of GPU speed steps your device reports. Useful for troubleshooting.
 - Apps: choose which apps count as games.
@@ -84,6 +85,20 @@ Some phones read the gyroscope slowly until an app asks for faster data. This op
 - Sensors: pick which motion sensors to pin. At least one stays selected.
 - Pause while the screen is off: releases the sensors when the screen turns off. On by default.
 - The card shows the measured Hz per sensor, so you can see whether it worked. The hardware limit shown next to it is what the sensor reports as its maximum.
+
+## 7c. Metrics tab: performance and efficiency graphs
+
+The Metrics tab shows how the phone behaves over time, so you can see what a tuning change did.
+
+- Power, temperature and FPS are drawn together. Each line has its own scale, written under the graph.
+- FPS per watt is how many frames you get for each watt drawn. Higher is better.
+- Work per watt is an estimate of how much the CPU and GPU did per watt. It is not a benchmark, so only compare it on this phone, and use it to compare settings against each other.
+- Drag on a graph to read the values at that moment. The same moment is marked on all graphs. Double-tap to clear.
+- Live 5m, 15m and 30m choose how far back the live graphs go. History is kept only while the app is running.
+- Game sessions are saved automatically when a game from the Apps tab is in the foreground for at least 20 seconds. Tap a saved session to open it, and use the bin icon to delete it. The newest 40 are kept.
+- Ratios stay blank when there is no FPS reading or the power reading is near zero. If power numbers look wrong, use the calibration options in the power section.
+
+A good way to use it: play the same game for a few minutes with one setting, change one thing in Tuning, play again, and compare the two saved sessions (FPS/W, 5% low, peak temperature).
 
 ## 8. Suggested starting points
 

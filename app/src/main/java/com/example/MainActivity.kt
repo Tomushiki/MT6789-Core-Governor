@@ -34,11 +34,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.TableChart
@@ -56,6 +58,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -72,6 +75,7 @@ import com.example.ui.CoreGovernorViewModel
 import com.example.ui.LogScreen
 import com.example.ui.MonitorScreen
 import com.example.ui.OppTableScreen
+import com.example.ui.PerformanceScreen
 import com.example.ui.TuningScreen
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.CoreGovernorTheme
@@ -83,6 +87,7 @@ enum class NavTab(
     val unselectedIcon: ImageVector
 ) {
     MONITOR("Monitor", Icons.Filled.Speed, Icons.Outlined.Speed),
+    METRICS("Metrics", Icons.Filled.Insights, Icons.Outlined.Insights),
     TUNING("Tuning", Icons.Filled.Tune, Icons.Outlined.Tune),
     OPPS("OPPs", Icons.Filled.TableChart, Icons.Outlined.TableChart),
     APPS("Apps", Icons.Filled.Apps, Icons.Outlined.Apps),
@@ -118,6 +123,11 @@ fun CoreGovernorRootScreen(
     val installedApps by vm.installedApps.collectAsStateWithLifecycle()
     val isLoadingApps by vm.isLoadingApps.collectAsStateWithLifecycle()
     val usageStatsGranted by vm.usageStatsGranted.collectAsStateWithLifecycle()
+    val metricsLive by vm.metricsLive.collectAsStateWithLifecycle()
+    val metricsSessions by vm.metricsSessions.collectAsStateWithLifecycle()
+    val metricsRecording by vm.metricsRecording.collectAsStateWithLifecycle()
+    val selectedSession by vm.selectedSession.collectAsStateWithLifecycle()
+    val selectedSamples by vm.selectedSamples.collectAsStateWithLifecycle()
 
     var currentTab by rememberSaveable { mutableStateOf(NavTab.MONITOR) }
 
@@ -208,6 +218,22 @@ fun CoreGovernorRootScreen(
                 onRediscover = vm::rediscoverHardware,
                 modifier = Modifier.padding(innerPadding)
             )
+            NavTab.METRICS -> {
+                val appLabels = remember(installedApps) { installedApps.associate { it.packageName to it.label } }
+                PerformanceScreen(
+                    live = metricsLive,
+                    sessions = metricsSessions,
+                    selectedSession = selectedSession,
+                    selectedSamples = selectedSamples,
+                    recording = metricsRecording,
+                    appLabels = appLabels,
+                    onSelectSession = vm::selectSession,
+                    onDeleteSession = vm::deleteSession,
+                    onDeleteAllSessions = vm::deleteAllSessions,
+                    onClearLive = vm::clearLiveMetrics,
+                    modifier = Modifier.padding(innerPadding)
+                )
+            }
             NavTab.TUNING -> TuningScreen(
                 config = config,
                 hardwareSpec = hardwareSpec,
