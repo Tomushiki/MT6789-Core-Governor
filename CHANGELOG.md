@@ -2,6 +2,14 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.9] - 2026-11-23
+
+### Fixed
+- **Game FPS fallback used the wrong layer names.** On this Android version `dumpsys SurfaceFlinger --list` prints a long debug dump (`RequestedLayerState{...}`) instead of plain names, so the whole debug line was passed as the layer name and SurfaceFlinger returned no frames. The real layer names (`package/Activity#id`, `SurfaceView[...]#id`) are now pulled out of those lines, helper layers (input sink, splash, letterbox) are skipped, and the busiest of up to 5 layers is used.
+
+### Changed
+- Version 1.12.9 (versionCode 23).
+
 ## [1.12.8] - 2026-11-23
 
 ### Fixed

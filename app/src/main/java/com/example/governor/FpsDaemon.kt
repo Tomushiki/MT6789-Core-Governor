@@ -134,15 +134,27 @@ object FpsDaemon {
         ""
     }
 
+    // On newer Android, `dumpsys SurfaceFlinger --list` can print a long debug dump
+    // (RequestedLayerState{...}) instead of plain layer names, so real names are pulled out with a regex.
+    private val layerRegex = Regex("SurfaceView\\[[^\\]]*\\](?:\\(BLAST\\))?#\\d+|[\\w.\$]+/[\\w.\$]+(?:\\(BLAST\\))?#\\d+")
+    private val skipWords = listOf("InputSink", "Splash", "Letterbox", "Background for", "Bounds for", "Dim Layer", "Task=", "Wallpaper")
+
     /** Layers of the focused app (SurfaceView layers first), cached for a few seconds. */
     private fun candidateLayers(pkg: String): List<String> {
         val now = SystemClock.elapsedRealtime()
         if (pkg == layerCachePkg && now - layerCacheRt < 5000L) return layerCache
-        val names = dumpsys("SurfaceFlinger", "--list").also { listSample = oneLine(it) }.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && it.length < 250 && it.contains(pkg) }
-            .toList()
-        layerCache = names.sortedBy { if (it.startsWith("SurfaceView")) 0 else 1 }.take(3)
+        val out = dumpsys("SurfaceFlinger", "--list")
+        listSample = oneLine(out)
+        val names = LinkedHashSet<String>()
+        for (raw in out.lineSequence()) {
+            val line = raw.trim()
+            if (line.isEmpty() || line.length > 800 || !line.contains(pkg)) continue
+            if (skipWords.any { line.contains(it) }) continue
+            for (m in layerRegex.findAll(line)) {
+                if (m.value.contains(pkg)) names.add(m.value)
+            }
+        }
+        layerCache = names.sortedBy { if (it.startsWith("SurfaceView")) 0 else 1 }.take(5)
         layerCachePkg = pkg
         layerCacheRt = now
         return layerCache
