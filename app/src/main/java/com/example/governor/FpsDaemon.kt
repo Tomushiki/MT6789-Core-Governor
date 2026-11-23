@@ -116,18 +116,29 @@ object FpsDaemon {
         return null
     }
 
-    private fun runCmd(vararg cmd: String): String = try {
-        val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
+    @Volatile private var lastCmdError = ""
+    @Volatile private var listSample = ""
+    @Volatile private var latSample = ""
+
+    private fun oneLine(t: String): String =
+        t.trim().replace('\n', '|').replace('\r', ' ').let { if (it.length > 170) it.substring(0, 170) else it }
+
+    /** Runs dumpsys by absolute path (the root app_process shell may have no PATH). */
+    private fun dumpsys(vararg args: String): String = try {
+        val p = ProcessBuilder(listOf("/system/bin/dumpsys", *args)).redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().readText()
         p.waitFor()
         out
-    } catch (_: Throwable) { "" }
+    } catch (t: Throwable) {
+        lastCmdError = "${t.javaClass.simpleName}: ${t.message}"
+        ""
+    }
 
     /** Layers of the focused app (SurfaceView layers first), cached for a few seconds. */
     private fun candidateLayers(pkg: String): List<String> {
         val now = SystemClock.elapsedRealtime()
         if (pkg == layerCachePkg && now - layerCacheRt < 5000L) return layerCache
-        val names = runCmd("dumpsys", "SurfaceFlinger", "--list").lineSequence()
+        val names = dumpsys("SurfaceFlinger", "--list").also { listSample = oneLine(it) }.lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() && it.length < 250 && it.contains(pkg) }
             .toList()
@@ -139,7 +150,7 @@ object FpsDaemon {
 
     /** FPS of one layer from SurfaceFlinger's present timestamps (frames presented in the last second). -1 = no data. */
     private fun layerFps(name: String): Float {
-        val text = runCmd("dumpsys", "SurfaceFlinger", "--latency", name)
+        val text = dumpsys("SurfaceFlinger", "--latency", name)
         val nowNs = System.nanoTime()
         var count = 0
         var any = false
@@ -152,6 +163,7 @@ object FpsDaemon {
             val age = nowNs - present
             if (age in 0L..1_000_000_000L) count++
         }
+        if (!any) latSample = oneLine(text)
         return if (any) count.toFloat() else -1f
     }
 
@@ -240,8 +252,16 @@ object FpsDaemon {
                         val f = layerFps(n)
                         if (f > best) { best = f; bestName = n }
                     }
-                    if (best >= 0f) emit("L $best $bestName")
-                    else if (lastErr != "nolayer") { lastErr = "nolayer"; emit("E no layer data for $currentPkg") }
+                    if (best >= 0f) {
+                        emit("L $best $bestName")
+                    } else {
+                        val cands = candidateLayers(currentPkg)
+                        val msg = if (cands.isEmpty())
+                            "no layers match $currentPkg; cmdErr=$lastCmdError; list=$listSample"
+                        else
+                            "no latency rows for ${cands.first()}; sample=$latSample"
+                        if (msg != lastErr) { lastErr = msg; emit("E $msg") }
+                    }
                 }
             } catch (t: Throwable) {
                 emit("E latency fallback failed: ${t.javaClass.simpleName}: ${t.message}")

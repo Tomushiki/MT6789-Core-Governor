@@ -1405,13 +1405,16 @@ class GovernorEngine(context: Context) {
                         else if (latFresh) { v = d.latencyFps; src = "sf-latency" }
                         else if (cbFresh) { v = d.fps; src = "task-callback" }
                         else { v = 0f; src = "idle" }
-                        if (src != lastSource) {
-                            lastSource = src
-                            log(LogLevel.INFO, "FPS", "Source: $src (${d.taskInfo}) ${if (src == "sf-latency") d.latencyLayer else ""}")
+                        if (src != "idle") {
+                            if (src != lastSource) {
+                                lastSource = src
+                                log(LogLevel.INFO, "FPS", "Source: $src (${d.taskInfo}) ${if (src == "sf-latency") d.latencyLayer else ""}")
+                            }
+                            _telemetry.update { it.copy(fps = v) }
+                            delay(1000L)
+                            continue
                         }
-                        _telemetry.update { it.copy(fps = v) }
-                        delay(1000L)
-                        continue
+                        // helper has nothing fresh: fall through to the older methods below
                     } else {
                         diag("Task-FPS helper: task=${d.taskInfo} err=${d.lastError}")
                         if (nowRt - fpsDaemonStartRt > 8000L) diag("Task-FPS helper running (${d.taskInfo.ifBlank { "no task" }}) but no callback data yet; err=${d.lastError.ifBlank { d.rawTail() }}")

@@ -2,6 +2,18 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.8] - 2026-11-23
+
+### Fixed
+- **Game FPS fallback found no layers.** The root helper now runs `dumpsys` by its full path (`/system/bin/dumpsys`), because the root helper process may not have a PATH.
+- If the helper still has nothing fresh, the older kernel/SurfaceFlinger methods now take over instead of showing 0.
+
+### Added
+- The Log tab (`FPS`) now includes a short sample of what `dumpsys SurfaceFlinger --list` / `--latency` returned when no layer data is found, so the cause can be seen.
+
+### Changed
+- Version 1.12.8 (versionCode 22).
+
 ## [1.12.7] - 2026-11-23
 
 ### Fixed
