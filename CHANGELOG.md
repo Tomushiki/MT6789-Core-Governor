@@ -2,6 +2,15 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.7] - 2026-11-23
+
+### Fixed
+- **FPS stopped in games (worked only in the launcher).** The system task-FPS callback is often silent or reports 0 for games. When that happens the helper now measures FPS from SurfaceFlinger present timestamps of the app's layers (SurfaceView layers first) and reports it as source `sf-latency`.
+- The Log tab (tag `FPS`) now shows the watched task, helper errors, and which source is active (`task-callback`, `sf-latency` or `idle`).
+
+### Changed
+- Version 1.12.7 (versionCode 21).
+
 ## [1.12.6] - 2026-11-23
 
 ### Added

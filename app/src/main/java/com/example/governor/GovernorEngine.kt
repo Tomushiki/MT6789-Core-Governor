@@ -1395,18 +1395,26 @@ class GovernorEngine(context: Context) {
                         fpsDaemonFailed = true
                         d.stop()
                         fpsDaemon = null
-                    } else if (d.fpsAtRt > 0L) {
-                        val fresh = nowRt - d.fpsAtRt < 2500L
-                        val v = if (fresh) d.fps else 0f
-                        if (lastSource != "task-callback") {
-                            lastSource = "task-callback"
-                            log(LogLevel.INFO, "FPS", "Source: task FPS callback (${d.taskInfo})")
+                    } else if (d.fpsAtRt > 0L || d.latencyAtRt > 0L) {
+                        diag("Task-FPS helper: task=${d.taskInfo} err=${d.lastError}")
+                        val cbFresh = d.fpsAtRt > 0L && nowRt - d.fpsAtRt < 2500L
+                        val latFresh = d.latencyAtRt > 0L && nowRt - d.latencyAtRt < 2500L
+                        val v: Float
+                        val src: String
+                        if (cbFresh && d.fps > 0f) { v = d.fps; src = "task-callback" }
+                        else if (latFresh) { v = d.latencyFps; src = "sf-latency" }
+                        else if (cbFresh) { v = d.fps; src = "task-callback" }
+                        else { v = 0f; src = "idle" }
+                        if (src != lastSource) {
+                            lastSource = src
+                            log(LogLevel.INFO, "FPS", "Source: $src (${d.taskInfo}) ${if (src == "sf-latency") d.latencyLayer else ""}")
                         }
                         _telemetry.update { it.copy(fps = v) }
                         delay(1000L)
                         continue
-                    } else if (nowRt - fpsDaemonStartRt > 8000L) {
-                        diag("Task-FPS helper running (${d.taskInfo.ifBlank { "no task" }}) but no callback data yet; err=${d.lastError.ifBlank { d.rawTail() }}")
+                    } else {
+                        diag("Task-FPS helper: task=${d.taskInfo} err=${d.lastError}")
+                        if (nowRt - fpsDaemonStartRt > 8000L) diag("Task-FPS helper running (${d.taskInfo.ifBlank { "no task" }}) but no callback data yet; err=${d.lastError.ifBlank { d.rawTail() }}")
                     }
                 }
             }

@@ -39,6 +39,12 @@ object FpsDaemon {
 
     @Volatile private var currentTask = -1
     @Volatile private var currentProxy: Any? = null
+    @Volatile private var currentPkg = ""
+    @Volatile private var lastCbRt = 0L
+    @Volatile private var lastCbFps = 0f
+    private var layerCache = emptyList<String>()
+    private var layerCacheRt = 0L
+    private var layerCachePkg = ""
     private var wm: Any? = null
     private var atm: Any? = null
     private var registerM: Method? = null
@@ -57,6 +63,8 @@ object FpsDaemon {
             if (code == IBinder.FIRST_CALL_TRANSACTION) {
                 data.enforceInterface(CB_DESCRIPTOR)
                 val fps = data.readFloat()
+                lastCbFps = fps
+                lastCbRt = SystemClock.elapsedRealtime()
                 emit("F $fps $currentTask")
                 reply?.writeNoException()
                 return true
@@ -108,6 +116,45 @@ object FpsDaemon {
         return null
     }
 
+    private fun runCmd(vararg cmd: String): String = try {
+        val p = ProcessBuilder(*cmd).redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().readText()
+        p.waitFor()
+        out
+    } catch (_: Throwable) { "" }
+
+    /** Layers of the focused app (SurfaceView layers first), cached for a few seconds. */
+    private fun candidateLayers(pkg: String): List<String> {
+        val now = SystemClock.elapsedRealtime()
+        if (pkg == layerCachePkg && now - layerCacheRt < 5000L) return layerCache
+        val names = runCmd("dumpsys", "SurfaceFlinger", "--list").lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && it.length < 250 && it.contains(pkg) }
+            .toList()
+        layerCache = names.sortedBy { if (it.startsWith("SurfaceView")) 0 else 1 }.take(3)
+        layerCachePkg = pkg
+        layerCacheRt = now
+        return layerCache
+    }
+
+    /** FPS of one layer from SurfaceFlinger's present timestamps (frames presented in the last second). -1 = no data. */
+    private fun layerFps(name: String): Float {
+        val text = runCmd("dumpsys", "SurfaceFlinger", "--latency", name)
+        val nowNs = System.nanoTime()
+        var count = 0
+        var any = false
+        for (line in text.lineSequence().drop(1)) {
+            val parts = line.trim().split(Regex("\\s+"))
+            if (parts.size < 3) continue
+            val present = parts[1].toLongOrNull() ?: continue
+            if (present <= 0L || present == Long.MAX_VALUE) continue
+            any = true
+            val age = nowNs - present
+            if (age in 0L..1_000_000_000L) count++
+        }
+        return if (any) count.toFloat() else -1f
+    }
+
     private fun unregisterCurrent() {
         val p = currentProxy ?: return
         try { unregisterM?.invoke(wm, p) } catch (_: Throwable) { }
@@ -120,7 +167,12 @@ object FpsDaemon {
         val proxy = Proxy.newProxyInstance(cbIface.classLoader, arrayOf(cbIface)) { self, m, args ->
             when (m.name) {
                 "asBinder" -> binder
-                "onFpsReported" -> { emit("F ${args?.get(0)} $currentTask"); null }
+                "onFpsReported" -> {
+                    lastCbFps = (args?.get(0) as? Float) ?: 0f
+                    lastCbRt = SystemClock.elapsedRealtime()
+                    emit("F ${args?.get(0)} $currentTask")
+                    null
+                }
                 "hashCode" -> System.identityHashCode(self)
                 "equals" -> self === args?.get(0)
                 "toString" -> "CgFpsCallback"
@@ -134,6 +186,7 @@ object FpsDaemon {
         }
         currentProxy = proxy
         currentTask = taskId
+        currentPkg = pkg
         emit("T $taskId $pkg")
     }
 
@@ -177,6 +230,22 @@ object FpsDaemon {
                 if (msg != lastErr) { lastErr = msg; emit("E $msg") }
                 currentTask = -1
             }
+            // Backup for apps (games) where the callback is silent or reports 0: SurfaceFlinger layer timestamps.
+            try {
+                val silent = SystemClock.elapsedRealtime() - lastCbRt > 2500L || lastCbFps <= 0f
+                if (currentTask >= 0 && silent && currentPkg.isNotEmpty() && currentPkg != "?") {
+                    var best = -1f
+                    var bestName = ""
+                    for (n in candidateLayers(currentPkg)) {
+                        val f = layerFps(n)
+                        if (f > best) { best = f; bestName = n }
+                    }
+                    if (best >= 0f) emit("L $best $bestName")
+                    else if (lastErr != "nolayer") { lastErr = "nolayer"; emit("E no layer data for $currentPkg") }
+                }
+            } catch (t: Throwable) {
+                emit("E latency fallback failed: ${t.javaClass.simpleName}: ${t.message}")
+            }
             SystemClock.sleep(1000L)
         }
     }
@@ -186,6 +255,9 @@ object FpsDaemon {
 class FpsDaemonClient(private val apkPath: String) {
     @Volatile var fps: Float = -1f; private set
     @Volatile var fpsAtRt: Long = 0L; private set
+    @Volatile var latencyFps: Float = -1f; private set
+    @Volatile var latencyAtRt: Long = 0L; private set
+    @Volatile var latencyLayer: String = ""; private set
     @Volatile var taskInfo: String = ""; private set
     @Volatile var started: Boolean = false; private set
     @Volatile var lastError: String = ""; private set
@@ -212,6 +284,14 @@ class FpsDaemonClient(private val apkPath: String) {
                                 parts.getOrNull(1)?.toFloatOrNull()?.let {
                                     fps = it
                                     fpsAtRt = SystemClock.elapsedRealtime()
+                                }
+                            }
+                            line.startsWith("L ") -> {
+                                val parts = line.split(' ', limit = 3)
+                                parts.getOrNull(1)?.toFloatOrNull()?.let {
+                                    latencyFps = it
+                                    latencyAtRt = SystemClock.elapsedRealtime()
+                                    latencyLayer = parts.getOrNull(2) ?: ""
                                 }
                             }
                             line.startsWith("T ") -> taskInfo = line.substring(2)
