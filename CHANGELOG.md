@@ -2,6 +2,23 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.9.0] - 2026-11-23
+
+### Added
+- **Overlay position memory**: the floating overlay remembers a separate position for the compact and expanded styles, stored as permille (0–1000) of the free screen space so it always stays on screen.
+- **Edge snapping**, horizontal and vertical **position sliders**, and a **Reset position** button in Tuning.
+
+### Changed
+- Generic MediaTek wording across the app.
+- Version 1.9 (versionCode 10).
+
+## [1.8.0] - 2026-11-22
+
+### Added
+- **Floating overlay** showing CPU, GPU, temperature and power. Compact strip by default, tap to expand; click-through mode with an "Unlock overlay" notification button; opacity slider; optional Game-mode-only display. Off by default, and it hides when the screen is off.
+- Separate size sliders for compact and expanded styles (40% to 400%, clamped to the screen width).
+- **Performance governor** as the default for all CPU policies (max-only pinning), with automatic fallback to powersave.
+
 ## [1.6.0] - 2026-11-22
 
 ### Added
