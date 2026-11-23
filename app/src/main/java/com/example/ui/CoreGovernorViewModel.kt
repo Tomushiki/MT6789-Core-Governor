@@ -28,6 +28,8 @@ import com.example.CoreGovernorApp
 import com.example.governor.MetricSample
 import com.example.governor.SensorPinner
 import com.example.governor.SessionInfo
+import com.example.governor.UpdateChecker
+import com.example.governor.UpdateState
 import com.example.model.FreqRange
 import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
@@ -78,11 +80,56 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     private val _usageStatsGranted = MutableStateFlow(engine.hasUsageStatsPermission())
     val usageStatsGranted: StateFlow<Boolean> = _usageStatsGranted.asStateFlow()
 
+    private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
+
+    private val _autoUpdateCheck = MutableStateFlow(
+        UpdateChecker.autoCheckEnabled(application)
+    )
+    val autoUpdateCheck: StateFlow<Boolean> = _autoUpdateCheck.asStateFlow()
+
+    val currentVersion: String = com.example.BuildConfig.VERSION_NAME
+
     init {
         viewModelScope.launch {
             engine.discoverHardware(forceRefresh = false)
         }
         loadInstalledApps()
+        if (UpdateChecker.autoCheckDue(application)) checkForUpdate()
+    }
+
+    /** Asks GitHub for the latest release. Safe to call repeatedly; ignores taps while busy. */
+    fun checkForUpdate() {
+        if (_updateState.value == UpdateState.Checking) return
+        _updateState.value = UpdateState.Checking
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { UpdateChecker.fetch(currentVersion) }
+            if (result !is UpdateState.Failed) {
+                UpdateChecker.markChecked(getApplication())
+            }
+            _updateState.value = result
+            when (result) {
+                is UpdateState.Available ->
+                    engine.log(LogLevel.INFO, "Update", "New version ${result.latest} available (installed ${result.current})")
+                is UpdateState.Failed ->
+                    engine.log(LogLevel.WARN, "Update", "Update check failed: ${result.reason}")
+                else -> {}
+            }
+        }
+    }
+
+    fun setAutoUpdateCheck(on: Boolean) {
+        UpdateChecker.setAutoCheck(getApplication(), on)
+        _autoUpdateCheck.value = on
+    }
+
+    fun openUrl(url: String) {
+        if (url.isBlank()) return
+        val ctx = getApplication<Application>()
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try { ctx.startActivity(i) } catch (_: Exception) {
+            engine.log(LogLevel.WARN, "Update", "No browser available to open $url")
+        }
     }
 
     fun refreshUsageStatsPermission() {

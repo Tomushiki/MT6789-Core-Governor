@@ -25,7 +25,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -46,7 +48,11 @@ import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -70,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.governor.UpdateState
 import com.example.ui.AppsScreen
 import com.example.ui.CoreGovernorViewModel
 import com.example.ui.LogScreen
@@ -128,6 +135,8 @@ fun CoreGovernorRootScreen(
     val metricsRecording by vm.metricsRecording.collectAsStateWithLifecycle()
     val selectedSession by vm.selectedSession.collectAsStateWithLifecycle()
     val selectedSamples by vm.selectedSamples.collectAsStateWithLifecycle()
+    val updateState by vm.updateState.collectAsStateWithLifecycle()
+    var updateDismissed by rememberSaveable { mutableStateOf(false) }
 
     var currentTab by rememberSaveable { mutableStateOf(NavTab.MONITOR) }
 
@@ -172,9 +181,18 @@ fun CoreGovernorRootScreen(
                                 style = MaterialTheme.typography.headlineSmall
                             )
                             Text(
-                                text = "CoreGovernor • MediaTek Controller",
+                                text = when (val u = updateState) {
+                                    is UpdateState.Checking -> "v${vm.currentVersion} • checking for updates…"
+                                    is UpdateState.UpToDate -> "v${vm.currentVersion} • up to date"
+                                    is UpdateState.Available -> "v${vm.currentVersion} • update ${u.latest} available"
+                                    is UpdateState.Failed -> "v${vm.currentVersion} • update check failed (tap to retry)"
+                                    else -> "v${vm.currentVersion} • tap to check for updates"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .clickable { vm.checkForUpdate(); updateDismissed = false }
+                                    .testTag("version_line")
                             )
                         }
                         StatusPill(
@@ -209,6 +227,39 @@ fun CoreGovernorRootScreen(
             }
         }
     ) { innerPadding ->
+        Column(Modifier.padding(innerPadding)) {
+        (updateState as? UpdateState.Available)?.let { u ->
+            if (!updateDismissed) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(
+                            "Update available: v${u.latest}",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            "You have v${u.current}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(onClick = { vm.openUrl(u.pageUrl) }) { Text("Release notes") }
+                            TextButton(onClick = { updateDismissed = true }) { Text("Later") }
+                            Button(onClick = { vm.openUrl(u.downloadUrl) }) { Text("Download") }
+                        }
+                    }
+                }
+            }
+        }
+        Box(Modifier.weight(1f)) {
         when (currentTab) {
             NavTab.MONITOR -> MonitorScreen(
                 telemetry = telemetry,
@@ -216,7 +267,7 @@ fun CoreGovernorRootScreen(
                 onToggleGovernor = vm::toggleGovernorRunning,
                 onSelectModeOverride = vm::setModeOverride,
                 onRediscover = vm::rediscoverHardware,
-                modifier = Modifier.padding(innerPadding)
+                modifier = Modifier
             )
             NavTab.METRICS -> {
                 val appLabels = remember(installedApps) { installedApps.associate { it.packageName to it.label } }
@@ -231,7 +282,7 @@ fun CoreGovernorRootScreen(
                     onDeleteSession = vm::deleteSession,
                     onDeleteAllSessions = vm::deleteAllSessions,
                     onClearLive = vm::clearLiveMetrics,
-                    modifier = Modifier.padding(innerPadding)
+                    modifier = Modifier
                 )
             }
             NavTab.TUNING -> TuningScreen(
@@ -261,13 +312,13 @@ fun CoreGovernorRootScreen(
                 onRediscoverHardware = vm::rediscoverHardware,
                 sensorPin = sensorPin,
                 onUpdateSensorPin = vm::updateSensorPin,
-                modifier = Modifier.padding(innerPadding)
+                modifier = Modifier
             )
             NavTab.OPPS -> OppTableScreen(
                 hardwareSpec = hardwareSpec,
                 telemetry = telemetry,
                 onRefreshTable = vm::refreshGpuOppTable,
-                modifier = Modifier.padding(innerPadding)
+                modifier = Modifier
             )
             NavTab.APPS -> AppsScreen(
                 installedApps = installedApps,
@@ -276,13 +327,15 @@ fun CoreGovernorRootScreen(
                 usageStatsGranted = usageStatsGranted,
                 onToggleGamePackage = vm::toggleGamePackage,
                 onRefreshUsageStats = vm::refreshUsageStatsPermission,
-                modifier = Modifier.padding(innerPadding)
+                modifier = Modifier
             )
             NavTab.LOG -> LogScreen(
                 logs = logs,
                 onClearLogs = vm::clearLogs,
-                modifier = Modifier.padding(innerPadding)
+                modifier = Modifier
             )
+        }
+        }
         }
     }
 }

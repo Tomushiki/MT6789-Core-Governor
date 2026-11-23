@@ -2,6 +2,14 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.2.0] - 2026-11-23
+
+### Added
+- **Update checker.** The app asks GitHub for the latest release of Tomushiki/MT6789-Core-Governor and compares it with the installed version. When a newer one exists, a banner appears with Download (opens the APK), Release notes and Later buttons.
+- The version line under the title shows the status (up to date, checking, update available, failed) and can be tapped to check manually.
+- An automatic check runs at app start, at most once every 12 hours. Nothing else is sent: one HTTPS request to api.github.com with no personal data.
+- Adds the INTERNET permission. Version 2.2.0 (versionCode 34).
+
 ## [2.1.1] - 2026-11-23
 
 ### Added
