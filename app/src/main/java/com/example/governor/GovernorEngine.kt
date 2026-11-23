@@ -111,7 +111,10 @@ class GovernorEngine(context: Context) {
     /** v2.7.0 Shared touch interaction signal (smart profiles + adaptive refresh). */
     val interaction = InteractionSignal(rootShell, engineScope) { l, t, m -> log(l, t, m) }
 
-    /** v2.7.0 Adaptive refresh rate (EXPERIMENTAL). */
+    /** v2.7.1 Screen-off power analysis. */
+    val screenOff = ScreenOffAnalyzer(appContext, rootShell, engineScope, { _config.value.screenOffAnalysisEnabled }) { l, t, m -> log(l, t, m) }
+
+    /** v2.7.0 Adaptive refresh rate. */
     val refreshCtl = RefreshRateController(
         context = appContext,
         rootShell = rootShell,
@@ -373,6 +376,7 @@ class GovernorEngine(context: Context) {
                 return@launch
             }
             refreshCtl.start()
+            screenOff.begin(isScreenInteractive)
 
             val backup = OriginalHardwareBackup(
                 cpus = hw.cpuPolicies.map {
@@ -460,6 +464,7 @@ class GovernorEngine(context: Context) {
     }
 
     fun onScreenOff() {
+        screenOff.onScreenOff()
         interaction.setActive(false, false)
         appDemand.flush()
         isScreenInteractive = false
@@ -471,6 +476,7 @@ class GovernorEngine(context: Context) {
 
     fun onScreenOn() {
         isScreenInteractive = true
+        screenOff.onScreenOn()
         sensorPinner.setScreenInteractive(true)
         sleepWatcherJob?.cancel()
         sleepWatcherJob = null
@@ -651,6 +657,7 @@ class GovernorEngine(context: Context) {
         powerModel.flush()
         batteryEstimator.flush()
         appDemand.flush()
+        screenOff.stop()
         appDemand.release()
         smartWasOn = false
         interaction.setActive(false, false)

@@ -82,6 +82,7 @@ import com.example.governor.UpdateState
 import com.example.ui.AdaptiveRefreshCard
 import com.example.ui.AppDemandCard
 import com.example.ui.AppsScreen
+import com.example.ui.ScreenOffCard
 import com.example.ui.CoreGovernorViewModel
 import com.example.ui.EnergyScreen
 import com.example.ui.LogScreen
@@ -309,6 +310,7 @@ fun CoreGovernorRootScreen(
                 val batterySnapshot by vm.batterySnapshot.collectAsStateWithLifecycle()
                 val demandRows by vm.appDemandRows.collectAsStateWithLifecycle()
                 val refreshUi by vm.refreshState.collectAsStateWithLifecycle()
+                val screenOffSnap by vm.screenOffSnapshot.collectAsStateWithLifecycle()
                 EnergyScreen(
                     snapshot = energySnapshot,
                     batterySnapshot = batterySnapshot,
@@ -328,6 +330,14 @@ fun CoreGovernorRootScreen(
                                 labels = installedApps.associate { it.packageName to it.label },
                                 onToggle = vm::setSmartEnabled,
                                 onMode = vm::setSmartMode
+                            )
+                        }
+                        item(key = "screen_off") {
+                            ScreenOffCard(
+                                config = config,
+                                snap = screenOffSnap,
+                                onToggle = vm::setScreenOffEnabled,
+                                onReset = vm::resetScreenOff
                             )
                         }
                         item(key = "adaptive_refresh") {

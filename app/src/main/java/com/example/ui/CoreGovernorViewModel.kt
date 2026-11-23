@@ -489,6 +489,11 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     }
     fun testRefreshSwitch() = engine.refreshCtl.testSwitch()
 
+    // v2.7.1 Screen-off analysis
+    val screenOffSnapshot = engine.screenOff.snapshot
+    fun setScreenOffEnabled(on: Boolean) = engine.updateConfig { it.copy(screenOffAnalysisEnabled = on) }
+    fun resetScreenOff() = engine.screenOff.resetAll()
+
     fun updateBatterySettings(
         estimationEnabled: Boolean? = null,
         designCapacityOverrideMah: Int? = null

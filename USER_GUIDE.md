@@ -117,7 +117,9 @@ CoreGovernor estimates your battery's real usable capacity and passively learns 
 
 **Smart app profiles** (off by default). Turn it on in the Energy tab and use your phone normally. It needs hours of use to learn: light apps (reading, chat) slowly get a lower clock ceiling, heavy apps keep or get higher clocks. Pick Conservative, Balanced or Aggressive. In the Apps tab each app has "Smart profile": Auto, Locked (freeze what was learned), Override (Light / Moderate / Heavy) or Never touch, plus a reset. Thermal limits, your caps, pins, manual profiles and Game mode always win, and any sign of high load or a touch restores full speed at once. Learning only runs while the feature is on.
 
-**Adaptive refresh rate (Experimental, off by default).** Lowers the refresh rate when you are not touching the screen and returns to the highest on touch. It needs root and may not work on every ROM: use Test switch first. If switching cannot be verified three times it turns itself off. Your original refresh-rate settings are restored when you turn it off or stop the service. Videos and games stay at the active rate.
+**Adaptive refresh rate (off by default).** Lowers the refresh rate when you are not touching the screen and returns to the highest on touch. It needs root and may behave differently on some ROMs: use Test switch first. If switching cannot be verified three times it turns itself off. Your original refresh-rate settings are restored when you turn it off or stop the service. Videos and games stay at the active rate.
+
+**Screen-off power analysis (on by default).** The Energy tab shows how much battery the phone uses with the screen off (periods of 3 minutes or more, not charging): drain per hour, deep-sleep share, a standby estimate and a verdict. If drain is high or deep sleep is low, the wake-source lists show the kernel sources and apps that kept the phone awake. Data needs the service running; give it a night to be meaningful.
 
 ## 8. Suggested starting points
 

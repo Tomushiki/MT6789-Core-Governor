@@ -2,6 +2,15 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.7.1] - 2026-11-23
+
+### Added
+- **Screen-off power analysis (Energy tab).** Measures every screen-off period of 3 minutes or more while unplugged: battery used (% and mAh), drain per hour, average watts, and deep-sleep share (uptime vs real time). Shows 7-day and today totals against screen-on drain, a standby estimate, the worst recent period, and a short verdict. Names what keeps the phone awake: kernel wakeup sources (time active and wakeup count during the off period) and apps holding partial wakelocks (checked every ~10 min while off, only when the device is already awake). Charging periods are excluded. Stored in `screen_off_log.json` (last 40 periods, 14 days), with an on/off toggle and reset.
+
+### Changed
+- **Adaptive refresh rate is no longer labelled Experimental** (badge and warning text removed).
+- Version 2.7.1 (versionCode 42).
+
 ## [2.7.0] - 2026-11-23
 
 ### Added

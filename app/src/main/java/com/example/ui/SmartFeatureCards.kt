@@ -199,12 +199,9 @@ fun AdaptiveRefreshCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Adaptive refresh rate", style = MaterialTheme.typography.titleSmall)
-                        Text("EXPERIMENTAL", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-                    }
+                    Text("Adaptive refresh rate", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "Experimental: drops the panel to the lowest rate when idle and boosts on touch. Your original refresh-rate settings are saved and restored when you turn this off or stop the service. Needs root; behaviour depends on the ROM.",
+                        "Drops the panel to the lowest rate when idle and boosts on touch. Your original refresh-rate settings are saved and restored when you turn this off or stop the service. Needs root; use Test switch first.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

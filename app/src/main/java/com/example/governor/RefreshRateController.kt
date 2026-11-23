@@ -47,7 +47,7 @@ data class RefreshUiState(
 )
 
 /**
- * Adaptive refresh rate (EXPERIMENTAL). Lowers the panel to the lowest supported rate when idle and
+ * Adaptive refresh rate. Lowers the panel to the lowest supported rate when idle and
  * boosts to the highest on touch. Original system refresh-rate settings are saved before the first
  * change and always restored (toggle off, service stop, next start after a crash).
  */

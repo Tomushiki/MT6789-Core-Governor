@@ -267,11 +267,13 @@ data class GovernorConfig(
     // v2.7.0 Smart app profiles (opt-in, default OFF)
     val smartAppProfilesEnabled: Boolean = false,
     val smartAppMode: SmartAppMode = SmartAppMode.BALANCED,
-    // v2.7.0 Adaptive refresh rate (EXPERIMENTAL, default OFF). 0 = auto (lowest / highest supported)
+    // v2.7.0 Adaptive refresh rate (default OFF). 0 = auto (lowest / highest supported)
     val adaptiveRefreshEnabled: Boolean = false,
     val adaptiveIdleHz: Int = 0,
     val adaptiveActiveHz: Int = 0,
-    val adaptiveIdleDelayMs: Int = 1500
+    val adaptiveIdleDelayMs: Int = 1500,
+    // v2.7.1 Screen-off power analysis (passive, default ON)
+    val screenOffAnalysisEnabled: Boolean = true
 )
 
 data class PresetItem(

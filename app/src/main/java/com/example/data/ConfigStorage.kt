@@ -503,6 +503,7 @@ class ConfigStorage(private val context: Context) {
             put("adaptiveIdleHz", c.adaptiveIdleHz)
             put("adaptiveActiveHz", c.adaptiveActiveHz)
             put("adaptiveIdleDelayMs", c.adaptiveIdleDelayMs)
+            put("screenOffAnalysisEnabled", c.screenOffAnalysisEnabled)
         }
     }
 
@@ -629,7 +630,8 @@ class ConfigStorage(private val context: Context) {
             adaptiveRefreshEnabled = obj.optBoolean("adaptiveRefreshEnabled", default.adaptiveRefreshEnabled),
             adaptiveIdleHz = obj.optInt("adaptiveIdleHz", default.adaptiveIdleHz).coerceIn(0, 360),
             adaptiveActiveHz = obj.optInt("adaptiveActiveHz", default.adaptiveActiveHz).coerceIn(0, 360),
-            adaptiveIdleDelayMs = obj.optInt("adaptiveIdleDelayMs", default.adaptiveIdleDelayMs).coerceIn(500, 5000)
+            adaptiveIdleDelayMs = obj.optInt("adaptiveIdleDelayMs", default.adaptiveIdleDelayMs).coerceIn(500, 5000),
+            screenOffAnalysisEnabled = obj.optBoolean("screenOffAnalysisEnabled", default.screenOffAnalysisEnabled)
         )
     }
 
