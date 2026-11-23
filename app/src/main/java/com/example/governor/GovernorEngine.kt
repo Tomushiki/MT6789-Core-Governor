@@ -163,6 +163,9 @@ class GovernorEngine(context: Context) {
     // FPS sampler state
     private var fpsJob: Job? = null
     private var timestatsEnabled = false
+    private var fpsDaemon: FpsDaemonClient? = null
+    private var fpsDaemonFailed = false
+    private var fpsDaemonStartRt = 0L
 
     // Crash handler
     private var defaultCrashHandler: Thread.UncaughtExceptionHandler? = null
@@ -1195,6 +1198,8 @@ class GovernorEngine(context: Context) {
     private fun stopFpsSampler() {
         fpsJob?.cancel()
         fpsJob = null
+        fpsDaemon?.stop()
+        fpsDaemon = null
         _telemetry.update { it.copy(fps = -1f) }
     }
 
@@ -1346,6 +1351,10 @@ class GovernorEngine(context: Context) {
                 prevTimestats = emptyMap()
                 lastSampleRt = 0L
                 consecutiveErrors = 0
+                if (fpsDaemon != null) {
+                    fpsDaemon?.stop()
+                    fpsDaemon = null
+                }
                 delay(1000L)
                 continue
             }
@@ -1365,6 +1374,41 @@ class GovernorEngine(context: Context) {
                 lastSampleRt = 0L
                 lastLayerListRt = 0L
                 _telemetry.update { it.copy(fps = 0f) }
+            }
+
+            // Preferred: root task-FPS callback (same method as Metric)
+            if (!fpsDaemonFailed) {
+                var d = fpsDaemon
+                if (d == null) {
+                    d = FpsDaemonClient(appContext.applicationInfo.sourceDir)
+                    fpsDaemon = d
+                    fpsDaemonStartRt = SystemClock.elapsedRealtime()
+                    if (!d.start()) {
+                        log(LogLevel.WARN, "FPS", "Task-FPS helper could not start: ${d.lastError}. Using backup methods.")
+                        fpsDaemonFailed = true
+                    }
+                }
+                if (!fpsDaemonFailed) {
+                    val nowRt = SystemClock.elapsedRealtime()
+                    if (!d.isAlive) {
+                        log(LogLevel.WARN, "FPS", "Task-FPS helper exited (${d.lastError.ifBlank { d.rawTail() }}). Using backup methods.")
+                        fpsDaemonFailed = true
+                        d.stop()
+                        fpsDaemon = null
+                    } else if (d.fpsAtRt > 0L) {
+                        val fresh = nowRt - d.fpsAtRt < 2500L
+                        val v = if (fresh) d.fps else 0f
+                        if (lastSource != "task-callback") {
+                            lastSource = "task-callback"
+                            log(LogLevel.INFO, "FPS", "Source: task FPS callback (${d.taskInfo})")
+                        }
+                        _telemetry.update { it.copy(fps = v) }
+                        delay(1000L)
+                        continue
+                    } else if (nowRt - fpsDaemonStartRt > 8000L) {
+                        diag("Task-FPS helper running (${d.taskInfo.ifBlank { "no task" }}) but no callback data yet; err=${d.lastError.ifBlank { d.rawTail() }}")
+                    }
+                }
             }
 
             val g = sampleKernel() ?: sampleServiceCall()

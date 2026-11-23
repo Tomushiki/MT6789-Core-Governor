@@ -2,6 +2,16 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.6] - 2026-11-23
+
+### Added
+- **FPS now uses the same method as the Metric monitor.** A small root helper (`FpsDaemon`, started with `su` + `app_process` from this APK) registers a task FPS callback with the window manager for the focused app, so the FPS value comes straight from the system instead of parsing SurfaceFlinger dumps.
+- The helper follows the focused task, stops when the overlay is hidden or the engine stops, and exits on its own if the app is killed.
+
+### Changed
+- The older kernel node / SurfaceFlinger counter / timestats methods are kept as automatic backups if the helper can't start or exits. The Log tab (tag `FPS`) shows which source is used and why a fallback happened.
+- Version 1.12.6 (versionCode 20).
+
 ## [1.12.5] - 2026-11-23
 
 ### Fixed
