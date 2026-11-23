@@ -1425,8 +1425,14 @@ class GovernorEngine(context: Context) {
                         val cbV = if (cbFresh) d.fps else -1f
                         val latV = if (latFresh) d.latencyFps else -1f
                         // The task callback can under-report in games, the layer value can be missing in some apps: take the higher.
-                        val raw = maxOf(cbV, latV, 0f)
+                        val glFresh = d.globalAtRt > 0L && d.globalTask == tid && nowRt - d.globalAtRt < 2000L
+                        val glV = if (glFresh) d.globalFps else -1f
+                        // Apps that draw into a SurfaceView (many games) show up in neither of the two above;
+                        // for them use the whole-screen composition rate (ignore the tiny overlay-only updates).
+                        val useComp = cbV <= 0f && latV <= 0f && glV > 8f
+                        val raw = if (useComp) glV else maxOf(cbV, latV, 0f)
                         val src = when {
+                            useComp -> "sf-composition"
                             cbV > latV && cbV >= 0f -> "task-callback"
                             latV >= 0f -> "sf-latency"
                             else -> "no-frames"
@@ -1439,7 +1445,7 @@ class GovernorEngine(context: Context) {
                         }
                         if (nowRt - lastLatDetailRt > 8000L) {
                             lastLatDetailRt = nowRt
-                            log(LogLevel.INFO, "FPS", "Compare: task=${d.taskInfo} callback=${if (cbFresh) d.fps.toInt().toString() else "none"} layer=${if (latFresh) d.latencyFps.toInt().toString() else "none"} shown=${smoothedFps.toInt()} via=${d.latencyLayer.substringBefore(" |")}")
+                            log(LogLevel.INFO, "FPS", "Compare: task=${d.taskInfo} callback=${if (cbFresh) d.fps.toInt().toString() else "none"} layer=${if (latFresh) d.latencyFps.toInt().toString() else "none"} screen=${if (glFresh) d.globalFps.toInt().toString() else "none"} shown=${smoothedFps.toInt()} via=${d.latencyLayer.substringBefore(" |")}")
                         }
                         _telemetry.update { it.copy(fps = smoothedFps) }
                         delay(500L)

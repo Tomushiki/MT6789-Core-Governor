@@ -125,13 +125,17 @@ object FpsDaemon {
         t.trim().replace('\n', '|').replace('\r', ' ').let { if (it.length > 170) it.substring(0, 170) else it }
 
     /** Runs dumpsys by absolute path (the root app_process shell may have no PATH). */
-    private fun dumpsys(vararg args: String): String = try {
-        val p = ProcessBuilder(listOf("/system/bin/dumpsys", *args)).redirectErrorStream(true).start()
-        val out = p.inputStream.bufferedReader().readText()
-        p.waitFor()
-        out
-    } catch (t: Throwable) {
-        ""
+    private val dumpLock = Any()
+    private fun dumpsys(vararg args: String): String = synchronized(dumpLock) {
+        // One dumpsys at a time: parallel dumps made SurfaceFlinger return empty frame tables now and then.
+        try {
+            val p = ProcessBuilder(listOf("/system/bin/dumpsys", *args)).redirectErrorStream(true).start()
+            val out = p.inputStream.bufferedReader().readText()
+            p.waitFor()
+            out
+        } catch (t: Throwable) {
+            ""
+        }
     }
 
     // On newer Android, `dumpsys SurfaceFlinger --list` can print a long debug dump
@@ -162,7 +166,7 @@ object FpsDaemon {
         val recent = ts.filter { nowNs - it in -100_000_000L..1_000_000_000L }.sorted()
         if (recent.isEmpty()) return 0f
         // SurfaceFlinger keeps only the last 128 frames per layer, so at high frame rates use the frame spacing.
-        if (recent.size >= 20) {
+        if (recent.size >= 100) {
             val span = recent.last() - recent.first()
             if (span > 0L) return (recent.size - 1) * 1_000_000_000f / span
         }
@@ -187,6 +191,31 @@ object FpsDaemon {
         val fp = rate(present, nowNs)
         val fr = rate(ready, nowNs)
         return Meas(maxOf(fp, fr), "rows=${present.size}/${ready.size} presented=${fp.toInt()} ready=${fr.toInt()}", "")
+    }
+
+    // ---- Whole-screen composition rate (works for apps that draw into a SurfaceView, e.g. many games) ----
+    private val totalRegex = Regex("(?m)^\\s*totalFrames\\s*=\\s*(\\d+)")
+    private val gSamples = ArrayDeque<LongArray>()
+    private var globalFull = false
+
+    /** Frames composed by SurfaceFlinger per second over the last ~1.5 s. -1 = not available yet. */
+    private fun globalFps(): Float {
+        var txt = if (!globalFull) dumpsys("SurfaceFlinger", "--timestats", "-dump", "-maxlayers", "0")
+                  else dumpsys("SurfaceFlinger", "--timestats", "-dump")
+        var m = totalRegex.find(txt)
+        if (m == null && !globalFull) {
+            globalFull = true
+            txt = dumpsys("SurfaceFlinger", "--timestats", "-dump")
+            m = totalRegex.find(txt)
+        }
+        val c = m?.groupValues?.get(1)?.toLongOrNull() ?: return -1f
+        val now = SystemClock.elapsedRealtime()
+        if (gSamples.isNotEmpty() && c < gSamples.last()[1]) gSamples.clear()
+        gSamples.addLast(longArrayOf(now, c))
+        while (gSamples.size > 2 && now - gSamples.first()[0] > 1500L) gSamples.removeFirst()
+        val first = gSamples.first()
+        val dt = now - first[0]
+        return if (dt >= 400L) (c - first[1]) * 1000f / dt else -1f
     }
 
     /**
@@ -233,6 +262,7 @@ object FpsDaemon {
     }
 
     @Volatile private var lastBestFps = 0f
+    private var bestFail = 0
 
     private fun unregisterCurrent() {
         val p = currentProxy ?: return
@@ -268,6 +298,8 @@ object FpsDaemon {
         currentPkg = pkg
         bestLayer = ""
         lastBestFps = 0f
+        bestFail = 0
+        gSamples.clear()
         scanNow = true
         emit("T $taskId $pkg")
     }
@@ -295,6 +327,7 @@ object FpsDaemon {
             exitProcess(0)
         }.apply { isDaemon = true; start() }
 
+        dumpsys("SurfaceFlinger", "--timestats", "-enable")
         emit("OK")
         Thread { scanLoop() }.apply { isDaemon = true; name = "cg-fps-scan"; start() }
         val binder = FpsBinder()
@@ -322,13 +355,24 @@ object FpsDaemon {
                     if (task == currentTask && m.fps >= 0f) {
                         lastBestFps = m.fps
                         emit("L ${m.fps} $task $layer | ${m.detail}")
-                    } else if (m.fps < 0f) {
-                        bestLayer = ""        // layer is gone: let the scan thread pick again right away
+                        bestFail = 0
+                    } else if (m.fps < 0f && ++bestFail >= 3) {
+                        bestLayer = ""        // layer is really gone: let the scan thread pick again right away
+                        bestFail = 0
                         scanNow = true
                     }
                 }
             } catch (t: Throwable) {
                 emit("E latency measure failed: ${t.javaClass.simpleName}: ${t.message}")
+            }
+            try {
+                val task = currentTask
+                if (task >= 0) {
+                    val g = globalFps()
+                    if (g >= 0f && task == currentTask) emit("G $g $task")
+                }
+            } catch (t: Throwable) {
+                emit("E composition measure failed: ${t.javaClass.simpleName}: ${t.message}")
             }
             SystemClock.sleep(450L)
         }
@@ -348,6 +392,9 @@ class FpsDaemonClient(private val apkPath: String) {
     @Volatile var taskPkg: String = ""; private set
     @Volatile var taskSinceRt: Long = 0L; private set
     @Volatile var fpsTask: Int = -1; private set
+    @Volatile var globalFps: Float = -1f; private set
+    @Volatile var globalAtRt: Long = 0L; private set
+    @Volatile var globalTask: Int = -1; private set
     @Volatile var latencyTask: Int = -1; private set
     @Volatile var started: Boolean = false; private set
     @Volatile var lastError: String = ""; private set
@@ -384,6 +431,14 @@ class FpsDaemonClient(private val apkPath: String) {
                                     latencyFps = it
                                     latencyAtRt = SystemClock.elapsedRealtime()
                                     latencyLayer = parts.getOrNull(3) ?: ""
+                                }
+                            }
+                            line.startsWith("G ") -> {
+                                val parts = line.split(' ')
+                                parts.getOrNull(1)?.toFloatOrNull()?.let {
+                                    globalTask = parts.getOrNull(2)?.toIntOrNull() ?: -1
+                                    globalFps = it
+                                    globalAtRt = SystemClock.elapsedRealtime()
                                 }
                             }
                             line.startsWith("T ") -> {

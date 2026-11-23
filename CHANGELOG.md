@@ -2,6 +2,17 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.13] - 2026-11-23
+
+### Fixed
+- **No FPS in apps that draw into a SurfaceView (Geometry Dash and many other games).** Neither the task callback nor the per-layer frame table sees those apps on this Android version. The helper now also reads SurfaceFlinger's whole-screen composition counter and the overlay uses it for any app where the other two methods give nothing. It works for every app, not for one game.
+- **A burst of frames at app launch was read as 143 FPS.** The frame-spacing rate is now used only when the frame table is nearly full (100+ frames per second).
+- **Empty frame tables now and then.** All `dumpsys` calls from the helper run one at a time, and a layer is only dropped after 3 misses in a row, so the number no longer jumps to 0 for a moment.
+
+### Changed
+- `Compare:` log line now also shows `screen=` (composition rate). Source name `sf-composition` is used when it is the one shown.
+- Version 1.12.13 (versionCode 27).
+
 ## [1.12.12] - 2026-11-23
 
 ### Fixed
