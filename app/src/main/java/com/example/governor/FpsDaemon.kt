@@ -81,13 +81,14 @@ object FpsDaemon {
         for (m in iface.methods.filter { it.name == "getTasks" }.sortedBy { it.parameterCount }) {
             try {
                 var firstInt = true
-                val args = m.parameterTypes.map { t ->
-                    when (t) {
+                val args = arrayOfNulls<Any>(m.parameterTypes.size)
+                for ((i, t) in m.parameterTypes.withIndex()) {
+                    args[i] = when (t) {
                         Int::class.javaPrimitiveType -> if (firstInt) { firstInt = false; 1 } else -1
                         Boolean::class.javaPrimitiveType -> false
                         else -> null
                     }
-                }.toTypedArray()
+                }
                 val list = m.invoke(a, *args) as? List<*> ?: continue
                 val info = list.firstOrNull() ?: continue
                 val id = info.javaClass.getField("taskId").getInt(info)
