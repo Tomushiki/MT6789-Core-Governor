@@ -165,10 +165,14 @@ object FpsDaemon {
     private fun rate(ts: List<Long>, nowNs: Long): Float {
         val recent = ts.filter { nowNs - it in -100_000_000L..1_000_000_000L }.sorted()
         if (recent.isEmpty()) return 0f
-        // SurfaceFlinger keeps only the last 128 frames per layer, so at high frame rates use the frame spacing.
-        if (recent.size >= 100) {
+        // The frame table can hold fewer frames than one second at high frame rates (this ROM keeps about 60 rows),
+        // so counting rows would never read above ~60. When there are enough frames over a long enough stretch and
+        // the layer is still drawing, use the frame spacing instead: it is right at any frame rate.
+        if (recent.size >= 20) {
             val span = recent.last() - recent.first()
-            if (span > 0L) return (recent.size - 1) * 1_000_000_000f / span
+            if (span >= 300_000_000L && nowNs - recent.last() <= 250_000_000L) {
+                return (recent.size - 1) * 1_000_000_000f / span
+            }
         }
         return recent.size.toFloat()
     }
@@ -190,7 +194,8 @@ object FpsDaemon {
         if (present.isEmpty() && ready.isEmpty()) return Meas(-1f, "", oneLine(text))
         val fp = rate(present, nowNs)
         val fr = rate(ready, nowNs)
-        return Meas(maxOf(fp, fr), "rows=${present.size}/${ready.size} presented=${fp.toInt()} ready=${fr.toInt()}", "")
+        val spanMs = if (present.size >= 2) (present.max() - present.min()) / 1_000_000L else 0L
+        return Meas(maxOf(fp, fr), "rows=${present.size}/${ready.size} presented=${fp.toInt()} ready=${fr.toInt()} span=${spanMs}ms", "")
     }
 
     // ---- Whole-screen composition rate (works for apps that draw into a SurfaceView, e.g. many games) ----

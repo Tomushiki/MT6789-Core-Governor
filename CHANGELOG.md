@@ -2,6 +2,13 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.0.1] - 2026-11-23
+
+### Fixed
+- **FPS stuck at about 60 in games running at 120 or 144 FPS (seen in Blood Strike).** At 30, 45 and 60 FPS the counter matched the game, but above 60 it stayed at 60. On this ROM the frame table holds only about 60 rows, so counting rows can never read higher. The counter now uses the spacing between frames whenever there are 20 or more frames over at least 0.3 s and the app is still drawing, which is right at any frame rate.
+- The layer note in the log now also shows `span=` (how many milliseconds the frames cover), so a wrong reading can be checked.
+- Version 2.0.1 (versionCode 31).
+
 ## [2.0.0] - 2026-11-23
 
 ### Added
