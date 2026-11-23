@@ -21,6 +21,7 @@ import android.content.IntentFilter
 import android.media.AudioManager
 import android.os.BatteryManager
 import android.os.PowerManager
+import android.os.SystemClock
 import com.example.data.ConfigStorage
 import com.example.data.OriginalCpuBackup
 import com.example.data.OriginalHardwareBackup
@@ -94,6 +95,7 @@ class GovernorEngine(context: Context) {
     private var prevCpuTicks: Map<Int, CpuTickSnapshot> = emptyMap()
     private val prevRawClusterLoad = mutableMapOf<Int, Float>()
     private val smoothedClusterLoad = mutableMapOf<Int, Float>()
+    private val smoothedCoreLoad = mutableMapOf<Int, Float>()
     private var smoothedTotalCpuLoad = 0f
     private var smoothedGpuLoad = 0f
 
@@ -153,6 +155,15 @@ class GovernorEngine(context: Context) {
     private var lastPowerSplitLogMs = 0L
     private var lastDominantComponent: String? = null
 
+    // RAM pin state
+    private var ramPinned = false
+    private var ramOrigMinHz = 0L
+    private var lastRamReassertMs = 0L
+
+    // FPS sampler state
+    private var fpsJob: Job? = null
+    private var timestatsEnabled = false
+
     // Crash handler
     private var defaultCrashHandler: Thread.UncaughtExceptionHandler? = null
     private var crashHookInstalled = false
@@ -210,6 +221,7 @@ class GovernorEngine(context: Context) {
                 isDiscovering = false,
                 rootGranted = hw.rootGranted,
                 gpu = initialGpuState,
+                ddrSupported = hw.ddr != null,
                 tempSensorLabel = hw.thermalSensors.firstOrNull { s -> s.path == populatedCfg.selectedTempSensorPath }?.label
                     ?: hw.thermalSensors.firstOrNull()?.label ?: "Unassigned"
             )
@@ -309,6 +321,7 @@ class GovernorEngine(context: Context) {
             if (!isScreenInteractive && _config.value.screenOffSavingEnabled) {
                 scheduleScreenOffWatcher()
             }
+            startFpsSampler()
 
             try {
                 while (isActive) {
@@ -331,6 +344,7 @@ class GovernorEngine(context: Context) {
                     delay(sleepMs)
                 }
             } finally {
+                stopFpsSampler()
                 sleepWatcherJob?.cancel()
                 sleepWatcherJob = null
                 isSleepSaving = false
@@ -437,6 +451,15 @@ class GovernorEngine(context: Context) {
                     lastWrittenGpuOppIndex = lowestOppIdx
                 }
             }
+            val ddr = hw.ddr
+            if (ramPinned && ddr != null) {
+                val restoreHz = if (ramOrigMinHz > 0L) ramOrigMinHz else (ddr.availableHz.firstOrNull() ?: 0L)
+                if (restoreHz > 0L) {
+                    safeWriteSysfs(ddr.minFreqPath, restoreHz.toString())
+                }
+                ramPinned = false
+                log(LogLevel.INFO, "RamPin", "RAM released (${restoreHz / 1_000_000L} MHz min)")
+            }
             log(LogLevel.INFO, "ScreenOff", "Sleep saving active: clocks pinned to minimum.")
         }
     }
@@ -466,6 +489,7 @@ class GovernorEngine(context: Context) {
     }
 
     fun stopAndRestore() {
+        stopFpsSampler()
         sleepWatcherJob?.cancel()
         sleepWatcherJob = null
         isSleepSaving = false
@@ -504,6 +528,16 @@ class GovernorEngine(context: Context) {
                     )
                 }
             }
+            if (ramPinned) {
+                val ddr = _hardwareSpec.value.ddr
+                val restoreHz = if (ramOrigMinHz > 0L) ramOrigMinHz else (ddr?.availableHz?.firstOrNull() ?: 0L)
+                if (ddr != null && restoreHz > 0L) {
+                    safeWriteSysfs(ddr.minFreqPath, restoreHz.toString())
+                    log(LogLevel.INFO, "RamPin", "RAM released (${restoreHz / 1_000_000L} MHz min)")
+                }
+                ramPinned = false
+                ramOrigMinHz = 0L
+            }
             lastWrittenCpuFreq.clear()
             lastReassertMs.clear()
             lastDriftLogMs.clear()
@@ -515,7 +549,9 @@ class GovernorEngine(context: Context) {
                     burstActive = false,
                     burstRemainingMs = 0L,
                     tempThrottleActive = false,
-                    powerThrottleActive = false
+                    powerThrottleActive = false,
+                    ddrPinned = false,
+                    fps = -1f
                 )
             }
             log(LogLevel.INFO, "Restore", "Original CPU governors and GPU unpinned (-1) restored.")
@@ -561,6 +597,9 @@ class GovernorEngine(context: Context) {
 
         hw.batteryPower.currentPath?.let { readPaths.add(it) }
         hw.batteryPower.voltagePath?.let { readPaths.add(it) }
+        if (cfg.overlayEnabled && cfg.overlayDetailed) {
+            hw.ddr?.curFreqPath?.let { readPaths.add(it) }
+        }
 
         val batch = rootShell.readFilesBatch(readPaths.distinct())
         if (batch.isEmpty()) return
@@ -593,6 +632,11 @@ class GovernorEngine(context: Context) {
         val rawTotalCpuLoad = SysfsParsers.computeTotalCpuLoadPct(allCpuIds, prevCpuTicks, currTicks)
         smoothedTotalCpuLoad = (smoothedTotalCpuLoad + (rawTotalCpuLoad - smoothedTotalCpuLoad) * 0.4f)
             .coerceIn(0f, 100f)
+        val rawCoreLoads = SysfsParsers.computePerCoreLoadPct(allCpuIds, prevCpuTicks, currTicks)
+        for ((cpuId, rawPct) in rawCoreLoads) {
+            val oldPct = smoothedCoreLoad[cpuId] ?: 0f
+            smoothedCoreLoad[cpuId] = (oldPct + (rawPct - oldPct) * 0.4f).coerceIn(0f, 100f)
+        }
         prevCpuTicks = currTicks
 
         // 3. Launch burst (Normal mode only)
@@ -1057,6 +1101,44 @@ class GovernorEngine(context: Context) {
             }
         }
 
+        // 7b. Keep RAM at max & read DDR frequency if detailed overlay active
+        val ddrSpec = hw.ddr
+        val desiredPin = cfg.ramPinMax && ddrSpec != null && isScreenInteractive && (!cfg.ramPinGameOnly || activeMode == GovernorMode.GAME)
+        if (ddrSpec != null && ddrSpec.availableHz.isNotEmpty()) {
+            val maxHz = ddrSpec.availableHz.last()
+            val minHz = ddrSpec.availableHz.first()
+            if (desiredPin && !ramPinned) {
+                val curMin = rootShell.readFile(ddrSpec.minFreqPath)?.trim()?.toLongOrNull()
+                ramOrigMinHz = if (curMin != null && curMin < maxHz) curMin else minHz
+                if (safeWriteSysfs(ddrSpec.minFreqPath, maxHz.toString())) {
+                    ramPinned = true
+                    lastRamReassertMs = nowMs
+                    log(LogLevel.INFO, "RamPin", "RAM pinned at ${maxHz / 1_000_000L} MHz")
+                }
+            } else if (ramPinned && desiredPin) {
+                if (nowMs - lastRamReassertMs >= 5_000L) {
+                    lastRamReassertMs = nowMs
+                    val liveMin = rootShell.readFile(ddrSpec.minFreqPath)?.trim()?.toLongOrNull()
+                    if (liveMin != maxHz) {
+                        safeWriteSysfs(ddrSpec.minFreqPath, maxHz.toString())
+                    }
+                }
+            } else if (!desiredPin && ramPinned) {
+                val restoreHz = if (ramOrigMinHz > 0L) ramOrigMinHz else minHz
+                safeWriteSysfs(ddrSpec.minFreqPath, restoreHz.toString())
+                ramPinned = false
+                log(LogLevel.INFO, "RamPin", "RAM released (${restoreHz / 1_000_000L} MHz min)")
+            }
+        } else if (ramPinned) {
+            ramPinned = false
+        }
+
+        val ddrFreqMhz = if (cfg.overlayEnabled && cfg.overlayDetailed && ddrSpec != null) {
+            (batch[ddrSpec.curFreqPath]?.trim()?.toLongOrNull() ?: 0L) / 1_000_000L
+        } else {
+            0L
+        }
+
         // 8. Push telemetry & history sample
         val pollDuration = System.currentTimeMillis() - nowMs
         _telemetry.update { prev ->
@@ -1081,6 +1163,10 @@ class GovernorEngine(context: Context) {
                 clusters = clusterLiveList,
                 gpu = gpuLiveState,
                 totalCpuLoadPct = smoothedTotalCpuLoad,
+                coreLoadsPct = smoothedCoreLoad.toMap(),
+                ddrFreqMhz = ddrFreqMhz,
+                ddrSupported = ddrSpec != null,
+                ddrPinned = ramPinned,
                 temperatureC = tempC,
                 tempSensorLabel = tempSensor?.label ?: "Unassigned",
                 watts = avgWatts,
@@ -1096,6 +1182,134 @@ class GovernorEngine(context: Context) {
                 lastPollDurationMs = pollDuration,
                 history = nextHistory
             )
+        }
+    }
+
+    private fun startFpsSampler() {
+        if (fpsJob?.isActive == true) return
+        fpsJob = engineScope.launch {
+            runFpsSamplerLoop()
+        }
+    }
+
+    private fun stopFpsSampler() {
+        fpsJob?.cancel()
+        fpsJob = null
+        _telemetry.update { it.copy(fps = -1f) }
+    }
+
+    private suspend fun runFpsSamplerLoop() {
+        var prevLayerFrames = emptyMap<String, Long>()
+        var lastSampleRt = 0L
+        var lastPkg = ""
+        var consecutiveErrors = 0
+        var retryAtRt = 0L
+        var inactivePublished = false
+
+        while (engineScope.isActive && controlJob?.isActive == true) {
+            val cfg = _config.value
+            val active = cfg.overlayEnabled && (cfg.overlayExpanded || cfg.overlayDetailed) && isScreenInteractive
+            if (!active) {
+                if (!inactivePublished) {
+                    _telemetry.update { it.copy(fps = -1f) }
+                    inactivePublished = true
+                }
+                prevLayerFrames = emptyMap()
+                lastSampleRt = 0L
+                lastPkg = ""
+                consecutiveErrors = 0
+                retryAtRt = 0L
+                delay(1000L)
+                continue
+            }
+
+            inactivePublished = false
+            val nowRt = SystemClock.elapsedRealtime()
+            if (retryAtRt > 0L && nowRt < retryAtRt) {
+                delay(1000L)
+                continue
+            }
+
+            if (!timestatsEnabled) {
+                rootShell.exec("dumpsys SurfaceFlinger --timestats -enable")
+                timestatsEnabled = true
+            }
+
+            val res = rootShell.exec("dumpsys SurfaceFlinger --timestats -dump | grep -E '^layerName|^totalFrames'")
+            if (!res.isSuccess || res.stdout.isBlank()) {
+                consecutiveErrors++
+                if (consecutiveErrors >= 3) {
+                    _telemetry.update { it.copy(fps = -1f) }
+                    retryAtRt = SystemClock.elapsedRealtime() + 15_000L
+                    prevLayerFrames = emptyMap()
+                    lastSampleRt = 0L
+                }
+                delay(1000L)
+                continue
+            }
+
+            consecutiveErrors = 0
+            retryAtRt = 0L
+
+            val currentLayers = mutableMapOf<String, Long>()
+            var currentLayer: String? = null
+            res.stdout.lineSequence().forEach { line ->
+                val trimmed = line.trim()
+                if (trimmed.startsWith("layerName")) {
+                    val name = trimmed.substringAfter("=", "").trim()
+                    if (name.isNotEmpty()) {
+                        currentLayer = name
+                    }
+                } else if (trimmed.startsWith("totalFrames")) {
+                    if (currentLayer != null) {
+                        val frames = trimmed.substringAfter("=", "").trim().toLongOrNull()
+                        if (frames != null) {
+                            currentLayers[currentLayer!!] = frames
+                        }
+                        currentLayer = null
+                    }
+                }
+            }
+
+            val sampleRt = SystemClock.elapsedRealtime()
+            val pkg = _telemetry.value.foregroundPackage
+            if (pkg.isBlank()) {
+                _telemetry.update { it.copy(fps = -1f) }
+                prevLayerFrames = currentLayers
+                lastSampleRt = sampleRt
+                lastPkg = ""
+                delay(1000L)
+                continue
+            }
+
+            if (lastSampleRt <= 0L || pkg != lastPkg || prevLayerFrames.isEmpty()) {
+                _telemetry.update { it.copy(fps = 0f) }
+                prevLayerFrames = currentLayers
+                lastSampleRt = sampleRt
+                lastPkg = pkg
+                delay(1000L)
+                continue
+            }
+
+            val elapsedSeconds = (sampleRt - lastSampleRt) / 1000f
+            val matching = currentLayers.filterKeys { it.contains(pkg) }
+            val fpsVal = if (matching.isEmpty() || elapsedSeconds <= 0f) {
+                0f
+            } else {
+                var maxDelta = 0L
+                for ((layerName, count) in matching) {
+                    val prevCount = prevLayerFrames[layerName] ?: continue
+                    val delta = (count - prevCount).coerceAtLeast(0L)
+                    if (delta > maxDelta) maxDelta = delta
+                }
+                (maxDelta.toFloat() / elapsedSeconds).coerceAtLeast(0f)
+            }
+
+            prevLayerFrames = currentLayers
+            lastSampleRt = sampleRt
+            lastPkg = pkg
+            _telemetry.update { it.copy(fps = fpsVal) }
+            delay(1000L)
         }
     }
 
@@ -1273,6 +1487,7 @@ class GovernorEngine(context: Context) {
         prevCpuTicks = emptyMap()
         prevRawClusterLoad.clear()
         smoothedClusterLoad.clear()
+        smoothedCoreLoad.clear()
         smoothedTotalCpuLoad = 0f
         smoothedGpuLoad = 0f
         lastWrittenCpuFreq.clear()
@@ -1291,6 +1506,9 @@ class GovernorEngine(context: Context) {
         smoothedClusterShare.clear()
         lastPowerSplitLogMs = 0L
         lastDominantComponent = null
+        ramPinned = false
+        ramOrigMinHz = 0L
+        lastRamReassertMs = 0L
         latchedPeakTempC = 0f
         currentTempCpuCapPct = 100f
         currentTempGpuCapPct = 100f

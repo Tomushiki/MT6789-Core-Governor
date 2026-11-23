@@ -99,6 +99,13 @@ data class BatteryPowerSpec(
     val statusPath: String? = null
 )
 
+data class DdrSpec(
+    val basePath: String,
+    val curFreqPath: String,
+    val minFreqPath: String,
+    val availableHz: List<Long>
+)
+
 data class HardwareSpec(
     val discoveredAtMs: Long = 0L,
     val rootGranted: Boolean = false,
@@ -106,7 +113,8 @@ data class HardwareSpec(
     val gpu: GpuSpec = GpuSpec(),
     val thermalSensors: List<ThermalSensorSpec> = emptyList(),
     val batteryPower: BatteryPowerSpec = BatteryPowerSpec(),
-    val discoveryNotes: List<String> = emptyList()
+    val discoveryNotes: List<String> = emptyList(),
+    val ddr: DdrSpec? = null
 )
 
 data class FreqRange(
@@ -163,6 +171,7 @@ data class GovernorConfig(
     val overlayClickThrough: Boolean = false,
     val overlayGameOnly: Boolean = false,
     val overlayExpanded: Boolean = false,
+    val overlayDetailed: Boolean = false,
     val overlayOpacityPct: Int = 85,
     val overlayBgOpacityPct: Int = 100,
     val overlayCompactScalePct: Int = 100,
@@ -171,8 +180,12 @@ data class GovernorConfig(
     val overlayCompactYPm: Int = 60,
     val overlayExpandedXPm: Int = 40,
     val overlayExpandedYPm: Int = 60,
+    val overlayDetailedXPm: Int = 40,
+    val overlayDetailedYPm: Int = 60,
     val overlayX: Int = 24,
     val overlayY: Int = 120,
+    val ramPinMax: Boolean = false,
+    val ramPinGameOnly: Boolean = true,
     val safetyFloorPct: Float = 20f,
     val selectedTempSensorPath: String = "",
     val modeOverride: ModeOverride = ModeOverride.AUTO,
@@ -269,6 +282,11 @@ data class TelemetryState(
     val clusters: List<ClusterLiveState> = emptyList(),
     val gpu: GpuLiveState = GpuLiveState(),
     val totalCpuLoadPct: Float = 0f,
+    val coreLoadsPct: Map<Int, Float> = emptyMap(),
+    val ddrFreqMhz: Long = 0L,
+    val ddrSupported: Boolean = false,
+    val ddrPinned: Boolean = false,
+    val fps: Float = -1f,
     val temperatureC: Float = 0f,
     val tempSensorLabel: String = "Unassigned",
     val watts: Float = 0f,

@@ -17,6 +17,7 @@ package com.example.governor
 
 import com.example.model.BatteryPowerSpec
 import com.example.model.CpuPolicySpec
+import com.example.model.DdrSpec
 import com.example.model.GpuSpec
 import com.example.model.HardwareSpec
 import com.example.model.ThermalSensorSpec
@@ -40,6 +41,7 @@ class HardwareDiscovery(private val rootShell: RootShell) {
         val gpuSpec = discoverGpu(notes)
         val thermalSensors = discoverThermalSensors(notes)
         val batteryPower = discoverBatteryPower(notes)
+        val ddrSpec = discoverDdr(notes)
 
         return HardwareSpec(
             discoveredAtMs = System.currentTimeMillis(),
@@ -48,7 +50,68 @@ class HardwareDiscovery(private val rootShell: RootShell) {
             gpu = gpuSpec,
             thermalSensors = thermalSensors,
             batteryPower = batteryPower,
-            discoveryNotes = notes
+            discoveryNotes = notes,
+            ddr = ddrSpec
+        )
+    }
+
+    private suspend fun discoverDdr(notes: MutableList<String>): DdrSpec? {
+        val lsRes = rootShell.exec("ls /sys/class/devfreq 2>/dev/null")
+        val entries = lsRes.stdout.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (!lsRes.isSuccess || entries.isEmpty()) {
+            notes.add("Memory (DDR) devfreq node not available.")
+            return null
+        }
+
+        val keywords = listOf("dvfsrc", "ddr", "dmc", "emi", "mif")
+        var matchedDir: String? = null
+        for (kw in keywords) {
+            val candidates = entries.filter { it.contains(kw, ignoreCase = true) }
+            for (name in candidates) {
+                val basePath = "/sys/class/devfreq/$name"
+                val curPath = "$basePath/cur_freq"
+                val minPath = "$basePath/min_freq"
+                val availPath = "$basePath/available_frequencies"
+                val checkRes = rootShell.exec(
+                    "[ -r '$curPath' ] && [ -r '$minPath' ] && [ -r '$availPath' ] && echo 'OK'"
+                )
+                if (checkRes.stdout.contains("OK")) {
+                    matchedDir = basePath
+                    break
+                }
+            }
+            if (matchedDir != null) break
+        }
+
+        if (matchedDir == null) {
+            notes.add("Memory (DDR) devfreq node not available.")
+            return null
+        }
+
+        val curPath = "$matchedDir/cur_freq"
+        val minPath = "$matchedDir/min_freq"
+        val availPath = "$matchedDir/available_frequencies"
+        val availRaw = rootShell.readFile(availPath).orEmpty()
+        val availableHz = availRaw.trim()
+            .split(Regex("\\s+"))
+            .mapNotNull { it.toLongOrNull() }
+            .filter { it > 0L }
+            .distinct()
+            .sorted()
+
+        if (availableHz.isEmpty()) {
+            notes.add("Memory (DDR) devfreq frequencies unavailable at $matchedDir.")
+            return null
+        }
+
+        notes.add(
+            "Memory (DDR) node ready ($matchedDir): ${availableHz.first() / 1_000_000}–${availableHz.last() / 1_000_000} MHz (${availableHz.size} steps)."
+        )
+        return DdrSpec(
+            basePath = matchedDir,
+            curFreqPath = curPath,
+            minFreqPath = minPath,
+            availableHz = availableHz
         )
     }
 

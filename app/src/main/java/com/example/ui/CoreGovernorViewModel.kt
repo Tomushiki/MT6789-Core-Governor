@@ -191,7 +191,14 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                     overlayCompactXPm = 40,
                     overlayCompactYPm = 60,
                     overlayExpandedXPm = 40,
-                    overlayExpandedYPm = 60
+                    overlayExpandedYPm = 60,
+                    overlayDetailedXPm = 40,
+                    overlayDetailedYPm = 60
+                )
+            } else if (cfg.overlayDetailed) {
+                cfg.copy(
+                    overlayDetailedXPm = (xPm ?: cfg.overlayDetailedXPm).coerceIn(0, 1000),
+                    overlayDetailedYPm = (yPm ?: cfg.overlayDetailedYPm).coerceIn(0, 1000)
                 )
             } else if (cfg.overlayExpanded) {
                 cfg.copy(
@@ -204,6 +211,15 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                     overlayCompactYPm = (yPm ?: cfg.overlayCompactYPm).coerceIn(0, 1000)
                 )
             }
+        }
+    }
+
+    fun updateRamPin(enabled: Boolean? = null, gameOnly: Boolean? = null) {
+        engine.updateConfig { cfg ->
+            cfg.copy(
+                ramPinMax = enabled ?: cfg.ramPinMax,
+                ramPinGameOnly = gameOnly ?: cfg.ramPinGameOnly
+            )
         }
     }
 

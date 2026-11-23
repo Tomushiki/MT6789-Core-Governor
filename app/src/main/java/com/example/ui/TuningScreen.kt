@@ -106,6 +106,7 @@ fun TuningScreen(
         bgOpacityPct: Int?
     ) -> Unit,
     onUpdateOverlayPosition: (Int?, Int?, Boolean) -> Unit,
+    onUpdateRamPin: (Boolean?, Boolean?) -> Unit,
     onUpdateClusterRange: (GovernorMode, Int, FreqRange) -> Unit,
     onUpdateGpuRange: (GovernorMode, FreqRange) -> Unit,
     onUpdateModeScalingParams: (
@@ -504,6 +505,46 @@ fun TuningScreen(
                 }
             }
 
+            // 2a-bis. Memory (RAM)
+            if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.CONTROL) {
+                item {
+                    EcuCard {
+                        Text(
+                            text = "Memory (RAM)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        if (!telemetry.ddrSupported) {
+                            Text(
+                                text = "Not supported on this device.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            SettingSwitchRow(
+                                title = "Keep RAM at max frequency",
+                                explanation = "Pins the memory clock to its highest step. Can reduce stutter, but uses more battery and runs warmer. Released when the screen is off.",
+                                checked = config.ramPinMax,
+                                onCheckedChange = { onUpdateRamPin(it, null) },
+                                testTag = "ram_pin_max_switch"
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            SettingSwitchRow(
+                                title = "Only in Game mode",
+                                explanation = "Pin only while a game is in the foreground.",
+                                checked = config.ramPinGameOnly,
+                                onCheckedChange = { onUpdateRamPin(null, it) },
+                                enabled = config.ramPinMax,
+                                testTag = "ram_pin_game_only_switch"
+                            )
+                        }
+                    }
+                }
+            }
+
             // 2b. Screen-off power saving
             if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.SCREEN_OFF) {
                 item {
@@ -662,9 +703,21 @@ fun TuningScreen(
                             testTag = "overlay_expanded_scale_slider"
                         )
 
-                        val posStyle = if (config.overlayExpanded) "expanded" else "compact"
-                        val posXPct = ((if (config.overlayExpanded) config.overlayExpandedXPm else config.overlayCompactXPm) / 10).coerceIn(0, 100)
-                        val posYPct = ((if (config.overlayExpanded) config.overlayExpandedYPm else config.overlayCompactYPm) / 10).coerceIn(0, 100)
+                        val posStyle = when {
+                            config.overlayDetailed -> "detailed"
+                            config.overlayExpanded -> "expanded"
+                            else -> "compact"
+                        }
+                        val posXPct = (when {
+                            config.overlayDetailed -> config.overlayDetailedXPm
+                            config.overlayExpanded -> config.overlayExpandedXPm
+                            else -> config.overlayCompactXPm
+                        } / 10).coerceIn(0, 100)
+                        val posYPct = (when {
+                            config.overlayDetailed -> config.overlayDetailedYPm
+                            config.overlayExpanded -> config.overlayExpandedYPm
+                            else -> config.overlayCompactYPm
+                        } / 10).coerceIn(0, 100)
 
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingSliderRow(

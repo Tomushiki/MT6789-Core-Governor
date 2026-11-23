@@ -136,6 +136,27 @@ object SysfsParsers {
         return (sumPct / count).coerceIn(0f, 100f)
     }
 
+    fun computePerCoreLoadPct(
+        cpuIds: List<Int>,
+        prev: Map<Int, CpuTickSnapshot>,
+        curr: Map<Int, CpuTickSnapshot>
+    ): Map<Int, Float> {
+        if (cpuIds.isEmpty() || prev.isEmpty()) return emptyMap()
+        val result = mutableMapOf<Int, Float>()
+        for (cpuId in cpuIds) {
+            val p = prev[cpuId] ?: continue
+            val c = curr[cpuId] ?: continue
+            val totalDelta = c.totalTicks - p.totalTicks
+            val idleDelta = c.idleTicks - p.idleTicks
+            if (totalDelta > 0L) {
+                val busyDelta = (totalDelta - idleDelta).coerceAtLeast(0L)
+                val pct = ((busyDelta.toFloat() / totalDelta.toFloat()) * 100f).coerceIn(0f, 100f)
+                result[cpuId] = pct
+            }
+        }
+        return result
+    }
+
     /**
      * Parses MediaTek /proc/gpufreqv2/{gpu_working_opp_table,gpu_signed_opp_table,stack_working_opp_table}.
      * Handles formats such as:

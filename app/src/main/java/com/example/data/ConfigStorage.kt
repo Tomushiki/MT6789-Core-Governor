@@ -377,7 +377,8 @@ class ConfigStorage(private val context: Context) {
             put("overlayEnabled", c.overlayEnabled)
             put("overlayClickThrough", c.overlayClickThrough)
             put("overlayGameOnly", c.overlayGameOnly)
-            put("overlayExpanded", c.overlayExpanded)
+            put("overlayExpanded", c.overlayExpanded && !c.overlayDetailed)
+            put("overlayDetailed", c.overlayDetailed)
             put("overlayOpacityPct", c.overlayOpacityPct)
             put("overlayBgOpacityPct", c.overlayBgOpacityPct)
             put("overlayCompactScalePct", c.overlayCompactScalePct)
@@ -386,8 +387,12 @@ class ConfigStorage(private val context: Context) {
             put("overlayCompactYPm", c.overlayCompactYPm)
             put("overlayExpandedXPm", c.overlayExpandedXPm)
             put("overlayExpandedYPm", c.overlayExpandedYPm)
+            put("overlayDetailedXPm", c.overlayDetailedXPm)
+            put("overlayDetailedYPm", c.overlayDetailedYPm)
             put("overlayX", c.overlayX)
             put("overlayY", c.overlayY)
+            put("ramPinMax", c.ramPinMax)
+            put("ramPinGameOnly", c.ramPinGameOnly)
             put("safetyFloorPct", c.safetyFloorPct.toDouble())
             put("selectedTempSensorPath", c.selectedTempSensorPath)
             put("modeOverride", c.modeOverride.name)
@@ -460,6 +465,9 @@ class ConfigStorage(private val context: Context) {
         val tObj = obj.optJSONObject("tempThrottle")
         val pObj = obj.optJSONObject("powerThrottle")
 
+        val loadedDetailed = obj.optBoolean("overlayDetailed", default.overlayDetailed)
+        val loadedExpanded = if (loadedDetailed) false else obj.optBoolean("overlayExpanded", default.overlayExpanded)
+
         return GovernorConfig(
             pollIntervalMs = obj.optLong("pollIntervalMs", default.pollIntervalMs).coerceIn(50L, 1000L),
             startOnBoot = obj.optBoolean("startOnBoot", default.startOnBoot),
@@ -471,7 +479,8 @@ class ConfigStorage(private val context: Context) {
             overlayEnabled = obj.optBoolean("overlayEnabled", default.overlayEnabled),
             overlayClickThrough = obj.optBoolean("overlayClickThrough", default.overlayClickThrough),
             overlayGameOnly = obj.optBoolean("overlayGameOnly", default.overlayGameOnly),
-            overlayExpanded = obj.optBoolean("overlayExpanded", default.overlayExpanded),
+            overlayExpanded = loadedExpanded,
+            overlayDetailed = loadedDetailed,
             overlayOpacityPct = obj.optInt("overlayOpacityPct", default.overlayOpacityPct).coerceIn(30, 100),
             overlayBgOpacityPct = obj.optInt("overlayBgOpacityPct", default.overlayBgOpacityPct).coerceIn(0, 100),
             overlayCompactScalePct = obj.optInt("overlayCompactScalePct", default.overlayCompactScalePct).coerceIn(40, 400),
@@ -480,8 +489,12 @@ class ConfigStorage(private val context: Context) {
             overlayCompactYPm = obj.optInt("overlayCompactYPm", default.overlayCompactYPm).coerceIn(0, 1000),
             overlayExpandedXPm = obj.optInt("overlayExpandedXPm", default.overlayExpandedXPm).coerceIn(0, 1000),
             overlayExpandedYPm = obj.optInt("overlayExpandedYPm", default.overlayExpandedYPm).coerceIn(0, 1000),
+            overlayDetailedXPm = obj.optInt("overlayDetailedXPm", default.overlayDetailedXPm).coerceIn(0, 1000),
+            overlayDetailedYPm = obj.optInt("overlayDetailedYPm", default.overlayDetailedYPm).coerceIn(0, 1000),
             overlayX = obj.optInt("overlayX", default.overlayX),
             overlayY = obj.optInt("overlayY", default.overlayY),
+            ramPinMax = obj.optBoolean("ramPinMax", default.ramPinMax),
+            ramPinGameOnly = obj.optBoolean("ramPinGameOnly", default.ramPinGameOnly),
             safetyFloorPct = obj.optDouble("safetyFloorPct", default.safetyFloorPct.toDouble()).toFloat().coerceIn(5f, 95f),
             selectedTempSensorPath = obj.optString("selectedTempSensorPath", ""),
             modeOverride = enumOrDefault(obj.optString("modeOverride"), ModeOverride.AUTO),

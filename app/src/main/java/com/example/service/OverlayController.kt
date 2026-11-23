@@ -49,6 +49,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 class OverlayController(
     context: Context,
@@ -72,6 +73,17 @@ class OverlayController(
     private var lastAppliedDisplay: DisplayData? = null
     private var lastApplyTimeMs: Long = 0L
 
+    private data class CoreDisplay(
+        val loadPct: Int,
+        val effMhz: Long
+    )
+
+    private data class ClusterDisplay(
+        val label: String,
+        val freqMhz: Long,
+        val cores: List<CoreDisplay>
+    )
+
     private data class DisplayData(
         val cpuLoadPct: Int = 0,
         val cpuFreqMhz: Long = 0L,
@@ -80,7 +92,11 @@ class OverlayController(
         val tempDeg: Int = 0,
         val tempC: Float = 0f,
         val wattsCenti: Int = 0,
-        val watts: Float = 0f
+        val watts: Float = 0f,
+        val ddrMhz: Long = 0L,
+        val fps: Float = -1f,
+        val refreshHz: Int = 60,
+        val clusters: List<ClusterDisplay> = emptyList()
     )
 
     fun start() {
@@ -134,7 +150,8 @@ class OverlayController(
 
         if (existingView == null || existingParams == null) {
             val view = OverlayPillView(appContext)
-            view.setExpanded(cfg.overlayExpanded)
+            view.setExpanded(cfg.overlayExpanded && !cfg.overlayDetailed)
+            view.setDetailed(cfg.overlayDetailed)
             view.setScales(cfg.overlayCompactScalePct, cfg.overlayExpandedScalePct)
             view.setClickThrough(cfg.overlayClickThrough)
             view.alpha = targetAlpha
@@ -177,8 +194,10 @@ class OverlayController(
             existingView.alpha = targetAlpha
             existingView.setBgOpacity(cfg.overlayBgOpacityPct)
             existingView.setClickThrough(cfg.overlayClickThrough)
-            if (existingView.isExpandedMode() != cfg.overlayExpanded) {
-                existingView.setExpanded(cfg.overlayExpanded)
+            val effectiveExpanded = cfg.overlayExpanded && !cfg.overlayDetailed
+            if (existingView.isExpandedMode() != effectiveExpanded || existingView.isDetailedMode() != cfg.overlayDetailed) {
+                existingView.setExpanded(effectiveExpanded)
+                existingView.setDetailed(cfg.overlayDetailed)
                 layoutChanged = true
                 needsReposition = true
             }
@@ -207,8 +226,11 @@ class OverlayController(
     }
 
     private fun currentPosPm(cfg: GovernorConfig): Pair<Int, Int> {
-        val xPm = if (cfg.overlayExpanded) cfg.overlayExpandedXPm else cfg.overlayCompactXPm
-        val yPm = if (cfg.overlayExpanded) cfg.overlayExpandedYPm else cfg.overlayCompactYPm
+        val (xPm, yPm) = when {
+            cfg.overlayDetailed -> cfg.overlayDetailedXPm to cfg.overlayDetailedYPm
+            cfg.overlayExpanded -> cfg.overlayExpandedXPm to cfg.overlayExpandedYPm
+            else -> cfg.overlayCompactXPm to cfg.overlayCompactYPm
+        }
         return xPm.coerceIn(0, 1000) to yPm.coerceIn(0, 1000)
     }
 
@@ -302,6 +324,31 @@ class OverlayController(
         val gpuFreqMhz = state.gpu.currentFreqKhz / 1000L
         val tempDeg = state.temperatureC.roundToInt()
         val wattsCenti = (state.watts * 100f).roundToInt()
+        @Suppress("DEPRECATION")
+        val refreshHz = try {
+            windowManager.defaultDisplay?.refreshRate?.roundToInt()?.takeIf { it > 0 } ?: 60
+        } catch (_: Throwable) {
+            60
+        }
+        val clusters = if (engine.config.value.overlayDetailed) {
+            state.clusters.map { c ->
+                val sortedCpus = c.relatedCpus.sorted()
+                val label = when {
+                    sortedCpus.isEmpty() -> "#?"
+                    sortedCpus.size == 1 -> "#${sortedCpus.first()}"
+                    else -> "#${sortedCpus.first()}~${sortedCpus.last()}"
+                }
+                val freqMhz = c.actualFreqKhz / 1000L
+                val cores = sortedCpus.map { cpuId ->
+                    val coreLoad = (state.coreLoadsPct[cpuId] ?: 0f).roundToInt().coerceIn(0, 100)
+                    val effMhz = ((coreLoad / 100f) * (c.actualFreqKhz / 1000f)).roundToLong()
+                    CoreDisplay(loadPct = coreLoad, effMhz = effMhz)
+                }
+                ClusterDisplay(label = label, freqMhz = freqMhz, cores = cores)
+            }
+        } else {
+            emptyList()
+        }
         return DisplayData(
             cpuLoadPct = cpuLoad,
             cpuFreqMhz = cpuFreqMhz,
@@ -310,18 +357,28 @@ class OverlayController(
             tempDeg = tempDeg,
             tempC = state.temperatureC,
             wattsCenti = wattsCenti,
-            watts = state.watts
+            watts = state.watts,
+            ddrMhz = state.ddrFreqMhz,
+            fps = state.fps,
+            refreshHz = refreshHz,
+            clusters = clusters
         )
     }
 
     private fun hasDisplayedValuesChanged(prev: DisplayData?, next: DisplayData): Boolean {
         if (prev == null) return true
+        val prevFpsTenth = if (prev.fps < 0f) -1 else (prev.fps * 10f).roundToInt()
+        val nextFpsTenth = if (next.fps < 0f) -1 else (next.fps * 10f).roundToInt()
         return prev.cpuLoadPct != next.cpuLoadPct ||
             prev.cpuFreqMhz != next.cpuFreqMhz ||
             prev.gpuLoadPct != next.gpuLoadPct ||
             prev.gpuFreqMhz != next.gpuFreqMhz ||
             prev.tempDeg != next.tempDeg ||
-            prev.wattsCenti != next.wattsCenti
+            prev.wattsCenti != next.wattsCenti ||
+            prev.ddrMhz != next.ddrMhz ||
+            prevFpsTenth != nextFpsTenth ||
+            prev.refreshHz != next.refreshHz ||
+            prev.clusters != next.clusters
     }
 
     private inner class OverlayPillView(context: Context) : View(context) {
@@ -331,6 +388,7 @@ class OverlayController(
 
         private var data = DisplayData()
         private var expanded = false
+        private var detailed = false
         private var clickThrough = false
         private var compactScalePct = 100
         private var expandedScalePct = 100
@@ -395,6 +453,15 @@ class OverlayController(
             textAlign = Paint.Align.CENTER
         }
 
+        private val monoRegularTypeface = Typeface.MONOSPACE
+        private val monoBoldTypeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        private val detailedTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = monoRegularTypeface
+        }
+        private val detailedBoldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = monoBoldTypeface
+        }
+
         private val pillRect = RectF()
         private val borderRect = RectF()
         private val arcRect = RectF()
@@ -404,7 +471,7 @@ class OverlayController(
         }
 
         private fun requestedScale(): Float {
-            val pct = if (expanded) expandedScalePct else compactScalePct
+            val pct = if (expanded || detailed) expandedScalePct else compactScalePct
             return pct.coerceIn(40, 400) / 100f
         }
 
@@ -420,13 +487,27 @@ class OverlayController(
             ringCenterPaint.textSize = 11.5f * d
             ringLabelPaint.textSize = 10f * d
             ringSubPaint.textSize = 9.5f * d
+            detailedTextPaint.textSize = 12f * d
+            detailedBoldPaint.textSize = 12f * d
         }
 
         fun isExpandedMode(): Boolean = expanded
 
+        fun isDetailedMode(): Boolean = detailed
+
         fun setExpanded(value: Boolean) {
             if (expanded != value) {
                 expanded = value
+                effectiveScale = requestedScale()
+                applyPaintSizes(effectiveScale)
+                requestLayout()
+                invalidate()
+            }
+        }
+
+        fun setDetailed(value: Boolean) {
+            if (detailed != value) {
+                detailed = value
                 effectiveScale = requestedScale()
                 applyPaintSizes(effectiveScale)
                 requestLayout()
@@ -464,7 +545,15 @@ class OverlayController(
         }
 
         fun setDisplayData(next: DisplayData) {
+            val structureChanged = detailed && (
+                data.clusters.size != next.clusters.size ||
+                    data.clusters.sumOf { it.cores.size } != next.clusters.sumOf { it.cores.size } ||
+                    (data.ddrMhz == 0L) != (next.ddrMhz == 0L)
+                )
             data = next
+            if (structureChanged) {
+                requestLayout()
+            }
             invalidate()
         }
 
@@ -474,15 +563,63 @@ class OverlayController(
                 ringLabelPaint.measureText("CPU"),
                 ringLabelPaint.measureText("GPU"),
                 ringLabelPaint.measureText("TEMP"),
+                ringLabelPaint.measureText("FPS"),
                 ringLabelPaint.measureText("POWER")
             )
             return maxOf(ringSize, widestLabel)
         }
 
+        private fun detailedRowStrings(dData: DisplayData): Pair<List<String>, List<String>> {
+            val regularRows = mutableListOf<String>()
+            val boldRows = mutableListOf<String>()
+            val ddrVal = if (dData.ddrMhz == 0L) "--" else "${dData.ddrMhz} MHz"
+            regularRows.add("DDR  $ddrVal")
+            for (c in dData.clusters) {
+                boldRows.add("${c.label}  ${c.freqMhz}MHz")
+                for (core in c.cores) {
+                    val pctCol = String.format(Locale.US, "%3d%%", core.loadPct)
+                    regularRows.add("$pctCol  ${core.effMhz}M")
+                }
+            }
+            val fpsVal = if (dData.fps < 0f) "--" else String.format(Locale.US, "%.1f", dData.fps)
+            regularRows.add("FPS  $fpsVal")
+            regularRows.add("PWR  ${formatSignedWatts(dData.watts)}W")
+            return regularRows to boldRows
+        }
+
+        private fun measureDetailedRightColWidth(): Float {
+            val (regularRows, boldRows) = detailedRowStrings(data)
+            var maxW = maxOf(
+                detailedTextPaint.measureText("DDR  4266 MHz"),
+                detailedBoldPaint.measureText("#0~5  2000MHz"),
+                detailedTextPaint.measureText("100%  2000M"),
+                detailedTextPaint.measureText("FPS  120.0"),
+                detailedTextPaint.measureText("PWR  -10.00W"),
+                detailedTextPaint.measureText("PWR  \u221210.00W")
+            )
+            for (r in regularRows) {
+                maxW = maxOf(maxW, detailedTextPaint.measureText(r))
+            }
+            for (r in boldRows) {
+                maxW = maxOf(maxW, detailedBoldPaint.measureText(r))
+            }
+            return maxW
+        }
+
         private fun measureNaturalWidthAtScaleOne(): Float {
             applyPaintSizes(1f)
             val d = baseDensity
-            return if (!expanded) {
+            return if (detailed) {
+                val hPad = 12f * d
+                val leftColW = 64f * d
+                val colGap = 14f * d
+                hPad * 2f + leftColW + colGap + measureDetailedRightColWidth()
+            } else if (expanded) {
+                val hPad = 12f * d
+                val cellGap = 8f * d
+                val cellWidth = computeExpandedCellWidth(d)
+                hPad * 2f + cellWidth * 5f + cellGap * 4f
+            } else {
                 val hPad = 14f * d
                 val dotR = 3.5f * d
                 val dotGap = 4f * d
@@ -498,11 +635,6 @@ class OverlayController(
                 )
 
                 hPad * 2f + cpuItemW + itemGap + gpuItemW + itemGap + tempItemW + itemGap + powerItemW
-            } else {
-                val hPad = 12f * d
-                val cellGap = 8f * d
-                val cellWidth = computeExpandedCellWidth(d)
-                hPad * 2f + cellWidth * 4f + cellGap * 3f
             }
         }
 
@@ -515,7 +647,45 @@ class OverlayController(
             applyPaintSizes(clampedS)
             val d = effDensityFor(clampedS)
 
-            if (!expanded) {
+            if (detailed) {
+                val hPad = 12f * d
+                val vPad = 12f * d
+                val leftColW = 64f * d
+                val colGap = 14f * d
+                val ringSize = 44f * d
+                val subGap = 2f * d
+                val ringGap = 8f * d
+
+                val subFm = ringSubPaint.fontMetrics
+                val subH = subFm.descent - subFm.ascent
+                val leftColH = 3f * (ringSize + subGap + subH) + 2f * ringGap
+
+                val (regularRows, boldRows) = detailedRowStrings(data)
+                val rowCount = regularRows.size + boldRows.size
+                val lineHeight = (12f * d) * 1.45f
+                val rightColH = rowCount * lineHeight
+
+                val width = ceil((hPad * 2f + leftColW + colGap + measureDetailedRightColWidth()).toDouble()).toInt()
+                val height = ceil((vPad * 2f + maxOf(leftColH, rightColH)).toDouble()).toInt()
+                setMeasuredDimension(width, height)
+            } else if (expanded) {
+                val ringSize = 48f * d
+                val hPad = 12f * d
+                val vPad = 12f * d
+                val cellGap = 8f * d
+                val cellWidth = computeExpandedCellWidth(d)
+                val labelGap = 6f * d
+                val subGap = 2f * d
+
+                val labelFm = ringLabelPaint.fontMetrics
+                val subFm = ringSubPaint.fontMetrics
+                val labelH = labelFm.descent - labelFm.ascent
+                val subH = subFm.descent - subFm.ascent
+
+                val width = ceil((hPad * 2f + cellWidth * 5f + cellGap * 4f).toDouble()).toInt()
+                val height = ceil((vPad * 2f + ringSize + labelGap + labelH + subGap + subH).toDouble()).toInt()
+                setMeasuredDimension(width, height)
+            } else {
                 val hPad = 14f * d
                 val vPad = 8f * d
                 val dotR = 3.5f * d
@@ -538,23 +708,6 @@ class OverlayController(
                 val width = ceil((hPad * 2f + contentW).toDouble()).toInt()
                 val height = ceil((vPad * 2f + textH).toDouble()).toInt()
                 setMeasuredDimension(width, height)
-            } else {
-                val ringSize = 48f * d
-                val hPad = 12f * d
-                val vPad = 12f * d
-                val cellGap = 8f * d
-                val cellWidth = computeExpandedCellWidth(d)
-                val labelGap = 6f * d
-                val subGap = 2f * d
-
-                val labelFm = ringLabelPaint.fontMetrics
-                val subFm = ringSubPaint.fontMetrics
-                val labelH = labelFm.descent - labelFm.ascent
-                val subH = subFm.descent - subFm.ascent
-
-                val width = ceil((hPad * 2f + cellWidth * 4f + cellGap * 3f).toDouble()).toInt()
-                val height = ceil((vPad * 2f + ringSize + labelGap + labelH + subGap + subH).toDouble()).toInt()
-                setMeasuredDimension(width, height)
             }
         }
 
@@ -562,7 +715,11 @@ class OverlayController(
             super.onDraw(canvas)
             val d = effDensityFor(effectiveScale)
             pillRect.set(0f, 0f, width.toFloat(), height.toFloat())
-            val corner = if (expanded) 20f * d else height / 2f
+            val corner = when {
+                detailed -> 16f * d
+                expanded -> 20f * d
+                else -> height / 2f
+            }
             canvas.drawRoundRect(pillRect, corner, corner, bgPaint)
 
             val halfBorder = borderPaint.strokeWidth / 2f
@@ -570,10 +727,10 @@ class OverlayController(
             val borderCorner = (corner - halfBorder).coerceAtLeast(0f)
             canvas.drawRoundRect(borderRect, borderCorner, borderCorner, borderPaint)
 
-            if (!expanded) {
-                drawCompact(canvas, d)
-            } else {
-                drawExpanded(canvas, d)
+            when {
+                detailed -> drawDetailed(canvas, d)
+                expanded -> drawExpanded(canvas, d)
+                else -> drawCompact(canvas, d)
             }
         }
 
@@ -730,12 +887,158 @@ class OverlayController(
             )
             drawRingCell(
                 index = 3,
+                fraction = if (data.fps < 0f) 0f else (data.fps / data.refreshHz.coerceAtLeast(1)).coerceIn(0f, 1f),
+                ringColor = fpsColor(data.fps, data.refreshHz),
+                centerText = if (data.fps < 0f) "--" else data.fps.roundToInt().toString(),
+                label = "FPS",
+                subText = "of ${data.refreshHz}Hz"
+            )
+            drawRingCell(
+                index = 4,
                 fraction = abs(data.watts) / 10f,
                 ringColor = blueColor,
                 centerText = formatSignedWatts(data.watts),
                 label = "POWER",
                 subText = "watts"
             )
+        }
+
+        private fun drawDetailed(canvas: Canvas, d: Float) {
+            val hPad = 12f * d
+            val vPad = 12f * d
+            val leftColW = 64f * d
+            val colGap = 14f * d
+            val ringSize = 44f * d
+            val stroke = 4f * d
+            val subGap = 2f * d
+            val ringGap = 8f * d
+
+            val baseCenterSize = 11f * d
+            val baseSubSize = 9.5f * d
+            ringSubPaint.textSize = baseSubSize
+            val subFm = ringSubPaint.fontMetrics
+            val subH = subFm.descent - subFm.ascent
+
+            val innerDiameter = (ringSize - 2f * stroke).coerceAtLeast(1f)
+            val maxCenterW = innerDiameter * 0.8f
+            val cx = hPad + leftColW / 2f
+
+            fun drawStackedRing(
+                slot: Int,
+                fraction: Float,
+                ringColor: Int,
+                centerText: String,
+                subText: String
+            ) {
+                val ringTop = vPad + slot * (ringSize + subGap + subH + ringGap)
+                val ringCy = ringTop + ringSize / 2f
+                val inset = stroke / 2f
+
+                arcRect.set(
+                    cx - ringSize / 2f + inset,
+                    ringTop + inset,
+                    cx + ringSize / 2f - inset,
+                    ringTop + ringSize - inset
+                )
+                canvas.drawArc(arcRect, 0f, 360f, false, trackPaint)
+                val sweep = fraction.coerceIn(0f, 1f) * 360f
+                if (sweep > 0f) {
+                    arcPaint.color = ringColor
+                    canvas.drawArc(arcRect, -90f, sweep, false, arcPaint)
+                }
+
+                ringCenterPaint.textSize = baseCenterSize
+                val centerW = ringCenterPaint.measureText(centerText)
+                if (centerW > maxCenterW && centerW > 0f) {
+                    ringCenterPaint.textSize = baseCenterSize * (maxCenterW / centerW)
+                }
+                val centerFm = ringCenterPaint.fontMetrics
+                val centerBaseline = ringCy - (centerFm.ascent + centerFm.descent) / 2f
+                canvas.drawText(centerText, cx, centerBaseline, ringCenterPaint)
+
+                ringSubPaint.textSize = baseSubSize
+                val subW = ringSubPaint.measureText(subText)
+                if (subW > leftColW && subW > 0f) {
+                    ringSubPaint.textSize = baseSubSize * (leftColW / subW)
+                }
+                val sFm = ringSubPaint.fontMetrics
+                val subBaseline = ringTop + ringSize + subGap - sFm.ascent
+                canvas.drawText(subText, cx, subBaseline, ringSubPaint)
+            }
+
+            drawStackedRing(
+                slot = 0,
+                fraction = data.cpuLoadPct / 100f,
+                ringColor = loadColor(data.cpuLoadPct),
+                centerText = "${data.cpuLoadPct}%",
+                subText = "${data.cpuFreqMhz}M"
+            )
+            drawStackedRing(
+                slot = 1,
+                fraction = data.gpuLoadPct / 100f,
+                ringColor = loadColor(data.gpuLoadPct),
+                centerText = "${data.gpuLoadPct}%",
+                subText = "${data.gpuFreqMhz}M"
+            )
+            drawStackedRing(
+                slot = 2,
+                fraction = (data.tempC - 30f) / 50f,
+                ringColor = tempColor(data.tempC),
+                centerText = "${data.tempDeg}°",
+                subText = "TEMP \u00b0C"
+            )
+
+            val rightLeft = hPad + leftColW + colGap
+            val textSize = 12f * d
+            val lineHeight = textSize * 1.45f
+            detailedTextPaint.textSize = textSize
+            detailedBoldPaint.textSize = textSize
+            val fm = detailedTextPaint.fontMetrics
+            val grayColor = 0xFFAAAAAA.toInt()
+            val whiteColor = 0xFFFFFFFF.toInt()
+
+            var rowIdx = 0
+            fun rowBaseline(): Float {
+                val top = vPad + rowIdx * lineHeight
+                rowIdx++
+                return top + (lineHeight - (fm.descent - fm.ascent)) / 2f - fm.ascent
+            }
+
+            fun drawLabelValueRow(label: String, value: String, valueColor: Int) {
+                val y = rowBaseline()
+                detailedTextPaint.color = grayColor
+                canvas.drawText(label, rightLeft, y, detailedTextPaint)
+                val labelW = detailedTextPaint.measureText(label)
+                detailedTextPaint.color = valueColor
+                canvas.drawText(value, rightLeft + labelW, y, detailedTextPaint)
+            }
+
+            val ddrValue = if (data.ddrMhz == 0L) "--" else "${data.ddrMhz} MHz"
+            drawLabelValueRow("DDR  ", ddrValue, whiteColor)
+
+            for (cluster in data.clusters) {
+                val headerY = rowBaseline()
+                detailedBoldPaint.color = whiteColor
+                canvas.drawText("${cluster.label}  ${cluster.freqMhz}MHz", rightLeft, headerY, detailedBoldPaint)
+
+                for (core in cluster.cores) {
+                    val coreY = rowBaseline()
+                    val pctCol = String.format(Locale.US, "%3d%%", core.loadPct)
+                    detailedTextPaint.color = grayColor
+                    canvas.drawText("$pctCol  ${core.effMhz}M", rightLeft, coreY, detailedTextPaint)
+                }
+            }
+
+            val fpsStr = if (data.fps < 0f) "--" else String.format(Locale.US, "%.1f", data.fps)
+            drawLabelValueRow("FPS  ", fpsStr, fpsColor(data.fps, data.refreshHz))
+            drawLabelValueRow("PWR  ", "${formatSignedWatts(data.watts)}W", whiteColor)
+        }
+
+        private fun fpsColor(fps: Float, refreshHz: Int): Int = when {
+            fps < 0f -> 0xFF888888.toInt()
+            fps >= 0.85f * refreshHz -> greenColor
+            fps >= 0.5f * refreshHz -> orangeColor
+            else -> redColor
         }
 
         private fun loadColor(pct: Int): Int = when {
@@ -819,14 +1122,20 @@ class OverlayController(
                         } catch (_: Throwable) {
                         }
                         engine.updateConfig {
-                            if (expanded) {
-                                it.copy(overlayExpandedXPm = xPm, overlayExpandedYPm = yPm)
-                            } else {
-                                it.copy(overlayCompactXPm = xPm, overlayCompactYPm = yPm)
+                            when {
+                                detailed -> it.copy(overlayDetailedXPm = xPm, overlayDetailedYPm = yPm)
+                                expanded -> it.copy(overlayExpandedXPm = xPm, overlayExpandedYPm = yPm)
+                                else -> it.copy(overlayCompactXPm = xPm, overlayCompactYPm = yPm)
                             }
                         }
                     } else {
-                        engine.updateConfig { it.copy(overlayExpanded = !it.overlayExpanded) }
+                        engine.updateConfig {
+                            when {
+                                it.overlayDetailed -> it.copy(overlayExpanded = false, overlayDetailed = false)
+                                it.overlayExpanded -> it.copy(overlayExpanded = false, overlayDetailed = true)
+                                else -> it.copy(overlayExpanded = true, overlayDetailed = false)
+                            }
+                        }
                     }
                     return true
                 }
