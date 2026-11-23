@@ -249,7 +249,8 @@ fun PowerThrottleSection(
         releaseStepPct: Float?,
         averagingSamples: Int?,
         unitScale: PowerUnitScale?,
-        polarity: PowerPolarity?
+        polarity: PowerPolarity?,
+        componentAware: Boolean?
     ) -> Unit
 ) {
     val ext = LocalExtendedColors.current
@@ -278,8 +279,18 @@ fun PowerThrottleSection(
             title = "Enable Power Throttling",
             explanation = "Gently steps down clock caps when sustained wattage stays above your budget to prevent heat buildup.",
             checked = p.enabled,
-            onCheckedChange = { onUpdatePowerThrottle(it, null, null, null, null, null, null, null) },
+            onCheckedChange = { onUpdatePowerThrottle(it, null, null, null, null, null, null, null, null) },
             testTag = "power_throttle_switch"
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        SettingSwitchRow(
+            title = "Smart split by component",
+            explanation = "When power is over the limit, throttle the heavier consumer (CPU or GPU, and the busiest CPU cluster) more.",
+            checked = p.componentAware,
+            onCheckedChange = { onUpdatePowerThrottle(null, null, null, null, null, null, null, null, it) },
+            testTag = "power_component_aware_switch"
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -290,7 +301,7 @@ fun PowerThrottleSection(
             explanation = "Average device wattage threshold above which the sustain timer begins counting.",
             value = p.limitWatts,
             valueRange = 2.0f..15.0f,
-            onValueChange = { onUpdatePowerThrottle(null, it, null, null, null, null, null, null) },
+            onValueChange = { onUpdatePowerThrottle(null, it, null, null, null, null, null, null, null) },
             testTag = "power_limit_slider"
         )
 
@@ -302,7 +313,7 @@ fun PowerThrottleSection(
             explanation = "How long draw must stay above the watt limit before reducing the cap by one step.",
             value = p.sustainMs.toFloat(),
             valueRange = 500f..6000f,
-            onValueChange = { onUpdatePowerThrottle(null, null, it.roundToLong(), null, null, null, null, null) },
+            onValueChange = { onUpdatePowerThrottle(null, null, it.roundToLong(), null, null, null, null, null, null) },
             testTag = "power_sustain_slider"
         )
 
@@ -314,7 +325,7 @@ fun PowerThrottleSection(
             explanation = "Small percentage cut applied per step while power remains over budget.",
             value = p.stepPct,
             valueRange = 1.0f..10.0f,
-            onValueChange = { onUpdatePowerThrottle(null, null, null, it, null, null, null, null) },
+            onValueChange = { onUpdatePowerThrottle(null, null, null, it, null, null, null, null, null) },
             testTag = "power_step_slider"
         )
 
@@ -326,7 +337,7 @@ fun PowerThrottleSection(
             explanation = "Gradual cap recovery per cycle once wattage drops safely below the budget.",
             value = p.releaseStepPct,
             valueRange = 0.3f..5.0f,
-            onValueChange = { onUpdatePowerThrottle(null, null, null, null, it, null, null, null) },
+            onValueChange = { onUpdatePowerThrottle(null, null, null, null, it, null, null, null, null) },
             testTag = "power_release_slider"
         )
 
@@ -339,7 +350,7 @@ fun PowerThrottleSection(
             value = p.averagingSamples.toFloat(),
             valueRange = 2f..30f,
             steps = 27,
-            onValueChange = { onUpdatePowerThrottle(null, null, null, null, null, it.roundToInt(), null, null) },
+            onValueChange = { onUpdatePowerThrottle(null, null, null, null, null, it.roundToInt(), null, null, null) },
             testTag = "power_window_slider"
         )
 
@@ -368,7 +379,7 @@ fun PowerThrottleSection(
                 }
                 FilterChip(
                     selected = p.unitScale == scale,
-                    onClick = { onUpdatePowerThrottle(null, null, null, null, null, null, scale, null) },
+                    onClick = { onUpdatePowerThrottle(null, null, null, null, null, null, scale, null, null) },
                     label = { Text(label, style = MaterialTheme.typography.labelSmall) },
                     modifier = Modifier.weight(1f)
                 )
@@ -388,7 +399,7 @@ fun PowerThrottleSection(
                 }
                 FilterChip(
                     selected = p.polarity == pol,
-                    onClick = { onUpdatePowerThrottle(null, null, null, null, null, null, null, pol) },
+                    onClick = { onUpdatePowerThrottle(null, null, null, null, null, null, null, pol, null) },
                     label = { Text(label, style = MaterialTheme.typography.labelSmall) },
                     modifier = Modifier.weight(1f)
                 )

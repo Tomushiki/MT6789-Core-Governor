@@ -52,7 +52,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.roundToInt
 
 /**
  * Single authoritative governor controller for CoreGovernor v2.
@@ -92,6 +94,7 @@ class GovernorEngine(context: Context) {
     private var prevCpuTicks: Map<Int, CpuTickSnapshot> = emptyMap()
     private val prevRawClusterLoad = mutableMapOf<Int, Float>()
     private val smoothedClusterLoad = mutableMapOf<Int, Float>()
+    private var smoothedTotalCpuLoad = 0f
     private var smoothedGpuLoad = 0f
 
     private data class PolicyPinState(
@@ -145,6 +148,10 @@ class GovernorEngine(context: Context) {
     private val wattWindow = ArrayDeque<Float>()
     private var overPowerSinceMs: Long? = null
     private var currentPowerCapPct = 100f
+    private var gpuShareSmoothed = 0.5f
+    private val smoothedClusterShare = mutableMapOf<Int, Float>()
+    private var lastPowerSplitLogMs = 0L
+    private var lastDominantComponent: String? = null
 
     // Crash handler
     private var defaultCrashHandler: Thread.UncaughtExceptionHandler? = null
@@ -582,6 +589,10 @@ class GovernorEngine(context: Context) {
             maxLoadSpike = maxOf(maxLoadSpike, load - prevLoad)
             prevRawClusterLoad[p.policyId] = load
         }
+        val allCpuIds = hw.cpuPolicies.flatMap { it.relatedCpus }.distinct()
+        val rawTotalCpuLoad = SysfsParsers.computeTotalCpuLoadPct(allCpuIds, prevCpuTicks, currTicks)
+        smoothedTotalCpuLoad = (smoothedTotalCpuLoad + (rawTotalCpuLoad - smoothedTotalCpuLoad) * 0.4f)
+            .coerceIn(0f, 100f)
         prevCpuTicks = currTicks
 
         // 3. Launch burst (Normal mode only)
@@ -667,8 +678,100 @@ class GovernorEngine(context: Context) {
         }
         val powerThrottleActive = cfg.powerThrottle.enabled && currentPowerCapPct < 99.5f
 
-        val effectiveCpuCapPct = GovernorMath.combineCaps(currentTempCpuCapPct, currentPowerCapPct, cfg.safetyFloorPct)
-        val effectiveGpuCapPct = GovernorMath.combineCaps(currentTempGpuCapPct, currentPowerCapPct, cfg.safetyFloorPct)
+        val prevTelemetry = _telemetry.value
+        val prevGpu = prevTelemetry.gpu
+        val clusterActByPolicy = mutableMapOf<Int, Float>()
+        var totalAct = 0f
+        var totalCores = 0
+        for (c in prevTelemetry.clusters) {
+            val cores = c.relatedCpus.size.coerceAtLeast(1)
+            val freqRatio = (c.actualFreqKhz.toFloat() / c.maxAvailableKhz.coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
+            val act = (c.smoothedLoadPct / 100f).coerceIn(0f, 1f) * freqRatio * freqRatio * cores
+            clusterActByPolicy[c.policyId] = act
+            totalAct += act
+            totalCores += cores
+        }
+        val cpuAct = totalAct / totalCores.coerceAtLeast(1).toFloat()
+        val gpuAct = if (prevGpu.available && prevGpu.maxAvailableKhz > 0L) {
+            val gpuFreqRatio = (prevGpu.currentFreqKhz.toFloat() / prevGpu.maxAvailableKhz.toFloat()).coerceIn(0f, 1f)
+            (prevGpu.smoothedLoadPct / 100f).coerceIn(0f, 1f) * gpuFreqRatio * gpuFreqRatio
+        } else 0f
+
+        if (prevGpu.available) {
+            val weightedGpu = gpuAct * 1.3f
+            val denom = weightedGpu + cpuAct
+            val rawGpuShare = if (denom >= 0.01f) weightedGpu / denom else 0.5f
+            gpuShareSmoothed = (gpuShareSmoothed + (rawGpuShare - gpuShareSmoothed) * 0.2f).coerceIn(0f, 1f)
+        } else {
+            gpuShareSmoothed = 0.5f
+        }
+
+        val (cpuPowerCap, gpuPowerCap) = if (cfg.powerThrottle.componentAware && powerThrottleActive) {
+            GovernorMath.splitPowerCap(
+                basePowerCapPct = currentPowerCapPct,
+                gpuShare = gpuShareSmoothed,
+                floorPct = cfg.safetyFloorPct
+            )
+        } else {
+            currentPowerCapPct to currentPowerCapPct
+        }
+
+        val clusterCount = hw.cpuPolicies.size.coerceAtLeast(1)
+        val clusterFactors = mutableMapOf<Int, Float>()
+        val clusterCapPct = mutableMapOf<Int, Float>()
+        if (totalAct >= 0.01f) {
+            for (p in hw.cpuPolicies) {
+                val act = clusterActByPolicy[p.policyId] ?: 0f
+                val rawShareTimesCount = (act / totalAct) * clusterCount
+                val prevShare = smoothedClusterShare[p.policyId] ?: 1.0f
+                val smoothedShare = prevShare + (rawShareTimesCount - prevShare) * 0.2f
+                smoothedClusterShare[p.policyId] = smoothedShare
+                clusterFactors[p.policyId] = GovernorMath.clusterCutFactor(smoothedShare)
+            }
+        } else {
+            for (p in hw.cpuPolicies) {
+                clusterFactors[p.policyId] = 1.0f
+            }
+        }
+
+        val cpuBaseCut = (100f - cpuPowerCap).coerceAtLeast(0f)
+        for (p in hw.cpuPolicies) {
+            val factor = if (cfg.powerThrottle.componentAware && powerThrottleActive) {
+                clusterFactors[p.policyId] ?: 1.0f
+            } else {
+                1.0f
+            }
+            val clusterPowerCap = (100f - cpuBaseCut * factor).coerceIn(cfg.safetyFloorPct, 100f)
+            clusterCapPct[p.policyId] = GovernorMath.combineCaps(currentTempCpuCapPct, clusterPowerCap, cfg.safetyFloorPct)
+        }
+
+        val effectiveCpuCapPct = GovernorMath.combineCaps(currentTempCpuCapPct, cpuPowerCap, cfg.safetyFloorPct)
+        val effectiveGpuCapPct = GovernorMath.combineCaps(currentTempGpuCapPct, gpuPowerCap, cfg.safetyFloorPct)
+
+        if (powerThrottleActive && cfg.powerThrottle.componentAware) {
+            val dominant = if (gpuShareSmoothed >= 0.5f) "GPU" else "CPU"
+            val sharePct = if (dominant == "GPU") {
+                (gpuShareSmoothed * 100f).roundToInt()
+            } else {
+                ((1f - gpuShareSmoothed) * 100f).roundToInt()
+            }
+            if ((lastDominantComponent == null || dominant != lastDominantComponent) && nowMs - lastPowerSplitLogMs >= 5_000L) {
+                lastPowerSplitLogMs = nowMs
+                lastDominantComponent = dominant
+                val biggestCluster = hw.cpuPolicies.maxByOrNull { clusterFactors[it.policyId] ?: 1.0f }
+                val biggestFactor = biggestCluster?.let { clusterFactors[it.policyId] ?: 1.0f } ?: 1.0f
+                val biggestName = biggestCluster?.name ?: "CPU"
+                log(
+                    LogLevel.INFO,
+                    "PowerSplit",
+                    "$dominant is main power draw (share $sharePct%): CPU cap ${cpuPowerCap.roundToInt()}%, GPU cap ${gpuPowerCap.roundToInt()}%. Biggest CPU cut: $biggestName ${"%.1f".format(Locale.US, biggestFactor)}x"
+                )
+            } else if (lastDominantComponent == null) {
+                lastDominantComponent = dominant
+            }
+        } else {
+            lastDominantComponent = null
+        }
 
         // 6. CPU cluster target selection & write-on-change (min = max)
         val clusterLiveList = mutableListOf<ClusterLiveState>()
@@ -694,7 +797,7 @@ class GovernorEngine(context: Context) {
                 availableFreqsKhz = p.availableFreqsKhz,
                 allowedMinKhz = allowedMin,
                 allowedMaxKhz = allowedMax,
-                capPct = effectiveCpuCapPct,
+                capPct = clusterCapPct[p.policyId] ?: effectiveCpuCapPct,
                 loadPct = smoothed,
                 forceMaxDuringBurst = burstActive
             )
@@ -955,17 +1058,13 @@ class GovernorEngine(context: Context) {
         }
 
         // 8. Push telemetry & history sample
-        val avgCpuLoad = if (clusterLiveList.isNotEmpty()) {
-            clusterLiveList.map { it.loadPct }.average().toFloat()
-        } else 0f
-
         val pollDuration = System.currentTimeMillis() - nowMs
         _telemetry.update { prev ->
             val nextHistory = (prev.history + TelemetrySample(
                 timestampMs = nowMs,
                 tempC = tempC,
                 watts = avgWatts,
-                avgCpuLoadPct = avgCpuLoad,
+                avgCpuLoadPct = smoothedTotalCpuLoad,
                 gpuLoadPct = gpuLiveState.loadPct,
                 effectiveCpuCapPct = effectiveCpuCapPct,
                 effectiveGpuCapPct = effectiveGpuCapPct
@@ -981,6 +1080,7 @@ class GovernorEngine(context: Context) {
                 burstRemainingMs = burstRemaining,
                 clusters = clusterLiveList,
                 gpu = gpuLiveState,
+                totalCpuLoadPct = smoothedTotalCpuLoad,
                 temperatureC = tempC,
                 tempSensorLabel = tempSensor?.label ?: "Unassigned",
                 watts = avgWatts,
@@ -1173,6 +1273,7 @@ class GovernorEngine(context: Context) {
         prevCpuTicks = emptyMap()
         prevRawClusterLoad.clear()
         smoothedClusterLoad.clear()
+        smoothedTotalCpuLoad = 0f
         smoothedGpuLoad = 0f
         lastWrittenCpuFreq.clear()
         lastReassertMs.clear()
@@ -1186,6 +1287,10 @@ class GovernorEngine(context: Context) {
         wattWindow.clear()
         overPowerSinceMs = null
         currentPowerCapPct = 100f
+        gpuShareSmoothed = 0.5f
+        smoothedClusterShare.clear()
+        lastPowerSplitLogMs = 0L
+        lastDominantComponent = null
         latchedPeakTempC = 0f
         currentTempCpuCapPct = 100f
         currentTempGpuCapPct = 100f

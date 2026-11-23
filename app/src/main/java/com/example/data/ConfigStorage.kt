@@ -412,6 +412,7 @@ class ConfigStorage(private val context: Context) {
                 put("averagingSamples", c.powerThrottle.averagingSamples)
                 put("unitScale", c.powerThrottle.unitScale.name)
                 put("polarity", c.powerThrottle.polarity.name)
+                put("componentAware", c.powerThrottle.componentAware)
             })
             val gamesArr = JSONArray()
             c.gamePackages.sorted().forEach { gamesArr.put(it) }
@@ -504,7 +505,8 @@ class ConfigStorage(private val context: Context) {
                 releaseStepPct = pObj.optDouble("releaseStepPct", 1.0).toFloat(),
                 averagingSamples = pObj.optInt("averagingSamples", 10).coerceIn(2, 40),
                 unitScale = enumOrDefault(pObj.optString("unitScale"), PowerUnitScale.AUTO),
-                polarity = enumOrDefault(pObj.optString("polarity"), PowerPolarity.AUTO_ABS)
+                polarity = enumOrDefault(pObj.optString("polarity"), PowerPolarity.AUTO_ABS),
+                componentAware = pObj.optBoolean("componentAware", true)
             ) else default.powerThrottle,
             gamePackages = games
         )

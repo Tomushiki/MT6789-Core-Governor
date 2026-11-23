@@ -147,7 +147,8 @@ data class PowerThrottleConfig(
     val releaseStepPct: Float = 1.0f,
     val averagingSamples: Int = 10,
     val unitScale: PowerUnitScale = PowerUnitScale.AUTO,
-    val polarity: PowerPolarity = PowerPolarity.AUTO_ABS
+    val polarity: PowerPolarity = PowerPolarity.AUTO_ABS,
+    val componentAware: Boolean = true
 )
 
 data class GovernorConfig(
@@ -267,6 +268,7 @@ data class TelemetryState(
     val burstRemainingMs: Long = 0L,
     val clusters: List<ClusterLiveState> = emptyList(),
     val gpu: GpuLiveState = GpuLiveState(),
+    val totalCpuLoadPct: Float = 0f,
     val temperatureC: Float = 0f,
     val tempSensorLabel: String = "Unassigned",
     val watts: Float = 0f,

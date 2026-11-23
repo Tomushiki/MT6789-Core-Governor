@@ -296,9 +296,7 @@ class OverlayController(
     }
 
     private fun toDisplayData(state: TelemetryState): DisplayData {
-        val cpuLoad = if (state.clusters.isNotEmpty()) {
-            state.clusters.map { it.smoothedLoadPct }.average().toFloat().roundToInt().coerceIn(0, 100)
-        } else 0
+        val cpuLoad = state.totalCpuLoadPct.roundToInt().coerceIn(0, 100)
         val cpuFreqMhz = (state.clusters.maxOfOrNull { it.actualFreqKhz } ?: 0L) / 1000L
         val gpuLoad = state.gpu.smoothedLoadPct.roundToInt().coerceIn(0, 100)
         val gpuFreqMhz = state.gpu.currentFreqKhz / 1000L

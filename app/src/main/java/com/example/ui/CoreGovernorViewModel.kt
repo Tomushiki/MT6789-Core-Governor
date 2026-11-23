@@ -299,7 +299,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         releaseStepPct: Float? = null,
         averagingSamples: Int? = null,
         unitScale: PowerUnitScale? = null,
-        polarity: PowerPolarity? = null
+        polarity: PowerPolarity? = null,
+        componentAware: Boolean? = null
     ) {
         engine.updateConfig { cfg ->
             val p = cfg.powerThrottle
@@ -312,7 +313,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                     releaseStepPct = releaseStepPct ?: p.releaseStepPct,
                     averagingSamples = averagingSamples ?: p.averagingSamples,
                     unitScale = unitScale ?: p.unitScale,
-                    polarity = polarity ?: p.polarity
+                    polarity = polarity ?: p.polarity,
+                    componentAware = componentAware ?: p.componentAware
                 )
             )
         }

@@ -112,6 +112,30 @@ object SysfsParsers {
         return if (useBusiestCore) maxPct else (sumPct / count).coerceIn(0f, 100f)
     }
 
+    fun computeTotalCpuLoadPct(
+        cpuIds: List<Int>,
+        prev: Map<Int, CpuTickSnapshot>,
+        curr: Map<Int, CpuTickSnapshot>
+    ): Float {
+        if (cpuIds.isEmpty() || prev.isEmpty()) return 0f
+        var sumPct = 0f
+        var count = 0
+        for (cpuId in cpuIds) {
+            val p = prev[cpuId] ?: continue
+            val c = curr[cpuId] ?: continue
+            val totalDelta = c.totalTicks - p.totalTicks
+            val idleDelta = c.idleTicks - p.idleTicks
+            if (totalDelta > 0L) {
+                val busyDelta = (totalDelta - idleDelta).coerceAtLeast(0L)
+                val pct = ((busyDelta.toFloat() / totalDelta.toFloat()) * 100f).coerceIn(0f, 100f)
+                sumPct += pct
+                count++
+            }
+        }
+        if (count == 0) return 0f
+        return (sumPct / count).coerceIn(0f, 100f)
+    }
+
     /**
      * Parses MediaTek /proc/gpufreqv2/{gpu_working_opp_table,gpu_signed_opp_table,stack_working_opp_table}.
      * Handles formats such as:
@@ -472,5 +496,18 @@ object GovernorMath {
 
     fun combineCaps(tempCapPct: Float, powerCapPct: Float, safetyFloorPct: Float): Float {
         return min(tempCapPct, powerCapPct).coerceIn(safetyFloorPct, 100f)
+    }
+
+    fun splitPowerCap(basePowerCapPct: Float, gpuShare: Float, floorPct: Float): Pair<Float, Float> {
+        val deficit = (100f - basePowerCapPct).coerceAtLeast(0f)
+        val gpuFactor = (2f * gpuShare.coerceIn(0f, 1f)).coerceIn(0.4f, 1.6f)
+        val cpuFactor = 2f - gpuFactor
+        val cpuCap = (100f - deficit * cpuFactor).coerceIn(floorPct, 100f)
+        val gpuCap = (100f - deficit * gpuFactor).coerceIn(floorPct, 100f)
+        return cpuCap to gpuCap
+    }
+
+    fun clusterCutFactor(clusterShareTimesCount: Float): Float {
+        return (1f + (clusterShareTimesCount - 1f) * 0.5f).coerceIn(0.7f, 1.3f)
     }
 }

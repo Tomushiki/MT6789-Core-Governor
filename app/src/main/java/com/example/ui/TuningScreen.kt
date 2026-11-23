@@ -139,7 +139,8 @@ fun TuningScreen(
         releaseStepPct: Float?,
         averagingSamples: Int?,
         unitScale: PowerUnitScale?,
-        polarity: PowerPolarity?
+        polarity: PowerPolarity?,
+        componentAware: Boolean?
     ) -> Unit,
     onSavePreset: (String) -> Unit,
     onLoadPreset: (PresetItem) -> Unit,
