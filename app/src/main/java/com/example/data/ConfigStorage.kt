@@ -17,6 +17,8 @@ package com.example.data
 
 import android.content.Context
 import android.net.Uri
+import com.example.model.EfficiencyMode
+import com.example.model.ExplorationRate
 import com.example.model.FreqRange
 import com.example.model.GovernorConfig
 import com.example.model.HardwareSpec
@@ -480,6 +482,11 @@ class ConfigStorage(private val context: Context) {
                 put("polarity", c.powerThrottle.polarity.name)
                 put("componentAware", c.powerThrottle.componentAware)
             })
+            put("powerModelLearningEnabled", c.powerModelLearningEnabled)
+            put("efficiencyLearningEnabled", c.efficiencyLearningEnabled)
+            put("efficiencyMode", c.efficiencyMode.name)
+            put("minConfidencePct", c.minConfidencePct)
+            put("explorationRate", c.explorationRate.name)
             val gamesArr = JSONArray()
             c.gamePackages.sorted().forEach { gamesArr.put(it) }
             put("gamePackages", gamesArr)
@@ -588,6 +595,11 @@ class ConfigStorage(private val context: Context) {
                 polarity = enumOrDefault(pObj.optString("polarity"), PowerPolarity.AUTO_ABS),
                 componentAware = pObj.optBoolean("componentAware", true)
             ) else default.powerThrottle,
+            powerModelLearningEnabled = obj.optBoolean("powerModelLearningEnabled", default.powerModelLearningEnabled),
+            efficiencyLearningEnabled = obj.optBoolean("efficiencyLearningEnabled", default.efficiencyLearningEnabled),
+            efficiencyMode = enumOrDefault(obj.optString("efficiencyMode"), default.efficiencyMode),
+            minConfidencePct = obj.optInt("minConfidencePct", default.minConfidencePct).coerceIn(20, 95),
+            explorationRate = enumOrDefault(obj.optString("explorationRate"), default.explorationRate),
             gamePackages = games
         )
     }

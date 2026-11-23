@@ -275,6 +275,7 @@ class GovernorService : Service() {
         overlayController.stop()
         engine.stopAndRestore()
         engine.storage.flush()
+        engine.powerModel.flush()
         overlayNotifyJob?.cancel()
         telemetryJob?.cancel()
         serviceScope.cancel()

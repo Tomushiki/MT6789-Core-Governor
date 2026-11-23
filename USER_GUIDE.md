@@ -13,6 +13,7 @@ A plain-English guide to what each part of CoreGovernor does and how to start. E
 
 - Monitor: live CPU and GPU frequencies, load, temperature and power. Start and stop the service here and switch between Auto, Normal and Game.
 - Metrics: history graphs for power, temperature, FPS, FPS per watt and work per watt, plus saved game sessions (see section 7c).
+- Energy: on-device learned power curves, live estimated vs measured power, and the opt-in Efficiency governor (see section 7d).
 - Tuning: all the settings explained below.
 - OPPs: the list of GPU speed steps your device reports. Useful for troubleshooting.
 - Apps: choose which apps count as games.
@@ -100,6 +101,15 @@ The Metrics tab shows how the phone behaves over time, so you can see what a tun
 - Ratios stay blank when there is no FPS reading or the power reading is near zero. If power numbers look wrong, use the calibration options in the power section.
 
 A good way to use it: play the same game for a few minutes with one setting, change one thing in Tuning, play again, and compare the two saved sessions (FPS/W, 5% low, peak temperature).
+
+## 7d. Energy tab: learned power model and efficiency governor
+
+CoreGovernor can passively learn how much power each CPU cluster and the GPU actually draw on your specific phone across frequencies, loads, and apps.
+
+- **Learn power model (on by default):** records ~1 Hz samples while the screen is on and the phone is discharging (skipping charging and sudden spikes). High confidence across most frequencies and apps takes several hours of everyday use and gaming.
+- **Efficiency governor (off by default):** once enabled, it uses the learned power/performance model to pick lower-energy frequencies inside your allowed min/max bounds and thermal/power caps whenever confidence is above your chosen threshold. If it sees an FPS drop or overload, it backs off immediately and falls back to standard scaling.
+- **Modes:** *Balanced* targets best work per watt, *Aggressive saver* leans toward lower power draw, and *Performance-first* guards responsiveness and frame rate.
+- **Export / Reset:** copy `power_model.json` to the clipboard or reset the learned model at any time.
 
 ## 8. Suggested starting points
 

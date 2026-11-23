@@ -18,10 +18,12 @@ package com.example.governor
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.display.DisplayManager
 import android.media.AudioManager
 import android.os.BatteryManager
 import android.os.PowerManager
 import android.os.SystemClock
+import android.view.Display
 import com.example.data.ConfigStorage
 import com.example.data.OriginalCpuBackup
 import com.example.data.OriginalHardwareBackup
@@ -81,6 +83,11 @@ class GovernorEngine(context: Context) {
 
     /** Live and saved history for the Performance Metrics tab. */
     val metrics = MetricsRecorder(java.io.File(appContext.filesDir, "metrics_sessions"), engineScope) { level, tag, msg ->
+        log(level, tag, msg)
+    }
+
+    /** On-device learned power model & opt-in efficiency governor helper. */
+    val powerModel = PowerModel(java.io.File(appContext.filesDir, "power_model.json")) { level, tag, msg ->
         log(level, tag, msg)
     }
 
@@ -178,12 +185,28 @@ class GovernorEngine(context: Context) {
     private var fpsDaemonFailed = false
     private var fpsDaemonStartRt = 0L
 
+    // Power model staging & cached battery/refresh state (zero-alloc on tick)
+    private val pmClusterPolicyIds = IntArray(PowerModel.MAX_CLUSTERS)
+    private val pmClusterFreqMhz = IntArray(PowerModel.MAX_CLUSTERS)
+    private val pmClusterUtilPct = FloatArray(PowerModel.MAX_CLUSTERS)
+    private val pmClusterCoreCounts = IntArray(PowerModel.MAX_CLUSTERS)
+    private var cachedBatteryCharging = false
+    private var cachedBatteryPct = 100
+    private var lastBatteryCheckMs = 0L
+    private val displayRefreshHz: Float =
+        (appContext.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
+            ?.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate?.takeIf { it >= 30f } ?: 60f
+
     // Crash handler
     private var defaultCrashHandler: Thread.UncaughtExceptionHandler? = null
     private var crashHookInstalled = false
 
     init {
         _presets.value = storage.loadPresets(_hardwareSpec.value)
+        engineScope.launch(Dispatchers.IO) {
+            powerModel.load()
+        }
+        powerModel.start(engineScope)
         log(LogLevel.INFO, "Engine", "CoreGovernor v2 initialized (OPP-index GPU control).")
     }
 
@@ -198,6 +221,7 @@ class GovernorEngine(context: Context) {
 
         val hw = discovery.discover()
         _hardwareSpec.value = hw
+        powerModel.updateHardwareSpec(hw)
         hw.discoveryNotes.forEach { note ->
             log(if (hw.rootGranted) LogLevel.INFO else LogLevel.ERROR, "Discovery", note)
         }
@@ -252,6 +276,7 @@ class GovernorEngine(context: Context) {
 
         val updatedHw = _hardwareSpec.value.copy(gpu = freshGpu)
         _hardwareSpec.value = updatedHw
+        powerModel.updateHardwareSpec(updatedHw)
         notes.forEach { log(LogLevel.INFO, "GpuOpp", it) }
 
         val populatedCfg = storage.populateDefaultsForHardware(_config.value, updatedHw)
@@ -444,6 +469,24 @@ class GovernorEngine(context: Context) {
             plugged != 0
     }
 
+    private fun refreshBatteryStatusIfDue(nowMs: Long) {
+        if (nowMs - lastBatteryCheckMs < 5_000L) return
+        lastBatteryCheckMs = nowMs
+        val bm = appContext.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        val battIntent = appContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val status = battIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val plugged = battIntent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+        cachedBatteryCharging = (bm?.isCharging == true) ||
+            status == BatteryManager.BATTERY_STATUS_CHARGING ||
+            status == BatteryManager.BATTERY_STATUS_FULL ||
+            plugged != 0
+        val level = battIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = battIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100)?.coerceAtLeast(1) ?: 100
+        if (level >= 0) {
+            cachedBatteryPct = ((level * 100f) / scale).roundToInt().coerceIn(0, 100)
+        }
+    }
+
     private suspend fun enterSleepSaving() {
         sleepMutex.withLock {
             if (controlJob?.isActive != true) return@withLock
@@ -509,6 +552,7 @@ class GovernorEngine(context: Context) {
 
     fun stopAndRestore() {
         storage.flush()
+        powerModel.flush()
         metrics.onStopped()
         stopFpsSampler()
         sensorPinner.setServiceRunning(false)
@@ -841,8 +885,14 @@ class GovernorEngine(context: Context) {
             lastDominantComponent = null
         }
 
+        refreshBatteryStatusIfDue(nowMs)
+        val isGameMode = activeMode == GovernorMode.GAME
+        val scenarioKey = PowerModel.scenarioKeyFor(fgPkg, isGameMode, isScreenInteractive)
+        val latestFps = prevTelemetry.fps
+
         // 6. CPU cluster target selection & write-on-change (min = max)
         val clusterLiveList = mutableListOf<ClusterLiveState>()
+        var pmClusterIdx = 0
         for (p in hw.cpuPolicies) {
             val rawLoad = clusterRawLoads[p.policyId] ?: 0f
             val prevSmoothed = smoothedClusterLoad[p.policyId] ?: rawLoad
@@ -861,7 +911,7 @@ class GovernorEngine(context: Context) {
             val allowedMin = (range?.minKhz ?: minAvailable).coerceIn(minAvailable, maxAvailable)
             val allowedMax = (range?.maxKhz ?: maxAvailable).coerceIn(allowedMin, maxAvailable)
 
-            val (targetFreq, cappedMax) = GovernorMath.selectFrequency(
+            val (stdTargetFreq, cappedMax) = GovernorMath.selectFrequency(
                 availableFreqsKhz = p.availableFreqsKhz,
                 allowedMinKhz = allowedMin,
                 allowedMaxKhz = allowedMax,
@@ -869,6 +919,33 @@ class GovernorEngine(context: Context) {
                 loadPct = smoothed,
                 forceMaxDuringBurst = burstActive
             )
+            val preActualFreq = batch["${p.path}/scaling_cur_freq"]?.toLongOrNull() ?: stdTargetFreq
+            val targetFreq = if (cfg.efficiencyLearningEnabled) {
+                powerModel.selectEfficientCpuFreqKhz(
+                    policyId = p.policyId,
+                    availableFreqsKhz = p.availableFreqsKhz,
+                    allowedMinKhz = allowedMin,
+                    cappedMaxKhz = cappedMax,
+                    standardTargetKhz = stdTargetFreq,
+                    currentFreqKhz = preActualFreq,
+                    rawLoadPct = rawLoad,
+                    coreCount = p.relatedCpus.size.coerceAtLeast(1),
+                    scenarioKey = scenarioKey,
+                    isGame = isGameMode,
+                    fps = latestFps,
+                    targetRefreshHz = displayRefreshHz,
+                    efficiencyEnabled = true,
+                    efficiencyMode = cfg.efficiencyMode,
+                    minConfidencePct = cfg.minConfidencePct,
+                    explorationRate = cfg.explorationRate,
+                    burstActive = burstActive,
+                    thermalThrottled = tempThrottleActive,
+                    batteryPct = cachedBatteryPct,
+                    nowMs = nowMs
+                )
+            } else {
+                stdTargetFreq
+            }
 
             val liveGov = batch["${p.path}/scaling_governor"]?.trim().orEmpty().ifBlank { "powersave" }
             var effectiveGov = liveGov
@@ -1027,7 +1104,14 @@ class GovernorEngine(context: Context) {
                 }
             }
 
-            val actualFreq = batch["${p.path}/scaling_cur_freq"]?.toLongOrNull() ?: targetFreq
+            val actualFreq = preActualFreq
+            if (pmClusterIdx < PowerModel.MAX_CLUSTERS) {
+                pmClusterPolicyIds[pmClusterIdx] = p.policyId
+                pmClusterFreqMhz[pmClusterIdx] = (actualFreq / 1000L).toInt()
+                pmClusterUtilPct[pmClusterIdx] = rawLoad
+                pmClusterCoreCounts[pmClusterIdx] = p.relatedCpus.size.coerceAtLeast(1)
+                pmClusterIdx++
+            }
             clusterLiveList.add(
                 ClusterLiveState(
                     policyId = p.policyId,
@@ -1085,8 +1169,33 @@ class GovernorEngine(context: Context) {
             )
 
             if (selection != null) {
-                val targetOppIdx = selection.targetOpp.oppIndex
-                val targetFreqKhz = selection.targetOpp.freqKhz
+                val chosenPos = if (cfg.efficiencyLearningEnabled) {
+                    powerModel.selectEfficientGpuOppPos(
+                        sortedOpps = gpuSpec.oppTable,
+                        allowedMinPos = selection.allowedMinPos,
+                        cappedMaxPos = selection.cappedMaxPos,
+                        standardTargetPos = selection.targetPos,
+                        currentFreqKhz = statusParsed.freqKhz ?: selection.targetOpp.freqKhz,
+                        rawLoadPct = rawGpuLoad,
+                        scenarioKey = scenarioKey,
+                        isGame = isGameMode,
+                        fps = latestFps,
+                        targetRefreshHz = displayRefreshHz,
+                        efficiencyEnabled = true,
+                        efficiencyMode = cfg.efficiencyMode,
+                        minConfidencePct = cfg.minConfidencePct,
+                        explorationRate = cfg.explorationRate,
+                        burstActive = burstActive,
+                        thermalThrottled = tempThrottleActive,
+                        batteryPct = cachedBatteryPct,
+                        nowMs = nowMs
+                    )
+                } else {
+                    selection.targetPos
+                }
+                val chosenOpp = gpuSpec.oppTable[chosenPos]
+                val targetOppIdx = chosenOpp.oppIndex
+                val targetFreqKhz = chosenOpp.freqKhz
 
                 if (targetOppIdx != lastWrittenGpuOppIndex) {
                     val fixPath = gpuSpec.gpufreqFixOppPath
@@ -1100,7 +1209,7 @@ class GovernorEngine(context: Context) {
                                 log(
                                     LogLevel.ERROR,
                                     "GpuOpp",
-                                    "Pin OPP idx=$targetOppIdx (pos=${selection.targetPos}/${gpuSpec.oppTable.lastIndex}, " +
+                                    "Pin OPP idx=$targetOppIdx (pos=$chosenPos/${gpuSpec.oppTable.lastIndex}, " +
                                         "${targetFreqKhz} kHz / ${targetFreqKhz / 1000} MHz) -> FAILED"
                                 )
                             }
@@ -1113,7 +1222,7 @@ class GovernorEngine(context: Context) {
                     loadPct = rawGpuLoad,
                     smoothedLoadPct = smoothedGpuLoad,
                     loadSourcePath = activeLoadPath,
-                    targetSortedPos = selection.targetPos,
+                    targetSortedPos = chosenPos,
                     targetOppIndex = targetOppIdx,
                     targetFreqKhz = targetFreqKhz,
                     currentOppIndex = statusParsed.oppIndex ?: -1,
@@ -1130,6 +1239,27 @@ class GovernorEngine(context: Context) {
                 )
             }
         }
+
+        powerModel.submitTick(
+            timestampMs = nowMs,
+            watts = powerReading.watts,
+            isCharging = cachedBatteryCharging,
+            isInteractive = isScreenInteractive,
+            isSleepSaving = isSleepSaving,
+            isGame = isGameMode,
+            fgPkg = fgPkg,
+            fps = latestFps,
+            learningEnabled = cfg.powerModelLearningEnabled,
+            efficiencyEnabled = cfg.efficiencyLearningEnabled,
+            clusterCount = pmClusterIdx,
+            clusterPolicyIds = pmClusterPolicyIds,
+            clusterFreqMhz = pmClusterFreqMhz,
+            clusterUtilPct = pmClusterUtilPct,
+            clusterCoreCounts = pmClusterCoreCounts,
+            gpuAvailable = gpuLiveState.available,
+            gpuFreqMhz = ((if (gpuLiveState.currentFreqKhz > 0L) gpuLiveState.currentFreqKhz else gpuLiveState.targetFreqKhz) / 1000L).toInt(),
+            gpuUtilPct = gpuLiveState.loadPct
+        )
 
         // 7b. Keep RAM at max & read DDR frequency if detailed overlay active
         val ddrSpec = hw.ddr
@@ -1582,6 +1712,17 @@ class GovernorEngine(context: Context) {
         _config.value = next
         storage.saveConfigDebounced(next)
         _telemetry.update { it.copy(modeOverride = next.modeOverride) }
+
+        if (prev.efficiencyLearningEnabled != next.efficiencyLearningEnabled || prev.efficiencyMode != next.efficiencyMode) {
+            powerModel.onEfficiencySettingChanged(next.efficiencyLearningEnabled, next.efficiencyMode)
+            if (prev.efficiencyLearningEnabled != next.efficiencyLearningEnabled) {
+                log(
+                    LogLevel.INFO,
+                    "Efficiency",
+                    if (next.efficiencyLearningEnabled) "Efficiency governor ENABLED (mode=${next.efficiencyMode.name})" else "Efficiency governor DISABLED (standard scaling)"
+                )
+            }
+        }
 
         if (controlJob?.isActive == true) {
             if (!next.screenOffSavingEnabled) {

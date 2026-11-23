@@ -36,12 +36,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.ListAlt
 import androidx.compose.material.icons.outlined.Speed
@@ -79,6 +81,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.governor.UpdateState
 import com.example.ui.AppsScreen
 import com.example.ui.CoreGovernorViewModel
+import com.example.ui.EnergyScreen
 import com.example.ui.LogScreen
 import com.example.ui.MonitorScreen
 import com.example.ui.OppTableScreen
@@ -95,6 +98,7 @@ enum class NavTab(
 ) {
     MONITOR("Monitor", Icons.Filled.Speed, Icons.Outlined.Speed),
     METRICS("Metrics", Icons.Filled.Insights, Icons.Outlined.Insights),
+    ENERGY("Energy", Icons.Filled.Bolt, Icons.Outlined.Bolt),
     TUNING("Tuning", Icons.Filled.Tune, Icons.Outlined.Tune),
     OPPS("OPPs", Icons.Filled.TableChart, Icons.Outlined.TableChart),
     APPS("Apps", Icons.Filled.Apps, Icons.Outlined.Apps),
@@ -114,7 +118,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        (application as CoreGovernorApp).engine.storage.flush()
+        val engine = (application as CoreGovernorApp).engine
+        engine.storage.flush()
+        engine.powerModel.flush()
     }
 }
 
@@ -144,6 +150,9 @@ fun CoreGovernorRootScreen(
     var updateDismissed by rememberSaveable { mutableStateOf(false) }
 
     var currentTab by rememberSaveable { mutableStateOf(NavTab.MONITOR) }
+    LaunchedEffect(currentTab) {
+        vm.setEnergyTabVisible(currentTab == NavTab.ENERGY)
+    }
 
     // Android 13+ notification permission for Foreground Service status notification
     val notifPermissionLauncher = rememberLauncherForActivityResult(
@@ -225,7 +234,7 @@ fun CoreGovernorRootScreen(
                                 contentDescription = tab.label
                             )
                         },
-                        label = { Text(tab.label) },
+                        label = { Text(tab.label, maxLines = 1, softWrap = false) },
                         modifier = Modifier.testTag("nav_${tab.name.lowercase()}")
                     )
                 }
@@ -287,6 +296,18 @@ fun CoreGovernorRootScreen(
                     onDeleteSession = vm::deleteSession,
                     onDeleteAllSessions = vm::deleteAllSessions,
                     onClearLive = vm::clearLiveMetrics,
+                    modifier = Modifier
+                )
+            }
+            NavTab.ENERGY -> {
+                val energySnapshot by vm.powerModelSnapshot.collectAsStateWithLifecycle()
+                EnergyScreen(
+                    snapshot = energySnapshot,
+                    config = config,
+                    isRunning = telemetry.isRunning,
+                    onUpdateSettings = vm::updateEfficiencySettings,
+                    onResetModel = vm::resetPowerModel,
+                    onExportJson = vm::exportPowerModelJson,
                     modifier = Modifier
                 )
             }

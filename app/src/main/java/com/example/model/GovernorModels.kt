@@ -52,6 +52,18 @@ enum class LogLevel {
     ERROR
 }
 
+enum class EfficiencyMode {
+    BALANCED,
+    AGGRESSIVE_SAVER,
+    PERFORMANCE_FIRST
+}
+
+enum class ExplorationRate(val baseProb: Float) {
+    LOW(0.015f),
+    MEDIUM(0.04f),
+    HIGH(0.08f)
+}
+
 data class CpuPolicySpec(
     val policyId: Int,
     val name: String,
@@ -220,6 +232,11 @@ data class GovernorConfig(
     ),
     val tempThrottle: TempThrottleConfig = TempThrottleConfig(),
     val powerThrottle: PowerThrottleConfig = PowerThrottleConfig(),
+    val powerModelLearningEnabled: Boolean = true,
+    val efficiencyLearningEnabled: Boolean = false,
+    val efficiencyMode: EfficiencyMode = EfficiencyMode.BALANCED,
+    val minConfidencePct: Int = 60,
+    val explorationRate: ExplorationRate = ExplorationRate.LOW,
     val gamePackages: Set<String> = emptySet()
 )
 

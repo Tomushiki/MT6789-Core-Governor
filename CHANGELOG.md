@@ -2,6 +2,16 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.6.0] - 2026-11-23
+
+### Added
+- **On-device learned power model (`PowerModel`).** Passively learns this device's power draw (mW) per CPU cluster and GPU across frequency steps and utilization bands using online regularized regression with outlier/transient filtering, lifelong exponential adaptation, cross-scenario overlays (`power_model.json`, max 24 scenarios with LRU eviction), and ~5-minute throttled atomic persistence + lifecycle flushes.
+- **Opt-in Efficiency governor.** Disabled by default. When enabled and a bucket's confidence reaches the configurable minimum threshold, selects lower-energy frequencies within your allowed ranges and thermal/power caps that still meet demand (headroom and game FPS vs display refresh rate), with hysteresis, immediate regression backoff + confidence penalty, and bounded exploration.
+- **Energy tab (`Energy`).** Shows sample count, overall confidence, scenarios learned, live estimated vs measured power, per-component learned power vs frequency curves (dimming low-confidence points), controls for learning, Efficiency governor, optimization mode (`Balanced`, `Aggressive saver`, `Performance-first`), minimum confidence, exploration rate, JSON clipboard export, and reset confirmation. UI updates pause when hidden.
+
+### Changed
+- Version 2.6.0 (versionCode 38).
+
 ## [2.3.2] - 2026-11-23
 
 ### Changed

@@ -26,10 +26,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.CoreGovernorApp
 import com.example.governor.MetricSample
+import com.example.governor.PowerModelUiSnapshot
 import com.example.governor.SensorPinner
 import com.example.governor.SessionInfo
 import com.example.governor.UpdateChecker
 import com.example.governor.UpdateState
+import com.example.model.EfficiencyMode
+import com.example.model.ExplorationRate
 import com.example.model.FreqRange
 import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
@@ -60,6 +63,7 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     val telemetry = engine.telemetry
     val sensorPin = engine.sensorPinner.state
     val logs: StateFlow<List<LogEntry>> = engine.logs
+    val powerModelSnapshot: StateFlow<PowerModelUiSnapshot> = engine.powerModel.uiSnapshot
 
     // Performance Metrics tab
     val metricsLive: StateFlow<List<MetricSample>> = engine.metrics.live
@@ -446,6 +450,34 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun clearLogs() = engine.clearLogs()
+
+    fun setEnergyTabVisible(visible: Boolean) = engine.powerModel.setUiVisible(visible)
+
+    fun updateEfficiencySettings(
+        learningEnabled: Boolean? = null,
+        efficiencyEnabled: Boolean? = null,
+        efficiencyMode: EfficiencyMode? = null,
+        minConfidencePct: Int? = null,
+        explorationRate: ExplorationRate? = null
+    ) {
+        engine.updateConfig { cfg ->
+            cfg.copy(
+                powerModelLearningEnabled = learningEnabled ?: cfg.powerModelLearningEnabled,
+                efficiencyLearningEnabled = efficiencyEnabled ?: cfg.efficiencyLearningEnabled,
+                efficiencyMode = efficiencyMode ?: cfg.efficiencyMode,
+                minConfidencePct = (minConfidencePct ?: cfg.minConfidencePct).coerceIn(20, 95),
+                explorationRate = explorationRate ?: cfg.explorationRate
+            )
+        }
+    }
+
+    fun resetPowerModel() {
+        viewModelScope.launch(Dispatchers.IO) {
+            engine.powerModel.reset()
+        }
+    }
+
+    fun exportPowerModelJson(): String = engine.powerModel.exportJson()
 
     fun selectSession(info: SessionInfo?) {
         _selectedSession.value = info
