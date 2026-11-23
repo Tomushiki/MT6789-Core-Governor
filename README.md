@@ -1,5 +1,7 @@
 # CoreGovernor
 
+**New here? Read the [User Guide](USER_GUIDE.md).**
+
 **Custom userspace CPU and GPU throttling governor for rooted MediaTek Helio G99 (`MT6789`) devices running Android 12+.**
 
 ---
