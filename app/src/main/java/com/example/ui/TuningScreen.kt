@@ -102,7 +102,8 @@ fun TuningScreen(
         gameOnly: Boolean?,
         opacityPct: Int?,
         compactScalePct: Int?,
-        expandedScalePct: Int?
+        expandedScalePct: Int?,
+        bgOpacityPct: Int?
     ) -> Unit,
     onUpdateOverlayPosition: (Int?, Int?, Boolean) -> Unit,
     onUpdateClusterRange: (GovernorMode, Int, FreqRange) -> Unit,
@@ -574,7 +575,7 @@ fun TuningScreen(
                             title = "Enable overlay",
                             explanation = "Displays a floating CPU, GPU, thermal, and power monitor over other apps.",
                             checked = config.overlayEnabled,
-                            onCheckedChange = { onUpdateOverlay(it, null, null, null, null, null) },
+                            onCheckedChange = { onUpdateOverlay(it, null, null, null, null, null, null) },
                             testTag = "overlay_enabled_switch"
                         )
 
@@ -583,7 +584,7 @@ fun TuningScreen(
                             title = "Click-through",
                             explanation = "Lets touches pass through the overlay. Use the notification action to unlock.",
                             checked = config.overlayClickThrough,
-                            onCheckedChange = { onUpdateOverlay(null, it, null, null, null, null) },
+                            onCheckedChange = { onUpdateOverlay(null, it, null, null, null, null, null) },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_click_through_switch"
                         )
@@ -593,24 +594,39 @@ fun TuningScreen(
                             title = "Show only in Game mode",
                             explanation = "Shows the overlay only when Game mode is active.",
                             checked = config.overlayGameOnly,
-                            onCheckedChange = { onUpdateOverlay(null, null, it, null, null, null) },
+                            onCheckedChange = { onUpdateOverlay(null, null, it, null, null, null, null) },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_game_only_switch"
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingSliderRow(
-                            title = "Opacity",
+                            title = "Overall opacity",
                             valueText = "${config.overlayOpacityPct}%",
-                            explanation = "Adjusts floating overlay opacity from 30% to 100%.",
+                            explanation = "Fades the whole overlay, text included, from 30% to 100%.",
                             value = config.overlayOpacityPct.toFloat(),
                             valueRange = 30f..100f,
                             steps = 69,
                             onValueChange = {
-                                onUpdateOverlay(null, null, null, it.roundToInt().coerceIn(30, 100), null, null)
+                                onUpdateOverlay(null, null, null, it.roundToInt().coerceIn(30, 100), null, null, null)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_opacity_slider"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        SettingSliderRow(
+                            title = "Background opacity",
+                            valueText = "${config.overlayBgOpacityPct}%",
+                            explanation = "Fades only the dark background behind the numbers, from 0% (fully see-through) to 100%. The text stays fully readable.",
+                            value = config.overlayBgOpacityPct.toFloat(),
+                            valueRange = 0f..100f,
+                            steps = 99,
+                            onValueChange = {
+                                onUpdateOverlay(null, null, null, null, null, null, it.roundToInt().coerceIn(0, 100))
+                            },
+                            enabled = config.overlayEnabled,
+                            testTag = "overlay_bg_opacity_slider"
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -623,7 +639,7 @@ fun TuningScreen(
                             steps = 71,
                             onValueChange = {
                                 val snapped = ((it / 5f).roundToInt() * 5).coerceIn(40, 400)
-                                onUpdateOverlay(null, null, null, null, snapped, null)
+                                onUpdateOverlay(null, null, null, null, snapped, null, null)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_compact_scale_slider"
@@ -639,7 +655,7 @@ fun TuningScreen(
                             steps = 71,
                             onValueChange = {
                                 val snapped = ((it / 5f).roundToInt() * 5).coerceIn(40, 400)
-                                onUpdateOverlay(null, null, null, null, null, snapped)
+                                onUpdateOverlay(null, null, null, null, null, snapped, null)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_expanded_scale_slider"

@@ -138,6 +138,7 @@ class OverlayController(
             view.setScales(cfg.overlayCompactScalePct, cfg.overlayExpandedScalePct)
             view.setClickThrough(cfg.overlayClickThrough)
             view.alpha = targetAlpha
+            view.setBgOpacity(cfg.overlayBgOpacityPct)
 
             val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -174,6 +175,7 @@ class OverlayController(
             var layoutChanged = false
             var needsReposition = false
             existingView.alpha = targetAlpha
+            existingView.setBgOpacity(cfg.overlayBgOpacityPct)
             existingView.setClickThrough(cfg.overlayClickThrough)
             if (existingView.isExpandedMode() != cfg.overlayExpanded) {
                 existingView.setExpanded(cfg.overlayExpanded)
@@ -453,6 +455,14 @@ class OverlayController(
 
         fun setClickThrough(value: Boolean) {
             clickThrough = value
+        }
+
+        fun setBgOpacity(pct: Int) {
+            val target = (255 * pct.coerceIn(0, 100)) / 100
+            if (bgPaint.alpha != target) {
+                bgPaint.alpha = target
+                invalidate()
+            }
         }
 
         fun setDisplayData(next: DisplayData) {

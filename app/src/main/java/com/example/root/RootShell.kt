@@ -54,6 +54,10 @@ class RootShell {
         private set
 
     private val permissionFixedPaths = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val readModeMutex = Mutex()
+    @Volatile
+    private var useBuiltinRead: Boolean? = null
+    var onLog: ((String) -> Unit)? = null
 
     suspend fun ensureSession(): Boolean = mutex.withLock {
         withContext(dispatcher) {
@@ -103,6 +107,7 @@ class RootShell {
      */
     suspend fun readFilesBatch(paths: List<String>): Map<String, String> {
         if (paths.isEmpty()) return emptyMap()
+        val useBuiltin = resolveReadMode()
         val token = UUID.randomUUID().toString().replace("-", "").take(12)
         val beginPrefix = "__CGB_${token}_"
         val endPrefix = "__CGE_${token}_"
@@ -110,7 +115,11 @@ class RootShell {
         paths.forEachIndexed { idx, path ->
             val qPath = shellQuote(path)
             sb.append("echo '${beginPrefix}${idx}'; ")
-            sb.append("cat $qPath 2>/dev/null; ")
+            if (useBuiltin) {
+                sb.append("{ while IFS= read -r l || [ -n \"\$l\" ]; do echo \"\$l\"; done < $qPath; } 2>/dev/null; ")
+            } else {
+                sb.append("cat $qPath 2>/dev/null; ")
+            }
             sb.append("echo ''; echo '${endPrefix}${idx}'; ")
         }
         val res = exec(sb.toString())
@@ -141,6 +150,43 @@ class RootShell {
             }
         }
         return map
+    }
+
+    private suspend fun resolveReadMode(): Boolean {
+        useBuiltinRead?.let { return it }
+        return readModeMutex.withLock {
+            useBuiltinRead?.let { return@withLock it }
+            val testPath = shellQuote("/sys/devices/system/cpu/possible")
+            val token = UUID.randomUUID().toString().replace("-", "").take(12)
+            val mCat = "__CG_CAT_${token}__"
+            val mBlt = "__CG_BLT_${token}__"
+            val mEnd = "__CG_END_${token}__"
+            val cmd = "echo '$mCat'; cat $testPath 2>/dev/null; echo ''; echo '$mBlt'; { while IFS= read -r l || [ -n \"\$l\" ]; do echo \"\$l\"; done < $testPath; } 2>/dev/null; echo ''; echo '$mEnd'"
+            val res = exec(cmd)
+            if (!res.isSuccess) return@withLock false
+            var section = 0
+            val catBuf = StringBuilder()
+            val bltBuf = StringBuilder()
+            for (line in res.stdout.lines()) {
+                when {
+                    line.startsWith(mCat) -> section = 1
+                    line.startsWith(mBlt) -> section = 2
+                    line.startsWith(mEnd) -> section = 0
+                    section == 1 -> {
+                        if (catBuf.isNotEmpty()) catBuf.append('\n')
+                        catBuf.append(line)
+                    }
+                    section == 2 -> {
+                        if (bltBuf.isNotEmpty()) bltBuf.append('\n')
+                        bltBuf.append(line)
+                    }
+                }
+            }
+            val builtinOk = catBuf.toString().trim() == bltBuf.toString().trim()
+            useBuiltinRead = builtinOk
+            onLog?.invoke(if (builtinOk) "Root read mode: builtin" else "Root read mode: cat")
+            builtinOk
+        }
     }
 
     suspend fun readFile(path: String): String? {

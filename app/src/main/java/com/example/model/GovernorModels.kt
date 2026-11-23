@@ -163,6 +163,7 @@ data class GovernorConfig(
     val overlayGameOnly: Boolean = false,
     val overlayExpanded: Boolean = false,
     val overlayOpacityPct: Int = 85,
+    val overlayBgOpacityPct: Int = 100,
     val overlayCompactScalePct: Int = 100,
     val overlayExpandedScalePct: Int = 100,
     val overlayCompactXPm: Int = 40,

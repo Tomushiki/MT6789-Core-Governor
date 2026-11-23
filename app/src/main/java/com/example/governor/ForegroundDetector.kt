@@ -29,6 +29,7 @@ class ForegroundDetector(
 ) {
     private var lastKnownPackage: String = ""
     private var lastRootFallbackCheckMs: Long = 0L
+    private var lastUsageQueryEndMs: Long = 0L
 
     fun hasUsageStatsPermission(): Boolean {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
@@ -50,10 +51,17 @@ class ForegroundDetector(
     }
 
     suspend fun detectForegroundPackage(nowMs: Long): String {
-        if (hasUsageStatsPermission()) {
+        val usagePermitted = hasUsageStatsPermission()
+        if (usagePermitted) {
             val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
             if (usm != null) {
-                val events = usm.queryEvents(nowMs - 8_000L, nowMs)
+                val queryStartMs = if (lastUsageQueryEndMs > 0L) {
+                    maxOf(lastUsageQueryEndMs - 1_000L, nowMs - 8_000L)
+                } else {
+                    nowMs - 8_000L
+                }
+                val events = usm.queryEvents(queryStartMs, nowMs)
+                lastUsageQueryEndMs = nowMs
                 val event = UsageEvents.Event()
                 var latestPkg = ""
                 var latestTime = 0L
@@ -74,8 +82,9 @@ class ForegroundDetector(
             }
         }
 
-        // Root shell fallback (throttled to max once per 500ms so dumpsys doesn't add overhead)
-        if (nowMs - lastRootFallbackCheckMs >= 500L && rootShell.isRootAvailable) {
+        val fallbackIntervalMs = if (usagePermitted && lastKnownPackage.isNotBlank()) 5_000L else 500L
+        // Root shell fallback (throttled so dumpsys doesn't add overhead)
+        if (nowMs - lastRootFallbackCheckMs >= fallbackIntervalMs && rootShell.isRootAvailable) {
             lastRootFallbackCheckMs = nowMs
             val res = rootShell.exec(
                 "dumpsys window displays 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | tail -n 2"

@@ -379,6 +379,7 @@ class ConfigStorage(private val context: Context) {
             put("overlayGameOnly", c.overlayGameOnly)
             put("overlayExpanded", c.overlayExpanded)
             put("overlayOpacityPct", c.overlayOpacityPct)
+            put("overlayBgOpacityPct", c.overlayBgOpacityPct)
             put("overlayCompactScalePct", c.overlayCompactScalePct)
             put("overlayExpandedScalePct", c.overlayExpandedScalePct)
             put("overlayCompactXPm", c.overlayCompactXPm)
@@ -471,6 +472,7 @@ class ConfigStorage(private val context: Context) {
             overlayGameOnly = obj.optBoolean("overlayGameOnly", default.overlayGameOnly),
             overlayExpanded = obj.optBoolean("overlayExpanded", default.overlayExpanded),
             overlayOpacityPct = obj.optInt("overlayOpacityPct", default.overlayOpacityPct).coerceIn(30, 100),
+            overlayBgOpacityPct = obj.optInt("overlayBgOpacityPct", default.overlayBgOpacityPct).coerceIn(0, 100),
             overlayCompactScalePct = obj.optInt("overlayCompactScalePct", default.overlayCompactScalePct).coerceIn(40, 400),
             overlayExpandedScalePct = obj.optInt("overlayExpandedScalePct", default.overlayExpandedScalePct).coerceIn(40, 400),
             overlayCompactXPm = obj.optInt("overlayCompactXPm", default.overlayCompactXPm).coerceIn(0, 1000),

@@ -138,7 +138,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         gameOnly: Boolean? = null,
         opacityPct: Int? = null,
         compactScalePct: Int? = null,
-        expandedScalePct: Int? = null
+        expandedScalePct: Int? = null,
+        bgOpacityPct: Int? = null
     ) {
         if (enabled == true) {
             val ctx = getApplication<Application>()
@@ -152,6 +153,7 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                                 overlayClickThrough = clickThrough ?: cfg.overlayClickThrough,
                                 overlayGameOnly = gameOnly ?: cfg.overlayGameOnly,
                                 overlayOpacityPct = (opacityPct ?: cfg.overlayOpacityPct).coerceIn(30, 100),
+                                overlayBgOpacityPct = (bgOpacityPct ?: cfg.overlayBgOpacityPct).coerceIn(0, 100),
                                 overlayCompactScalePct = (compactScalePct ?: cfg.overlayCompactScalePct).coerceIn(40, 400),
                                 overlayExpandedScalePct = (expandedScalePct ?: cfg.overlayExpandedScalePct).coerceIn(40, 400)
                             )
@@ -175,6 +177,7 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                 overlayClickThrough = clickThrough ?: cfg.overlayClickThrough,
                 overlayGameOnly = gameOnly ?: cfg.overlayGameOnly,
                 overlayOpacityPct = (opacityPct ?: cfg.overlayOpacityPct).coerceIn(30, 100),
+                overlayBgOpacityPct = (bgOpacityPct ?: cfg.overlayBgOpacityPct).coerceIn(0, 100),
                 overlayCompactScalePct = (compactScalePct ?: cfg.overlayCompactScalePct).coerceIn(40, 400),
                 overlayExpandedScalePct = (expandedScalePct ?: cfg.overlayExpandedScalePct).coerceIn(40, 400)
             )

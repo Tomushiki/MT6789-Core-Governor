@@ -62,7 +62,9 @@ class GovernorEngine(context: Context) {
 
     private val appContext = context.applicationContext
     val storage = ConfigStorage(appContext)
-    val rootShell = RootShell()
+    val rootShell = RootShell().apply {
+        onLog = { msg -> log(LogLevel.INFO, "RootShell", msg) }
+    }
     private val discovery = HardwareDiscovery(rootShell)
     private val foregroundDetector = ForegroundDetector(appContext, rootShell)
 
