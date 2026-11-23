@@ -525,15 +525,16 @@ class OverlayController(
         private fun applyPaintSizes(s: Float) {
             val d = effDensityFor(s)
             borderPaint.strokeWidth = 1f * d
-            trackPaint.strokeWidth = 4f * d
-            arcPaint.strokeWidth = 4f * d
+            val ringStroke = if (detailed) 6f * d else 4f * d
+            trackPaint.strokeWidth = ringStroke
+            arcPaint.strokeWidth = ringStroke
             compactLabelPaint.textSize = 9f * d
             compactTextPaint.textSize = 11.5f * d
-            ringCenterPaint.textSize = 11.5f * d
+            ringCenterPaint.textSize = if (detailed) 16.5f * d else 11.5f * d
             ringLabelPaint.textSize = 10f * d
-            ringSubPaint.textSize = 9.5f * d
-            detailedTextPaint.textSize = 12f * d
-            detailedBoldPaint.textSize = 12f * d
+            ringSubPaint.textSize = if (detailed) 12f * d else 9.5f * d
+            detailedTextPaint.textSize = 14.5f * d
+            detailedBoldPaint.textSize = 14.5f * d
         }
 
         fun isExpandedMode(): Boolean = expanded
@@ -651,13 +652,25 @@ class OverlayController(
             return maxW
         }
 
+        private fun detailedRowCount(dData: DisplayData): Int =
+            3 + dData.clusters.sumOf { 1 + it.cores.size }
+
+        private fun measureDetailedContentHeight(d: Float): Float {
+            val subFm = ringSubPaint.fontMetrics
+            val subH = subFm.descent - subFm.ascent
+            val slotH = 66f * d + 4f * d + subH
+            val minLeftColH = 3f * slotH + 2f * (12f * d)
+            val rightColH = detailedRowCount(data) * (14.5f * d * 1.5f)
+            return maxOf(minLeftColH, rightColH)
+        }
+
         private fun measureNaturalWidthAtScaleOne(): Float {
             applyPaintSizes(1f)
             val d = baseDensity
             return if (detailed) {
-                val hPad = 12f * d
-                val leftColW = 64f * d
-                val colGap = 14f * d
+                val hPad = 14f * d
+                val leftColW = 78f * d
+                val colGap = 16f * d
                 hPad * 2f + leftColW + colGap + measureDetailedRightColWidth()
             } else if (expanded) {
                 val hPad = 12f * d
@@ -685,6 +698,33 @@ class OverlayController(
         }
 
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            if (detailed) {
+                val (screenW, screenH) = getScreenSize()
+                val maxAllowedWidth = (screenW * 0.70f).coerceAtLeast(48f * baseDensity)
+                val maxAllowedHeight = (screenH * 0.60f).coerceAtLeast(48f * baseDensity)
+                val naturalWidthAt1 = measureNaturalWidthAtScaleOne().coerceAtLeast(1f)
+                val naturalHeightAt1 = (14f * baseDensity * 2f + measureDetailedContentHeight(baseDensity)).coerceAtLeast(1f)
+                val clampedS = minOf(
+                    requestedScale(),
+                    maxAllowedWidth / naturalWidthAt1,
+                    maxAllowedHeight / naturalHeightAt1
+                ).coerceAtLeast(0.1f)
+                effectiveScale = clampedS
+                applyPaintSizes(clampedS)
+                val d = effDensityFor(clampedS)
+
+                val hPad = 14f * d
+                val vPad = 14f * d
+                val leftColW = 78f * d
+                val colGap = 16f * d
+                val contentH = measureDetailedContentHeight(d)
+
+                val width = ceil((hPad * 2f + leftColW + colGap + measureDetailedRightColWidth()).toDouble()).toInt()
+                val height = ceil((vPad * 2f + contentH).toDouble()).toInt()
+                setMeasuredDimension(width, height)
+                return
+            }
+
             val screenWidth = resources.displayMetrics.widthPixels.toFloat()
             val maxAllowedWidth = (screenWidth - 16f * baseDensity).coerceAtLeast(48f * baseDensity)
             val naturalWidthAt1 = measureNaturalWidthAtScaleOne().coerceAtLeast(1f)
@@ -693,28 +733,7 @@ class OverlayController(
             applyPaintSizes(clampedS)
             val d = effDensityFor(clampedS)
 
-            if (detailed) {
-                val hPad = 12f * d
-                val vPad = 12f * d
-                val leftColW = 64f * d
-                val colGap = 14f * d
-                val ringSize = 44f * d
-                val subGap = 2f * d
-                val ringGap = 8f * d
-
-                val subFm = ringSubPaint.fontMetrics
-                val subH = subFm.descent - subFm.ascent
-                val leftColH = 3f * (ringSize + subGap + subH) + 2f * ringGap
-
-                val (regularRows, boldRows) = detailedRowStrings(data)
-                val rowCount = regularRows.size + boldRows.size
-                val lineHeight = (12f * d) * 1.45f
-                val rightColH = rowCount * lineHeight
-
-                val width = ceil((hPad * 2f + leftColW + colGap + measureDetailedRightColWidth()).toDouble()).toInt()
-                val height = ceil((vPad * 2f + maxOf(leftColH, rightColH)).toDouble()).toInt()
-                setMeasuredDimension(width, height)
-            } else if (expanded) {
+            if (expanded) {
                 val ringSize = 48f * d
                 val hPad = 12f * d
                 val vPad = 12f * d
@@ -954,20 +973,31 @@ class OverlayController(
         }
 
         private fun drawDetailed(canvas: Canvas, d: Float) {
-            val hPad = 12f * d
-            val vPad = 12f * d
-            val leftColW = 64f * d
-            val colGap = 14f * d
-            val ringSize = 44f * d
-            val stroke = 4f * d
-            val subGap = 2f * d
-            val ringGap = 8f * d
+            val hPad = 14f * d
+            val vPad = 14f * d
+            val leftColW = 78f * d
+            val colGap = 16f * d
+            val ringSize = 66f * d
+            val stroke = 6f * d
+            val subGap = 4f * d
+            val minRingGap = 12f * d
 
-            val baseCenterSize = 11f * d
-            val baseSubSize = 9.5f * d
+            val baseCenterSize = 16.5f * d
+            val baseSubSize = 12f * d
             ringSubPaint.textSize = baseSubSize
             val subFm = ringSubPaint.fontMetrics
             val subH = subFm.descent - subFm.ascent
+
+            val textSize = 14.5f * d
+            val lineHeight = textSize * 1.5f
+            val rowCount = detailedRowCount(data)
+            val rightColH = rowCount * lineHeight
+
+            val slotHeight = ringSize + subGap + subH
+            val minLeftColH = 3f * slotHeight + 2f * minRingGap
+            val contentH = maxOf(minLeftColH, rightColH)
+            val ringGap = ((contentH - 3f * slotHeight) / 2f).coerceAtLeast(minRingGap)
+            val rightTop = vPad + ((contentH - rightColH) / 2f).coerceAtLeast(0f)
 
             val innerDiameter = (ringSize - 2f * stroke).coerceAtLeast(1f)
             val maxCenterW = innerDiameter * 0.8f
@@ -980,7 +1010,7 @@ class OverlayController(
                 centerText: String,
                 subText: String
             ) {
-                val ringTop = vPad + slot * (ringSize + subGap + subH + ringGap)
+                val ringTop = vPad + slot * (slotHeight + ringGap)
                 val ringCy = ringTop + ringSize / 2f
                 val inset = stroke / 2f
 
@@ -1039,8 +1069,6 @@ class OverlayController(
             )
 
             val rightLeft = hPad + leftColW + colGap
-            val textSize = 12f * d
-            val lineHeight = textSize * 1.45f
             detailedTextPaint.textSize = textSize
             detailedBoldPaint.textSize = textSize
             val fm = detailedTextPaint.fontMetrics
@@ -1049,7 +1077,7 @@ class OverlayController(
 
             var rowIdx = 0
             fun rowBaseline(): Float {
-                val top = vPad + rowIdx * lineHeight
+                val top = rightTop + rowIdx * lineHeight
                 rowIdx++
                 return top + (lineHeight - (fm.descent - fm.ascent)) / 2f - fm.ascent
             }

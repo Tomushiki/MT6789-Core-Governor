@@ -111,6 +111,11 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onStop() {
+        super.onStop()
+        (application as CoreGovernorApp).engine.storage.flush()
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -316,7 +321,7 @@ fun CoreGovernorRootScreen(
             )
             NavTab.OPPS -> OppTableScreen(
                 hardwareSpec = hardwareSpec,
-                telemetry = telemetry,
+                telemetryFlow = vm.telemetry,
                 onRefreshTable = vm::refreshGpuOppTable,
                 modifier = Modifier
             )

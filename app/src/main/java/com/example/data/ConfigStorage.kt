@@ -28,6 +28,12 @@ import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
 import com.example.model.TempThrottleConfig
 import com.example.model.ThrottleCurveShape
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -51,6 +57,11 @@ class ConfigStorage(private val context: Context) {
     private val backupFile = File(context.filesDir, "original_hardware_backup.json")
     private val perfPinFile = File(context.filesDir, "performance_pin_policies.json")
 
+    private val configScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val configWriteLock = Any()
+    private var configSaveJob: Job? = null
+    private var pendingConfig: GovernorConfig? = null
+
     fun loadConfig(): GovernorConfig {
         if (!configFile.exists()) return GovernorConfig()
         return try {
@@ -62,9 +73,53 @@ class ConfigStorage(private val context: Context) {
     }
 
     fun saveConfig(config: GovernorConfig) {
+        synchronized(configWriteLock) {
+            configSaveJob?.cancel()
+            configSaveJob = null
+            pendingConfig = null
+            writeConfigAtomically(config)
+        }
+    }
+
+    fun saveConfigDebounced(config: GovernorConfig, delayMs: Long = 400L) {
+        synchronized(configWriteLock) {
+            pendingConfig = config
+            configSaveJob?.cancel()
+            configSaveJob = configScope.launch {
+                delay(delayMs)
+                synchronized(configWriteLock) {
+                    val toWrite = pendingConfig ?: return@synchronized
+                    pendingConfig = null
+                    configSaveJob = null
+                    writeConfigAtomically(toWrite)
+                }
+            }
+        }
+    }
+
+    fun flush() {
+        synchronized(configWriteLock) {
+            configSaveJob?.cancel()
+            configSaveJob = null
+            val toWrite = pendingConfig ?: return
+            pendingConfig = null
+            writeConfigAtomically(toWrite)
+        }
+    }
+
+    private fun writeConfigAtomically(config: GovernorConfig) {
+        val tmpFile = File(context.filesDir, "core_governor_config.json.tmp")
         try {
-            configFile.writeText(configToJson(config).toString(2))
+            tmpFile.writeText(configToJson(config).toString(2))
+            if (!tmpFile.renameTo(configFile)) {
+                configFile.writeText(tmpFile.readText())
+                tmpFile.delete()
+            }
         } catch (_: Throwable) {
+            try {
+                if (tmpFile.exists()) tmpFile.delete()
+            } catch (_: Throwable) {
+            }
         }
     }
 

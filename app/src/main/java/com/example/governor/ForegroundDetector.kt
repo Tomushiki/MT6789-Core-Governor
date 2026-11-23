@@ -21,7 +21,10 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.os.Build
 import android.os.Process
+import android.os.SystemClock
 import com.example.root.RootShell
+
+private val DUMPSYS_FOCUS_PKG_REGEX = Regex("""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)/""")
 
 class ForegroundDetector(
     private val context: Context,
@@ -30,8 +33,15 @@ class ForegroundDetector(
     private var lastKnownPackage: String = ""
     private var lastRootFallbackCheckMs: Long = 0L
     private var lastUsageQueryEndMs: Long = 0L
+    @Volatile private var cachedUsagePermission: Boolean? = null
+    @Volatile private var lastUsagePermissionCheckRt: Long = 0L
 
-    fun hasUsageStatsPermission(): Boolean {
+    fun hasUsageStatsPermission(forceRefresh: Boolean = false): Boolean {
+        val nowRt = SystemClock.elapsedRealtime()
+        val cached = cachedUsagePermission
+        if (!forceRefresh && cached != null && nowRt - lastUsagePermissionCheckRt < 5_000L) {
+            return cached
+        }
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
         val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             appOps.unsafeCheckOpNoThrow(
@@ -47,7 +57,10 @@ class ForegroundDetector(
                 context.packageName
             )
         }
-        return mode == AppOpsManager.MODE_ALLOWED
+        val granted = mode == AppOpsManager.MODE_ALLOWED
+        cachedUsagePermission = granted
+        lastUsagePermissionCheckRt = nowRt
+        return granted
     }
 
     suspend fun detectForegroundPackage(nowMs: Long): String {
@@ -90,7 +103,7 @@ class ForegroundDetector(
                 "dumpsys window displays 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | tail -n 2"
             )
             if (res.isSuccess && res.stdout.isNotBlank()) {
-                val match = Regex("""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)/""").find(res.stdout)
+                val match = DUMPSYS_FOCUS_PKG_REGEX.find(res.stdout)
                 val pkg = match?.groupValues?.getOrNull(1)
                 if (!pkg.isNullOrBlank()) {
                     lastKnownPackage = pkg

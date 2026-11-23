@@ -2,6 +2,29 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.3.2] - 2026-11-23
+
+### Changed
+- Detailed overlay now uses larger rings, larger text and balanced spacing for readability, with the column heights aligned and a screen-size safety clamp.
+- Version 2.3.2 (versionCode 37).
+
+## [2.3.1] - 2026-11-23
+
+### Changed
+- **Debounced config saves.** Changing sliders or toggles now updates in-memory state immediately and writes `core_governor_config.json` to disk after a ~400 ms pause instead of on every step, flushing pending changes when stopping the governor or leaving the app.
+- **Cached usage-stats permission check.** `ForegroundDetector` now caches the `AppOpsManager` usage-access binder query for 5 seconds during background ticks instead of querying every cycle.
+- **Notification reuse & deduplication.** The foreground service builds its notification action `PendingIntent`s once and skips `notify()` calls when the title, telemetry line, and actions have not changed.
+- **Compiled regex reuse.** Moved per-tick and per-call `Regex` instances into compiled-once constants in `SysfsParsers`, `GovernorEngine`, `ForegroundDetector`, and `FpsDaemon`.
+- **OPPs tab efficiency & Pause switch.** Scoped state reads on the GPU OPPs screen so only rows whose live/pinned/capped status changed recompose, throttled raw status card refreshes to ~1 s, and added a **Pause live updates** switch (unpersisted, off by default) that freezes the live highlight and raw card until turned off or refreshed.
+- Version 2.3.1 (versionCode 36).
+
+### Fixed
+- **Atomic config writes.** Settings are now written to a temporary file first and renamed over `core_governor_config.json` to prevent partial or truncated writes.
+
+### Removed
+- Removed per-change `"Pin OPP idx=... OK"` success log entries from the GPU governor (failures are still logged).
+- Removed unused tracking variables in the FPS sampler loop and an unused performance-pin policy load on governor startup.
+
 ## [2.3.0] - 2026-11-23
 
 ### Added

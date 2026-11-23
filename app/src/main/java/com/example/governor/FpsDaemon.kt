@@ -141,6 +141,7 @@ object FpsDaemon {
     // On newer Android, `dumpsys SurfaceFlinger --list` can print a long debug dump
     // (RequestedLayerState{...}) instead of plain layer names, so real names are pulled out with a regex.
     private val layerRegex = Regex("SurfaceView\\[[^\\]]*\\](?:\\(BLAST\\))?#\\d+|[\\w.\\$]+/[\\w.\\$]+(?:\\(BLAST\\))?#\\d+")
+    private val whitespaceRegex = Regex("\\s+")
     private val skipWords = listOf("InputSink", "Splash", "Letterbox", "Background for", "Bounds for", "Dim Layer", "Task=", "Wallpaper")
 
     /** Layers of the app (SurfaceView layers first, then newest), up to 6. Only called from the scan thread. */
@@ -184,7 +185,7 @@ object FpsDaemon {
         val present = ArrayList<Long>()
         val ready = ArrayList<Long>()
         for (line in text.lineSequence().drop(1)) {
-            val parts = line.trim().split(Regex("\\s+"))
+            val parts = line.trim().split(whitespaceRegex)
             if (parts.size < 3) continue
             val a = parts[1].toLongOrNull()
             if (a != null && a > 0L && a != Long.MAX_VALUE) present.add(a)

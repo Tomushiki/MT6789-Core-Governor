@@ -60,12 +60,27 @@ data class PowerReading(
 
 object SysfsParsers {
 
+    private val WHITESPACE_REGEX = Regex("\\s+")
+    private val OPP_IDX_REGEX = Regex("""\[\s*(\d+)\s*\*?\s*\]|OPP\s*[:=]?\s*(\d+)""", RegexOption.IGNORE_CASE)
+    private val OPP_FREQ_REGEX = Regex("""(?:freq|khz)\s*[:=]\s*(\d+)""", RegexOption.IGNORE_CASE)
+    private val MHZ_REGEX = Regex("""(\d+(?:\.\d+)?)\s*MHz""", RegexOption.IGNORE_CASE)
+    private val KHZ_REGEX = Regex("""(\d+)\s*KHz""", RegexOption.IGNORE_CASE)
+    private val OPP_VOLT_REGEX = Regex("""(?:volt|vgpu|v_gpu)\s*[:=]\s*(\d+)""", RegexOption.IGNORE_CASE)
+    private val WORD_DIGITS_REGEX = Regex("""\b\d+\b""")
+    private val STATUS_OPP_PATTERNS = listOf(
+        Regex("""(?:cur_opp|current\s+opp|working\s+opp|opp(?:_idx|_index)?)\s*[:=]\s*\[?\s*(-?\d+)\s*\]?""", RegexOption.IGNORE_CASE),
+        Regex("""OPP\s*\[?\s*(-?\d+)\s*\]?""", RegexOption.IGNORE_CASE)
+    )
+    private val STATUS_FREQ_REGEX = Regex("""(?:cur_freq|current\s+freq|gpu_freq|freq)\s*[:=]\s*(\d+)\s*(khz|mhz)?""", RegexOption.IGNORE_CASE)
+    private val STATUS_UTIL_REGEX = Regex("""(?:loading|util(?:ization)?|busy)\s*[:=]\s*(\d+(?:\.\d+)?)\s*%?""", RegexOption.IGNORE_CASE)
+    private val GPU_UTIL_NUMBER_REGEX = Regex("""(\d+(?:\.\d+)?)""")
+
     fun parseProcStat(raw: String): Map<Int, CpuTickSnapshot> {
         val result = mutableMapOf<Int, CpuTickSnapshot>()
         raw.lineSequence().forEach { line ->
             val trimmed = line.trim()
             if (trimmed.startsWith("cpu") && trimmed.length > 3 && trimmed[3].isDigit()) {
-                val parts = trimmed.split(Regex("\\s+"))
+                val parts = trimmed.split(WHITESPACE_REGEX)
                 val cpuId = parts[0].removePrefix("cpu").toIntOrNull() ?: return@forEach
                 if (parts.size >= 5) {
                     val user = parts[1].toLongOrNull() ?: 0L
@@ -169,29 +184,25 @@ object SysfsParsers {
      */
     fun parseGpufreqOppTable(raw: String): ParsedOppTableResult {
         val rawEntries = mutableListOf<GpuOpp>()
-        val idxRegex = Regex("""\[\s*(\d+)\s*\*?\s*\]|OPP\s*[:=]?\s*(\d+)""", RegexOption.IGNORE_CASE)
-        val freqRegex = Regex("""(?:freq|khz)\s*[:=]\s*(\d+)""", RegexOption.IGNORE_CASE)
-        val mhzRegex = Regex("""(\d+(?:\.\d+)?)\s*MHz""", RegexOption.IGNORE_CASE)
-        val voltRegex = Regex("""(?:volt|vgpu|v_gpu)\s*[:=]\s*(\d+)""", RegexOption.IGNORE_CASE)
 
         raw.lineSequence().forEach { line ->
             val trimmed = line.trim()
             if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("-")) return@forEach
 
-            val idxMatch = idxRegex.find(trimmed)
+            val idxMatch = OPP_IDX_REGEX.find(trimmed)
             var oppIndex = idxMatch?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }?.toIntOrNull()
 
-            var freqKhz = freqRegex.find(trimmed)?.groupValues?.getOrNull(1)?.toLongOrNull()
+            var freqKhz = OPP_FREQ_REGEX.find(trimmed)?.groupValues?.getOrNull(1)?.toLongOrNull()
             if (freqKhz == null) {
-                mhzRegex.find(trimmed)?.groupValues?.getOrNull(1)?.toDoubleOrNull()?.let { mhz ->
+                MHZ_REGEX.find(trimmed)?.groupValues?.getOrNull(1)?.toDoubleOrNull()?.let { mhz ->
                     freqKhz = (mhz * 1000.0).toLong()
                 }
             }
-            var voltRaw = voltRegex.find(trimmed)?.groupValues?.getOrNull(1)?.toLongOrNull()
+            var voltRaw = OPP_VOLT_REGEX.find(trimmed)?.groupValues?.getOrNull(1)?.toLongOrNull()
 
             // Fallback for plain whitespace/comma-separated rows like "0  1000000  85000" or "[0] 1000000 85000"
             if (oppIndex == null || freqKhz == null) {
-                val nums = Regex("""\b\d+\b""").findAll(trimmed).mapNotNull { it.value.toLongOrNull() }.toList()
+                val nums = WORD_DIGITS_REGEX.findAll(trimmed).mapNotNull { it.value.toLongOrNull() }.toList()
                 if (nums.size >= 2) {
                     val candidateIdx = oppIndex ?: nums[0].toInt()
                     val candidateFreq = freqKhz ?: nums.firstOrNull { it >= 10_000L && it != candidateIdx.toLong() }
@@ -255,11 +266,7 @@ object SysfsParsers {
         var oppIdx: Int? = null
         var utilPct: Float? = null
 
-        val oppPatterns = listOf(
-            Regex("""(?:cur_opp|current\s+opp|working\s+opp|opp(?:_idx|_index)?)\s*[:=]\s*\[?\s*(-?\d+)\s*\]?""", RegexOption.IGNORE_CASE),
-            Regex("""OPP\s*\[?\s*(-?\d+)\s*\]?""", RegexOption.IGNORE_CASE)
-        )
-        for (pat in oppPatterns) {
+        for (pat in STATUS_OPP_PATTERNS) {
             val match = pat.find(raw)
             val parsed = match?.groupValues?.getOrNull(1)?.toIntOrNull()
             if (parsed != null && parsed >= 0) {
@@ -268,8 +275,7 @@ object SysfsParsers {
             }
         }
 
-        val freqRegex = Regex("""(?:cur_freq|current\s+freq|gpu_freq|freq)\s*[:=]\s*(\d+)\s*(khz|mhz)?""", RegexOption.IGNORE_CASE)
-        freqRegex.find(raw)?.let { m ->
+        STATUS_FREQ_REGEX.find(raw)?.let { m ->
             val value = m.groupValues[1].toLongOrNull()
             val unit = m.groupValues.getOrNull(2)?.lowercase().orEmpty()
             if (value != null && value > 0L) {
@@ -282,12 +288,12 @@ object SysfsParsers {
             }
         }
         if (freqKhz == null) {
-            Regex("""(\d+(?:\.\d+)?)\s*MHz""", RegexOption.IGNORE_CASE).find(raw)?.groupValues?.getOrNull(1)?.toDoubleOrNull()?.let { mhz ->
+            MHZ_REGEX.find(raw)?.groupValues?.getOrNull(1)?.toDoubleOrNull()?.let { mhz ->
                 freqKhz = (mhz * 1000.0).toLong()
             }
         }
         if (freqKhz == null) {
-            Regex("""(\d+)\s*KHz""", RegexOption.IGNORE_CASE).find(raw)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { khz ->
+            KHZ_REGEX.find(raw)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { khz ->
                 freqKhz = khz
             }
         }
@@ -300,8 +306,7 @@ object SysfsParsers {
             oppIdx = oppTable.minByOrNull { abs(it.freqKhz - freqKhz!!) }?.oppIndex
         }
 
-        val utilRegex = Regex("""(?:loading|util(?:ization)?|busy)\s*[:=]\s*(\d+(?:\.\d+)?)\s*%?""", RegexOption.IGNORE_CASE)
-        utilRegex.find(raw)?.groupValues?.getOrNull(1)?.toFloatOrNull()?.let { u ->
+        STATUS_UTIL_REGEX.find(raw)?.groupValues?.getOrNull(1)?.toFloatOrNull()?.let { u ->
             utilPct = u.coerceIn(0f, 100f)
         }
 
@@ -310,7 +315,7 @@ object SysfsParsers {
 
     fun parseFreqListKhz(raw: String): List<Long> {
         return raw.trim()
-            .split(Regex("\\s+"))
+            .split(WHITESPACE_REGEX)
             .mapNotNull { it.toLongOrNull() }
             .filter { it > 0L }
             .distinct()
@@ -324,7 +329,7 @@ object SysfsParsers {
     fun parseGpuUtilPct(raw: String): Float? {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return null
-        val nums = Regex("""(\d+(?:\.\d+)?)""")
+        val nums = GPU_UTIL_NUMBER_REGEX
             .findAll(trimmed)
             .mapNotNull { it.groupValues[1].toFloatOrNull() }
             .toList()

@@ -53,6 +53,43 @@ class GovernorService : Service() {
     private lateinit var engine: GovernorEngine
     private lateinit var overlayController: OverlayController
     private var screenReceiverRegistered = false
+    private var lastNotificationKey: String? = null
+
+    private val notificationManager: NotificationManager by lazy {
+        getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    }
+    private val openIntent: PendingIntent by lazy {
+        PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+    private val stopIntent: PendingIntent by lazy {
+        PendingIntent.getService(
+            this,
+            1,
+            Intent(this, GovernorService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+    private val modeIntent: PendingIntent by lazy {
+        PendingIntent.getService(
+            this,
+            2,
+            Intent(this, GovernorService::class.java).apply { action = ACTION_CYCLE_MODE },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+    private val unlockIntent: PendingIntent by lazy {
+        PendingIntent.getService(
+            this,
+            3,
+            Intent(this, GovernorService::class.java).apply { action = ACTION_UNLOCK_OVERLAY },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -101,8 +138,7 @@ class GovernorService : Service() {
             }
             ACTION_UNLOCK_OVERLAY -> {
                 engine.updateConfig { it.copy(overlayClickThrough = false) }
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                nm.notify(NOTIFICATION_ID, buildNotification(engine.telemetry.value))
+                notifyIfChanged(engine.telemetry.value)
                 return START_STICKY
             }
             else -> {
@@ -121,8 +157,7 @@ class GovernorService : Service() {
                     .map { it.overlayEnabled to it.overlayClickThrough }
                     .distinctUntilChanged()
                     .collectLatest {
-                        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                        nm.notify(NOTIFICATION_ID, buildNotification(engine.telemetry.value))
+                        notifyIfChanged(engine.telemetry.value)
                     }
             }
         }
@@ -133,8 +168,7 @@ class GovernorService : Service() {
                 val now = System.currentTimeMillis()
                 if (now - lastNotifyMs >= 900L) {
                     lastNotifyMs = now
-                    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    nm.notify(NOTIFICATION_ID, buildNotification(state))
+                    notifyIfChanged(state)
                 }
             }
         }
@@ -156,26 +190,14 @@ class GovernorService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
-    private fun buildNotification(state: TelemetryState): Notification {
-        val openIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val stopIntent = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, GovernorService::class.java).apply { action = ACTION_STOP },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val modeIntent = PendingIntent.getService(
-            this,
-            2,
-            Intent(this, GovernorService::class.java).apply { action = ACTION_CYCLE_MODE },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+    private data class NotificationContent(
+        val key: String,
+        val statusTitle: String,
+        val telemetryLine: String,
+        val showUnlock: Boolean
+    )
 
+    private fun buildNotificationContent(state: TelemetryState): NotificationContent {
         val statusTitle = if (state.isRunning) {
             val capText = if (state.effectiveCpuCapPct < 99.5f || state.effectiveGpuCapPct < 99.5f) {
                 " • Cap ${state.effectiveCpuCapPct.toInt()}%/${state.effectiveGpuCapPct.toInt()}%"
@@ -189,12 +211,24 @@ class GovernorService : Service() {
             "P${c.policyId}:${c.targetFreqKhz / 1000}M"
         }
         val gpuText = if (state.gpu.available) "GPU:${state.gpu.targetFreqKhz / 1000}M" else ""
-        val telemetryLine = "${"%.1f".format(state.temperatureC)}°C • ${"%.2f".format(state.watts)}W • $clustersSummary $gpuText"
+        val telemetryLine = "${"%.1f".format(state.temperatureC)}°C • ${"%.2f".format(state.watts)}W • $clustersSummary $gpuText".trim()
+        val cfg = engine.config.value
+        val showUnlock = cfg.overlayEnabled && cfg.overlayClickThrough
+        val key = "$statusTitle\u0000$telemetryLine\u0000$showUnlock"
+        return NotificationContent(key, statusTitle, telemetryLine, showUnlock)
+    }
 
+    private fun buildNotification(state: TelemetryState): Notification {
+        val content = buildNotificationContent(state)
+        lastNotificationKey = content.key
+        return buildNotification(content)
+    }
+
+    private fun buildNotification(content: NotificationContent): Notification {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(statusTitle)
-            .setContentText(telemetryLine.trim())
+            .setContentTitle(content.statusTitle)
+            .setContentText(content.telemetryLine)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
@@ -202,17 +236,17 @@ class GovernorService : Service() {
             .addAction(0, getString(R.string.action_toggle_mode), modeIntent)
             .addAction(0, getString(R.string.action_stop_governor), stopIntent)
 
-        val cfg = engine.config.value
-        if (cfg.overlayEnabled && cfg.overlayClickThrough) {
-            val unlockIntent = PendingIntent.getService(
-                this,
-                3,
-                Intent(this, GovernorService::class.java).apply { action = ACTION_UNLOCK_OVERLAY },
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
+        if (content.showUnlock) {
             builder.addAction(0, "Unlock overlay", unlockIntent)
         }
         return builder.build()
+    }
+
+    private fun notifyIfChanged(state: TelemetryState) {
+        val content = buildNotificationContent(state)
+        if (content.key == lastNotificationKey) return
+        lastNotificationKey = content.key
+        notificationManager.notify(NOTIFICATION_ID, buildNotification(content))
     }
 
     private fun ensureNotificationChannel() {
@@ -240,6 +274,7 @@ class GovernorService : Service() {
         }
         overlayController.stop()
         engine.stopAndRestore()
+        engine.storage.flush()
         overlayNotifyJob?.cancel()
         telemetryJob?.cancel()
         serviceScope.cancel()

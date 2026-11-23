@@ -57,6 +57,8 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
+private val WHITESPACE_REGEX = Regex("\\s+")
+
 /**
  * Single authoritative governor controller for CoreGovernor v2.
  * GPU control operates solely via real OPP indexes written to /proc/gpufreqv2/fix_target_opp_index.
@@ -185,7 +187,7 @@ class GovernorEngine(context: Context) {
         log(LogLevel.INFO, "Engine", "CoreGovernor v2 initialized (OPP-index GPU control).")
     }
 
-    fun hasUsageStatsPermission(): Boolean = foregroundDetector.hasUsageStatsPermission()
+    fun hasUsageStatsPermission(): Boolean = foregroundDetector.hasUsageStatsPermission(forceRefresh = true)
 
     suspend fun discoverHardware(forceRefresh: Boolean = false): HardwareSpec {
         if (!forceRefresh && _hardwareSpec.value.discoveredAtMs > 0L) {
@@ -303,10 +305,9 @@ class GovernorEngine(context: Context) {
             installCrashRestoreHook()
 
             resetLoopState()
-            val rememberedPerfPolicies = storage.loadPerformancePinPolicies()
             for (policy in hw.cpuPolicies) {
                 val availGovsRaw = rootShell.readFile("${policy.path}/scaling_available_governors").orEmpty()
-                val availGovs = availGovsRaw.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                val availGovs = availGovsRaw.trim().split(WHITESPACE_REGEX).filter { it.isNotEmpty() }
                 val switched = ("performance" in availGovs) &&
                     safeWriteSysfs("${policy.path}/scaling_governor", "performance")
                 if (switched) {
@@ -507,6 +508,7 @@ class GovernorEngine(context: Context) {
     }
 
     fun stopAndRestore() {
+        storage.flush()
         metrics.onStopped()
         stopFpsSampler()
         sensorPinner.setServiceRunning(false)
@@ -903,7 +905,7 @@ class GovernorEngine(context: Context) {
                     pinState.minRevertCount += 1
                     if (pinState.minRevertCount >= 3) {
                         val availGovsRaw = rootShell.readFile("${p.path}/scaling_available_governors").orEmpty()
-                        val availGovs = availGovsRaw.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                        val availGovs = availGovsRaw.trim().split(WHITESPACE_REGEX).filter { it.isNotEmpty() }
                         val perfAllowed = "performance" in availGovs
                         val switched = perfAllowed && safeWriteSysfs("${p.path}/scaling_governor", "performance")
                         if (switched) {
@@ -1092,14 +1094,15 @@ class GovernorEngine(context: Context) {
                         val writeAttempted = shouldAttemptWrite(fixPath, nowMs)
                         if (writeAttempted) {
                             val ok = safeWriteSysfs(fixPath, targetOppIdx.toString())
-                            log(
-                                if (ok) LogLevel.INFO else LogLevel.ERROR,
-                                "GpuOpp",
-                                "Pin OPP idx=$targetOppIdx (pos=${selection.targetPos}/${gpuSpec.oppTable.lastIndex}, " +
-                                    "${targetFreqKhz} kHz / ${targetFreqKhz / 1000} MHz) -> ${if (ok) "OK" else "FAILED"}"
-                            )
                             if (ok) {
                                 lastWrittenGpuOppIndex = targetOppIdx
+                            } else {
+                                log(
+                                    LogLevel.ERROR,
+                                    "GpuOpp",
+                                    "Pin OPP idx=$targetOppIdx (pos=${selection.targetPos}/${gpuSpec.oppTable.lastIndex}, " +
+                                        "${targetFreqKhz} kHz / ${targetFreqKhz / 1000} MHz) -> FAILED"
+                                )
                             }
                         }
                     }
@@ -1232,10 +1235,6 @@ class GovernorEngine(context: Context) {
         var lastPkg = ""
         var inactivePublished = false
         val lastDiagByKey = mutableMapOf<String, String>()
-        val loggedRaw = mutableSetOf<String>()
-        var lastLayerListRt = 0L
-        var layerNames = emptyList<String>()
-        val lastPresentTs = mutableMapOf<String, Long>()
         var prevTimestats = emptyMap<String, Long>()
         var consecutiveErrors = 0
         var lastSource = ""
@@ -1285,7 +1284,9 @@ class GovernorEngine(context: Context) {
             val path = kernelPath ?: return null
             val r = rootShell.exec("cat $path 2>/dev/null")
             if (r.stdout.isBlank()) return null
-            val token = if (kernelAwk) r.stdout.trim().split(Regex("\\s+")).getOrNull(1) else r.stdout.trim().split(Regex("\\s+")).firstOrNull()
+            val trimmedOut = r.stdout.trim()
+            val parts = trimmedOut.split(WHITESPACE_REGEX)
+            val token = if (kernelAwk) parts.getOrNull(1) else parts.firstOrNull()
             return token?.toFloatOrNull()
         }
 
@@ -1378,7 +1379,6 @@ class GovernorEngine(context: Context) {
                     inactivePublished = true
                 }
                 lastPkg = ""
-                lastPresentTs.clear()
                 prevTimestats = emptyMap()
                 lastSampleRt = 0L
                 consecutiveErrors = 0
@@ -1410,10 +1410,8 @@ class GovernorEngine(context: Context) {
             }
             if (pkg != lastPkg) {
                 lastPkg = pkg
-                lastPresentTs.clear()
                 prevTimestats = emptyMap()
                 lastSampleRt = 0L
-                lastLayerListRt = 0L
                 _telemetry.update { it.copy(fps = 0f) }
             }
 
@@ -1582,7 +1580,7 @@ class GovernorEngine(context: Context) {
         val prev = _config.value
         val next = transform(prev)
         _config.value = next
-        storage.saveConfig(next)
+        storage.saveConfigDebounced(next)
         _telemetry.update { it.copy(modeOverride = next.modeOverride) }
 
         if (controlJob?.isActive == true) {
