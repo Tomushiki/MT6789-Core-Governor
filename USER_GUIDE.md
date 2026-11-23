@@ -69,7 +69,7 @@ If wattage readings look inverted or 1000 times too large or small, use the cali
 A small always-visible strip showing CPU, GPU, temperature and power. It is off by default and only shows while the service is running.
 
 - Enable overlay: turns it on.
-- Tap the strip to expand it.
+- The compact strip shows CPU, GPU, FPS, temperature and power. Tap it to cycle to the medium and detailed styles.
 - Click-through: touches pass through the overlay. Use the Unlock overlay button in the notification to move it again.
 - Show only in Game mode: hides it in Normal mode.
 - Opacity, Compact size and Expanded size: change how it looks. The overlay always stays on screen.
@@ -96,6 +96,7 @@ The Metrics tab shows how the phone behaves over time, so you can see what a tun
 - Drag on a graph to read the values at that moment. The same moment is marked on all graphs. Double-tap to clear.
 - Live 5m, 15m and 30m choose how far back the live graphs go. History is kept only while the app is running.
 - Game sessions are saved automatically when a game from the Apps tab is in the foreground for at least 20 seconds. Tap a saved session to open it, and use the bin icon to delete it. The newest 40 are kept.
+- FPS is only measured while the overlay is turned on (any style), so turn the overlay on if the FPS graphs are empty.
 - Ratios stay blank when there is no FPS reading or the power reading is near zero. If power numbers look wrong, use the calibration options in the power section.
 
 A good way to use it: play the same game for a few minutes with one setting, change one thing in Tuning, play again, and compare the two saved sessions (FPS/W, 5% low, peak temperature).

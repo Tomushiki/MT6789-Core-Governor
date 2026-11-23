@@ -1370,7 +1370,8 @@ class GovernorEngine(context: Context) {
         var lastSampleRt = 0L
         while (engineScope.isActive && controlJob?.isActive == true) {
             val cfg = _config.value
-            val active = cfg.overlayEnabled && (cfg.overlayExpanded || cfg.overlayDetailed) && isScreenInteractive
+            // All three overlay styles show FPS now (the compact one too), so measure whenever the overlay is on.
+            val active = cfg.overlayEnabled && isScreenInteractive
             if (!active) {
                 if (!inactivePublished) {
                     _telemetry.update { it.copy(fps = -1f) }

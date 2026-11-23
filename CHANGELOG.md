@@ -2,6 +2,17 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.1.1] - 2026-11-23
+
+### Added
+- **FPS on the compact overlay.** The smallest overlay style now shows CPU, GPU, FPS, temperature and power, so you no longer have to switch to the medium or detailed style to see FPS. The FPS dot uses the same colours as the other styles (green near the screen refresh rate, orange below that). It shows `--` when there is no reading.
+
+### Changed
+- FPS is now measured whenever the overlay is on, in any style (before, only in medium and detailed). The extra cost is the same FPS helper that those styles already used. With the overlay off, FPS is still not measured.
+- The compact overlay is a little wider because of the new FPS item. Its size sliders and screen-edge limits work as before.
+- Note for the Metrics tab: FPS graphs need the overlay to be on, because that is when FPS is measured. Power, temperature and work-per-watt do not depend on it.
+- Version 2.1.1 (versionCode 33).
+
 ## [2.1.0] - 2026-11-23
 
 ### Added

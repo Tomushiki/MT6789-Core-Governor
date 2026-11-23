@@ -629,12 +629,13 @@ class OverlayController(
                 val cpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("CPU") + labelGap + compactTextPaint.measureText("100%")
                 val gpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("GPU") + labelGap + compactTextPaint.measureText("100%")
                 val tempItemW = dotR * 2f + dotGap + compactTextPaint.measureText("100°")
+                val fpsItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("FPS") + labelGap + compactTextPaint.measureText("240")
                 val powerItemW = maxOf(
                     compactTextPaint.measureText("-10.00W"),
                     compactTextPaint.measureText("\u221210.00W")
                 )
 
-                hPad * 2f + cpuItemW + itemGap + gpuItemW + itemGap + tempItemW + itemGap + powerItemW
+                hPad * 2f + cpuItemW + itemGap + gpuItemW + itemGap + fpsItemW + itemGap + tempItemW + itemGap + powerItemW
             }
         }
 
@@ -696,12 +697,13 @@ class OverlayController(
                 val cpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("CPU") + labelGap + compactTextPaint.measureText("100%")
                 val gpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("GPU") + labelGap + compactTextPaint.measureText("100%")
                 val tempItemW = dotR * 2f + dotGap + compactTextPaint.measureText("100°")
+                val fpsItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("FPS") + labelGap + compactTextPaint.measureText("240")
                 val powerItemW = maxOf(
                     compactTextPaint.measureText("-10.00W"),
                     compactTextPaint.measureText("\u221210.00W")
                 )
 
-                val contentW = cpuItemW + itemGap + gpuItemW + itemGap + tempItemW + itemGap + powerItemW
+                val contentW = cpuItemW + itemGap + gpuItemW + itemGap + fpsItemW + itemGap + tempItemW + itemGap + powerItemW
                 val fm = compactTextPaint.fontMetrics
                 val textH = fm.descent - fm.ascent
 
@@ -747,14 +749,16 @@ class OverlayController(
 
             val cpuVal = "${data.cpuLoadPct}%"
             val gpuVal = "${data.gpuLoadPct}%"
+            val fpsVal = if (data.fps < 0f) "--" else data.fps.roundToInt().toString()
             val tempVal = "${data.tempDeg}°"
             val powerVal = "${formatSignedWatts(data.watts)}W"
 
             val cpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("CPU") + labelGap + compactTextPaint.measureText(cpuVal)
             val gpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("GPU") + labelGap + compactTextPaint.measureText(gpuVal)
+            val fpsItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("FPS") + labelGap + compactTextPaint.measureText(fpsVal)
             val tempItemW = dotR * 2f + dotGap + compactTextPaint.measureText(tempVal)
             val powerItemW = compactTextPaint.measureText(powerVal)
-            val totalContentW = cpuItemW + itemGap + gpuItemW + itemGap + tempItemW + itemGap + powerItemW
+            val totalContentW = cpuItemW + itemGap + gpuItemW + itemGap + fpsItemW + itemGap + tempItemW + itemGap + powerItemW
 
             var x = (width - totalContentW) / 2f
 
@@ -771,6 +775,7 @@ class OverlayController(
 
             drawLabeledDotItem("CPU", cpuVal, loadColor(data.cpuLoadPct))
             drawLabeledDotItem("GPU", gpuVal, loadColor(data.gpuLoadPct))
+            drawLabeledDotItem("FPS", fpsVal, fpsColor(data.fps, data.refreshHz))
 
             dotPaint.color = tempColor(data.tempC)
             canvas.drawCircle(x + dotR, centerY, dotR, dotPaint)
