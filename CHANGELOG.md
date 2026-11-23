@@ -2,6 +2,15 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.3] - 2026-11-23
+
+### Fixed
+- **FPS counter now works like other system FPS monitors.** It first reads the display's own frame counter (the kernel fps node, or SurfaceFlinger's global frame counter), which shows the real frame rate of whatever is on screen. The per-app layer methods from 1.12.2 stay as backups.
+- The Log tab shows which source the FPS comes from.
+
+### Changed
+- Version 1.12.3 (versionCode 17).
+
 ## [1.12.2] - 2026-11-23
 
 ### Fixed

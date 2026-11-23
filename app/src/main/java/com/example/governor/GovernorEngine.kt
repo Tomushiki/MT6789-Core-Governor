@@ -1207,6 +1207,13 @@ class GovernorEngine(context: Context) {
         val lastPresentTs = mutableMapOf<String, Long>()
         var prevTimestats = emptyMap<String, Long>()
         var consecutiveErrors = 0
+        var lastSource = ""
+        var kernelPath: String? = null
+        var kernelChecked = false
+        var kernelAwk = false
+        var sfLastFrames = -1L
+        var sfLastRt = 0L
+        var sfUnsupported = false
 
         val ignored = listOf(
             "StatusBar", "NavigationBar", "ScreenDecor", "Wallpaper", "InputMethod",
@@ -1223,6 +1230,52 @@ class GovernorEngine(context: Context) {
         }
 
         fun q(raw: String): String = "'" + raw.replace("'", "'\"'\"'") + "'"
+
+        // Method A (VTools-style): kernel display fps node, if the device has one
+        suspend fun sampleKernel(): Float? {
+            if (!kernelChecked) {
+                kernelChecked = true
+                val r = rootShell.exec(
+                    "for f in /sys/class/drm/sde-crtc-0/measured_fps /sys/class/graphics/fb0/measured_fps; do " +
+                        "[ -e \$f ] && echo \$f && break; done"
+                )
+                val path = r.stdout.lines().firstOrNull { it.startsWith("/sys/") }?.trim()
+                if (path != null) {
+                    kernelPath = path
+                    kernelAwk = path.contains("sde-crtc")
+                }
+            }
+            val path = kernelPath ?: return null
+            val r = rootShell.exec("cat $path 2>/dev/null")
+            if (r.stdout.isBlank()) return null
+            val token = if (kernelAwk) r.stdout.trim().split(Regex("\\s+")).getOrNull(1) else r.stdout.trim().split(Regex("\\s+")).firstOrNull()
+            return token?.toFloatOrNull()
+        }
+
+        // Method B (VTools-style): SurfaceFlinger global frame counter (binder transaction 1013)
+        suspend fun sampleServiceCall(): Float? {
+            if (sfUnsupported) return null
+            val r = rootShell.exec("service call SurfaceFlinger 1013 2>/dev/null")
+            val text = r.stdout
+            val idx = text.indexOf("(")
+            if (!text.contains("Parcel") || idx < 0 || text.length < idx + 9) {
+                sfUnsupported = true
+                return null
+            }
+            val frames = text.substring(idx + 1, idx + 9).toLongOrNull(16)
+            if (frames == null) {
+                sfUnsupported = true
+                return null
+            }
+            val now = SystemClock.elapsedRealtime()
+            val prevFrames = sfLastFrames
+            val prevRt = sfLastRt
+            sfLastFrames = frames
+            sfLastRt = now
+            if (prevFrames < 0L || prevRt <= 0L || now <= prevRt) return null
+            if (frames < prevFrames) return null
+            return (frames - prevFrames) * 1000f / (now - prevRt)
+        }
 
         // Method 1: dumpsys SurfaceFlinger --latency <layer> (exact present timestamps)
         suspend fun sampleLatency(pkg: String): Float? {
@@ -1353,18 +1406,36 @@ class GovernorEngine(context: Context) {
                 _telemetry.update { it.copy(fps = 0f) }
             }
 
-            val a = sampleLatency(pkg)
+            val g = sampleKernel() ?: sampleServiceCall()
+            var source = "kernel/service"
+            var a: Float? = null
             val sampleRt = SystemClock.elapsedRealtime()
-            val fpsVal: Float = if (a != null && a > 0f) {
-                a
+            val fpsVal: Float = if (g != null && g > 0f) {
+                g
             } else {
-                val b = sampleTimestats(pkg)
-                val elapsed = if (lastSampleRt > 0L) (sampleRt - lastSampleRt) / 1000f else 0f
-                if (b != null && elapsed > 0f) b / elapsed else (a ?: 0f)
+                a = sampleLatency(pkg)
+                if (a != null && a > 0f) {
+                    source = "latency"
+                    a
+                } else {
+                    val b = sampleTimestats(pkg)
+                    val elapsed = if (lastSampleRt > 0L) (sampleRt - lastSampleRt) / 1000f else 0f
+                    if (b != null && b > 0f && elapsed > 0f) {
+                        source = "timestats"
+                        b / elapsed
+                    } else {
+                        source = "idle"
+                        g ?: a ?: 0f
+                    }
+                }
+            }
+            if (source != lastSource) {
+                lastSource = source
+                log(LogLevel.INFO, "FPS", "Source: $source (kernelNode=${kernelPath ?: "none"}, sfCounter=${if (sfUnsupported) "unsupported" else "ok"})")
             }
             lastSampleRt = sampleRt
 
-            if (a == null && fpsVal == 0f) {
+            if (g == null && a == null && fpsVal == 0f) {
                 consecutiveErrors++
                 if (consecutiveErrors >= 5) diag("Both FPS methods returned no data for $pkg (root dumpsys may be blocked)")
             } else {
