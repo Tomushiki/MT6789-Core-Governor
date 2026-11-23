@@ -2,6 +2,19 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.7.2] - 2026-11-23
+
+### Added
+- **Peak and minimum power in Performance Metrics.** The summary now has PEAK POWER, MIN POWER and ENERGY tiles, and each saved session lists its power range. They cover the part of the history you are looking at (the live window or the opened session). Charging samples are excluded, and a 0 W reading (no sensor value) is never counted as the minimum. Sessions saved before this version show a blank minimum.
+- **Background keep-alive (Tuning > Control).** Shows whether Android battery optimization is off for CoreGovernor and turns it off with one button. It tries root first (no prompt, whitelists the app in the device-idle controller and allows background running), checks the real result, and falls back to Android's own "Allow background activity" prompt. There is also an Open app settings button for phone brands with their own Autostart or Background switches. Adds the `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permission.
+- **Always pause on open (OPPs tab).** A second switch under Pause live updates. When on, the OPPs screen starts paused every time you open the app. The Refresh button still takes a fresh reading. The choice is remembered.
+
+- **Restore last state after reboot.** If the governor was running when the phone restarted, it now starts again by itself as soon as Android finishes booting, even when Start Automatically on Boot is off. "Running" is only cleared by pressing Stop (in the app or the notification), so a shutdown, crash or system kill still restores it. New switch "Restore last state after reboot" in Tuning > Control (on by default). The old Start Automatically on Boot switch still works as before. It also brings the governor back after an app update, and listens for the quick-boot broadcast some phone brands send. The Log tab records why it did or did not start.
+
+### Changed
+- The Performance Metrics footer no longer repeats energy and peak power (they have their own tiles now).
+- Version 2.7.2 (versionCode 43).
+
 ## [2.7.1] - 2026-11-23
 
 ### Added

@@ -379,9 +379,15 @@ private fun SummaryCard(summary: MetricSummary, live: Boolean, last: MetricSampl
             StatTile("MAX TEMP", fmt(summary.maxTempC) + "°C", Modifier.weight(1f))
         }
         Spacer(modifier = Modifier.height(8.dp))
-        val chgNote = if (summary.includesCharging) " • charging excluded from avg/energy" else ""
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatTile("PEAK POWER", fmt(summary.maxWatts) + " W", Modifier.weight(1f))
+            StatTile("MIN POWER", fmt(summary.minWatts) + " W", Modifier.weight(1f))
+            StatTile("ENERGY", fmt(summary.energyWh, 2) + " Wh", Modifier.weight(1f))
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        val chgNote = if (summary.includesCharging) " • charging excluded from power stats" else ""
         Text(
-            text = "${fmtDuration(summary.durationMs)} shown • ${fmt(summary.energyWh, 2)} Wh used • peak ${fmt(summary.maxWatts)} W$chgNote",
+            text = "${fmtDuration(summary.durationMs)} shown$chgNote",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -444,6 +450,11 @@ private fun SessionRow(
                     text = "${fmt(s.avgFps, 0)} FPS • ${fmt(s.avgWatts)} W • ${fmt(s.avgFpsPerWatt)} FPS/W • ${fmt(s.maxTempC)}°C",
                     style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodySmall.fontSize),
                     color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Power min ${fmt(s.minWatts)} W • peak ${fmt(s.maxWatts)} W",
+                    style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodySmall.fontSize),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             IconButton(onClick = onDelete) {

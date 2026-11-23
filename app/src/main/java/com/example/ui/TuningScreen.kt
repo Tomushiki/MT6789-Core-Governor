@@ -101,6 +101,7 @@ import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
 import com.example.model.TelemetryState
 import com.example.model.ThrottleCurveShape
+import com.example.service.BootState
 import com.example.service.OverlaySizing
 import com.example.service.OverlayStyle
 import com.example.ui.components.DiscreteFreqSlider
@@ -558,8 +559,27 @@ fun TuningScreen(
                             onCheckedChange = onUpdateStartOnBoot,
                             testTag = "boot_start_switch"
                         )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        val bootContext = androidx.compose.ui.platform.LocalContext.current
+                        var restoreLastState by remember { mutableStateOf(BootState.restoreEnabled(bootContext)) }
+                        SettingSwitchRow(
+                            title = "Restore last state after reboot",
+                            explanation = "If the governor was running when the phone restarted, it starts again by itself as soon as Android finishes booting, even with Start Automatically off. Pressing Stop turns this off until you start it again.",
+                            checked = restoreLastState,
+                            onCheckedChange = {
+                                restoreLastState = it
+                                BootState.setRestoreEnabled(bootContext, it)
+                            },
+                            testTag = "restore_last_state_switch"
+                        )
                     }
                 }
+            }
+
+            // 2a-ter. Background keep-alive (battery optimization)
+            if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.CONTROL) {
+                item { BatteryOptimizationCard() }
             }
 
             // 2a-bis. Memory (RAM)

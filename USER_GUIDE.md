@@ -15,7 +15,7 @@ A plain-English guide to what each part of CoreGovernor does and how to start. E
 - Metrics: history graphs for power, temperature, FPS, FPS per watt and work per watt, plus saved game sessions (see section 7c).
 - Energy: on-device learned power curves, live estimated vs measured power, and the opt-in Efficiency governor (see section 7d).
 - Tuning: all the settings explained below.
-- OPPs: the list of GPU speed steps your device reports. Useful for troubleshooting.
+- OPPs: the list of GPU speed steps your device reports. Useful for troubleshooting. Turn on Always pause on open if you want this screen to start paused every time.
 - Apps: choose which apps count as games.
 - Log: what the governor has been doing, with timestamps. Check it to see whether things are working.
 
@@ -64,6 +64,8 @@ If wattage readings look inverted or 1000 times too large or small, use the cali
 
 - Screen-off power saving (off by default): after a delay with the screen off, the app drops the CPU and GPU to their lowest speeds. It can stay normal while music plays or while charging.
 - Start Automatically on Boot: starts the governor after the phone restarts.
+- Restore last state after reboot (on by default): if the governor was running when the phone restarted, it starts again by itself once Android finishes booting, even with Start Automatically off. It only stays off after you press Stop. It starts after Android's boot is complete, which is before you open any app, but not before the phone is unlocked the first time if you use a PIN or pattern.
+- Background keep-alive (Tuning > Control): turns off Android battery optimization for CoreGovernor so the system does not stop it in the background. Tap Allow background activity. With root it works without a prompt; otherwise Android asks you to confirm. The pill shows UNRESTRICTED when it is done.
 - Presets: Balanced, Cool & Efficient and Sustained Gaming are built in. You can save your own and export or import everything as a JSON backup.
 
 ## 7. Floating overlay
@@ -99,6 +101,7 @@ The Metrics tab shows how the phone behaves over time, so you can see what a tun
 - Live 5m, 15m and 30m choose how far back the live graphs go. History is kept only while the app is running.
 - Game sessions are saved automatically when a game from the Apps tab is in the foreground for at least 20 seconds. Tap a saved session to open it, and use the bin icon to delete it. The newest 40 are kept.
 - FPS is only measured while the overlay is turned on (any style), so turn the overlay on if the FPS graphs are empty.
+- Peak power, minimum power and energy used are shown as tiles. Charging time is left out of them, and a 0 W reading is ignored for the minimum.
 - Ratios stay blank when there is no FPS reading or the power reading is near zero. If power numbers look wrong, use the calibration options in the power section.
 
 A good way to use it: play the same game for a few minutes with one setting, change one thing in Tuning, play again, and compare the two saved sessions (FPS/W, 5% low, peak temperature).

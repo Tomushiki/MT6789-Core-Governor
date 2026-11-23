@@ -23,13 +23,36 @@ import com.example.model.LogLevel
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            val app = context.applicationContext as? CoreGovernorApp ?: return
-            val cfg = app.engine.config.value
-            if (cfg.startOnBoot) {
-                app.engine.log(LogLevel.INFO, "Boot", "BOOT_COMPLETED received; auto-starting GovernorService.")
-                GovernorService.start(context)
+        val action = intent.action ?: return
+        val isBoot = action == Intent.ACTION_BOOT_COMPLETED ||
+            action == "android.intent.action.QUICKBOOT_POWERON" ||
+            action == "com.htc.intent.action.QUICKBOOT_POWERON"
+        val isUpdate = action == Intent.ACTION_MY_PACKAGE_REPLACED
+        if (!isBoot && !isUpdate) return
+
+        val app = context.applicationContext as? CoreGovernorApp ?: return
+        val lastRunning = BootState.wasRunning(context)
+        val restore = BootState.restoreEnabled(context)
+        val startOnBoot = app.engine.config.value.startOnBoot
+
+        val start = if (isBoot) {
+            BootPolicy.shouldStartAfterBoot(startOnBoot, restore, lastRunning)
+        } else {
+            BootPolicy.shouldStartAfterUpdate(restore, lastRunning)
+        }
+        if (start) {
+            val why = if (isBoot) {
+                if (startOnBoot) "start-on-boot is on" else "it was running before the reboot"
+            } else {
+                "it was running before the app update"
             }
+            app.engine.log(LogLevel.INFO, "Boot", "$action received; starting GovernorService ($why).")
+            GovernorService.start(context)
+        } else {
+            app.engine.log(
+                LogLevel.INFO, "Boot",
+                "$action received; not starting (startOnBoot=$startOnBoot, restoreLastState=$restore, wasRunning=$lastRunning)."
+            )
         }
     }
 }

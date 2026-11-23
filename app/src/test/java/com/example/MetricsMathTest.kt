@@ -177,4 +177,40 @@ class MetricsMathTest {
         val decoded = MetricsMath.decodeHeader("f.csv", encoded)
         assertTrue(decoded!!.summary.includesCharging)
     }
+
+    @Test
+    fun minimumPowerIgnoresZeroReadingsAndCharging() {
+        val list = listOf(
+            MetricSample(0L, 40f, 4f, 60f, 50f, 50f, 4f, BatteryState.DISCHARGING),
+            MetricSample(1_000L, 40f, 0f, 60f, 50f, 50f, 4f, BatteryState.DISCHARGING),   // sensor gave nothing
+            MetricSample(2_000L, 40f, 1.5f, 60f, 50f, 50f, 4f, BatteryState.DISCHARGING),
+            MetricSample(3_000L, 40f, 7f, 60f, 50f, 50f, 4f, BatteryState.DISCHARGING),
+            MetricSample(4_000L, 40f, 0.2f, 60f, 50f, 50f, 4f, BatteryState.CHARGING)     // charging is excluded
+        )
+        val sum = MetricsMath.summarize(list)
+        assertEquals(1.5f, sum.minWatts, 0.001f)
+        assertEquals(7f, sum.maxWatts, 0.001f)
+    }
+
+    @Test
+    fun minimumPowerBlankWithoutDischargeSamples() {
+        val sum = MetricsMath.summarize(
+            listOf(MetricSample(0L, 40f, 12f, 60f, 50f, 50f, 4f, BatteryState.CHARGING))
+        )
+        assertTrue(sum.minWatts.isNaN())
+    }
+
+    @Test
+    fun minimumPowerSurvivesHeaderRoundTripAndOldHeadersHaveNone() {
+        val sum = MetricsMath.summarize(listOf(sample(0, 60f, 4f), sample(1_000, 60f, 2.5f)))
+        val back = MetricsMath.decodeHeader("f.csv", MetricsMath.encodeHeader("com.game", 0L, 1000L, sum))
+        assertEquals(2.5f, back!!.summary.minWatts, 0.01f)
+
+        // A 2.7.1 header has no minimum power field.
+        val old = "#CG1|com.game|0|1000|2|60.00|58.00|59.00|40.00|41.00|4.00|5.00|15.00|1.00|0.01|0"
+        val oldInfo = MetricsMath.decodeHeader("f.csv", old)
+        assertNotNull(oldInfo)
+        assertTrue(oldInfo!!.summary.minWatts.isNaN())
+        assertEquals(5f, oldInfo.summary.maxWatts, 0.001f)
+    }
 }

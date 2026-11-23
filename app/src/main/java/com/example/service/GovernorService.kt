@@ -128,6 +128,8 @@ class GovernorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                // An explicit stop: do not bring the governor back after the next reboot.
+                BootState.setRunning(this, false)
                 engine.stopAndRestore()
                 stopForegroundCompat()
                 stopSelf()
@@ -143,6 +145,8 @@ class GovernorService : Service() {
                 return START_STICKY
             }
             else -> {
+                // Remember that it should be running, so it is restored after a reboot.
+                BootState.setRunning(this, true)
                 startForegroundCompat(buildNotification(engine.telemetry.value))
                 engine.startGovernor()
                 observeTelemetry()

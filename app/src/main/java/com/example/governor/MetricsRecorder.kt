@@ -70,7 +70,9 @@ data class MetricSummary(
     val avgFpsPerWatt: Float,
     val avgWorkPerWatt: Float,
     val energyWh: Float,
-    val includesCharging: Boolean = false
+    val includesCharging: Boolean = false,
+    /** Lowest valid (above 0 W) discharge power seen. NaN when there is none or the file predates 2.7.2. */
+    val minWatts: Float = Float.NaN
 )
 
 /** A saved game session. The summary lives in the file header so listing never has to read the samples. */
@@ -145,6 +147,7 @@ object MetricsMath {
         var sumW = 0.0
         var wattN = 0
         var maxW = 0f
+        var minW = Float.POSITIVE_INFINITY
         var sumFps = 0.0
         var fpsN = 0
         var minFps = Float.POSITIVE_INFINITY
@@ -168,6 +171,8 @@ object MetricsMath {
                 sumW += s.watts
                 wattN++
                 if (s.watts > maxW) maxW = s.watts
+                // A 0 W reading means the sensor gave nothing, so it must not become the "minimum".
+                if (s.watts > 0f && s.watts < minW) minW = s.watts
                 if (s.watts >= MIN_WATTS_FOR_RATIO) {
                     ratioWork += s.work
                     ratioWattsForWork += s.watts
@@ -204,7 +209,8 @@ object MetricsMath {
             avgFpsPerWatt = if (ratioWattsForFps > 0.0) (ratioFps / ratioWattsForFps).toFloat() else Float.NaN,
             avgWorkPerWatt = if (ratioWattsForWork > 0.0) (ratioWork / ratioWattsForWork).toFloat() else Float.NaN,
             energyWh = (energyWs / 3600.0).toFloat(),
-            includesCharging = includesCharging
+            includesCharging = includesCharging,
+            minWatts = if (minW.isInfinite()) Float.NaN else minW
         )
     }
 
@@ -245,7 +251,8 @@ object MetricsMath {
             "#CG1", pkg.replace('|', '_').replace('\n', ' '), startMs, endMs, s.sampleCount,
             f(s.avgFps), f(s.minFps), f(s.p5Fps), f(s.avgTempC), f(s.maxTempC),
             f(s.avgWatts), f(s.maxWatts), f(s.avgFpsPerWatt), f(s.avgWorkPerWatt), f(s.energyWh),
-            if (s.includesCharging) "1" else "0"
+            if (s.includesCharging) "1" else "0",
+            f(s.minWatts)
         ).joinToString("|")
 
     fun decodeHeader(fileName: String, line: String): SessionInfo? {
@@ -256,6 +263,8 @@ object MetricsMath {
         val n = p[4].toIntOrNull() ?: return null
         fun g(i: Int) = p[i].toFloatOrNull() ?: Float.NaN
         val hasCharging = p.getOrNull(15) == "1"
+        // Field 16 (minimum power) was added in 2.7.2; older files do not have it.
+        val minW = p.getOrNull(16)?.toFloatOrNull() ?: Float.NaN
         return SessionInfo(
             fileName = fileName,
             packageName = p[1],
@@ -269,7 +278,8 @@ object MetricsMath {
                 avgWatts = g(10), maxWatts = g(11),
                 avgFpsPerWatt = g(12), avgWorkPerWatt = g(13),
                 energyWh = g(14),
-                includesCharging = hasCharging
+                includesCharging = hasCharging,
+                minWatts = minW
             )
         )
     }

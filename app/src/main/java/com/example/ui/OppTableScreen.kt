@@ -133,7 +133,10 @@ fun OppTableScreen(
     val ext = LocalExtendedColors.current
     val gpuSpec = hardwareSpec.gpu
 
-    var paused by remember { mutableStateOf(false) }
+    // "Always pause" is remembered between app launches (own small prefs file, config is untouched).
+    val uiPrefs = remember { context.getSharedPreferences("coregovernor_ui", Context.MODE_PRIVATE) }
+    var alwaysPause by remember { mutableStateOf(uiPrefs.getBoolean("opp_always_pause", false)) }
+    var paused by remember { mutableStateOf(alwaysPause) }
     var refreshGen by remember { mutableIntStateOf(0) }
     var lastHandledRefreshGen by remember { mutableIntStateOf(0) }
 
@@ -245,6 +248,17 @@ fun OppTableScreen(
                     checked = paused,
                     onCheckedChange = { paused = it },
                     testTag = "pause_opp_live_updates_switch"
+                )
+                SettingSwitchRow(
+                    title = "Always pause on open",
+                    explanation = "Starts this screen paused every time you open the app, so you do not have to switch it on each time. The Refresh button still takes a fresh reading.",
+                    checked = alwaysPause,
+                    onCheckedChange = { on ->
+                        alwaysPause = on
+                        uiPrefs.edit().putBoolean("opp_always_pause", on).apply()
+                        if (on) paused = true
+                    },
+                    testTag = "always_pause_opp_live_updates_switch"
                 )
             }
         }
