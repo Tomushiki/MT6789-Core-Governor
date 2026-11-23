@@ -2,6 +2,15 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.12.4] - 2026-11-23
+
+### Fixed
+- FPS per-app method now gets real layer names (some Android versions print a long debug dump instead of names for the layer list).
+- FPS log lines no longer repeat every second, and the Log tab now shows the raw frame data when it can't be read.
+
+### Changed
+- Version 1.12.4 (versionCode 18).
+
 ## [1.12.3] - 2026-11-23
 
 ### Fixed

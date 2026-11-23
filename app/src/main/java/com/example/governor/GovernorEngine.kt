@@ -1201,7 +1201,8 @@ class GovernorEngine(context: Context) {
     private suspend fun runFpsSamplerLoop() {
         var lastPkg = ""
         var inactivePublished = false
-        var lastDiag = ""
+        val lastDiagByKey = mutableMapOf<String, String>()
+        val loggedRaw = mutableSetOf<String>()
         var lastLayerListRt = 0L
         var layerNames = emptyList<String>()
         val lastPresentTs = mutableMapOf<String, Long>()
@@ -1223,8 +1224,9 @@ class GovernorEngine(context: Context) {
         )
 
         fun diag(msg: String) {
-            if (msg != lastDiag) {
-                lastDiag = msg
+            val key = msg.substringBefore(":")
+            if (lastDiagByKey[key] != msg) {
+                lastDiagByKey[key] = msg
                 log(LogLevel.INFO, "FPS", msg)
             }
         }
@@ -1282,8 +1284,23 @@ class GovernorEngine(context: Context) {
             val now = SystemClock.elapsedRealtime()
             if (layerNames.isEmpty() || now - lastLayerListRt > 5_000L) {
                 val r = rootShell.exec("dumpsys SurfaceFlinger --list 2>/dev/null")
-                if (r.stdout.isNotBlank()) {
-                    layerNames = r.stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }
+                var names = r.stdout.lines().map { it.trim() }.filter {
+                    it.isNotEmpty() && it.length < 200 &&
+                        !it.contains("RequestedLayerState") && !it.contains("parentId=")
+                }
+                if (names.isEmpty()) {
+                    // Newer Android prints a verbose dump for --list; take real layer names from timestats instead.
+                    if (!timestatsEnabled) {
+                        rootShell.exec("dumpsys SurfaceFlinger --timestats -enable")
+                        timestatsEnabled = true
+                    }
+                    val t = rootShell.exec("dumpsys SurfaceFlinger --timestats -dump | grep -E '^layerName'")
+                    names = t.stdout.lines().mapNotNull { l ->
+                        l.trim().takeIf { it.startsWith("layerName") }?.substringAfter("=", "")?.trim()
+                    }.filter { it.isNotEmpty() }
+                }
+                if (names.isNotEmpty()) {
+                    layerNames = names
                     lastLayerListRt = now
                 }
             }
@@ -1311,7 +1328,13 @@ class GovernorEngine(context: Context) {
                         .filter { it in 1L until (Long.MAX_VALUE / 2) }
                     if (ts.isNotEmpty()) break
                 }
-                if (ts.isEmpty()) continue
+                if (ts.isEmpty()) {
+                    val rawKey = "$name|${r.stdout.take(120)}"
+                    if (loggedRaw.size < 20 && loggedRaw.add(rawKey)) {
+                        log(LogLevel.INFO, "FPS", "latency raw for ${name.take(80)}: ${r.stdout.take(120).replace("\n", " / ")}")
+                    }
+                    continue
+                }
                 parsedAny = true
                 val newest = ts.maxOrNull() ?: continue
                 val prevNewest = lastPresentTs[name]
