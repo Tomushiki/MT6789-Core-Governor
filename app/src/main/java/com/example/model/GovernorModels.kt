@@ -52,6 +52,12 @@ enum class LogLevel {
     ERROR
 }
 
+enum class SmartAppMode(val label: String) {
+    CONSERVATIVE("Conservative"),
+    BALANCED("Balanced"),
+    AGGRESSIVE("Aggressive")
+}
+
 enum class EfficiencyMode {
     BALANCED,
     AGGRESSIVE_SAVER,
@@ -257,7 +263,15 @@ data class GovernorConfig(
     val explorationRate: ExplorationRate = ExplorationRate.LOW,
     val batteryEstimationEnabled: Boolean = true,
     val batteryDesignCapacityOverrideMah: Int = 0,
-    val gamePackages: Set<String> = emptySet()
+    val gamePackages: Set<String> = emptySet(),
+    // v2.7.0 Smart app profiles (opt-in, default OFF)
+    val smartAppProfilesEnabled: Boolean = false,
+    val smartAppMode: SmartAppMode = SmartAppMode.BALANCED,
+    // v2.7.0 Adaptive refresh rate (EXPERIMENTAL, default OFF). 0 = auto (lowest / highest supported)
+    val adaptiveRefreshEnabled: Boolean = false,
+    val adaptiveIdleHz: Int = 0,
+    val adaptiveActiveHz: Int = 0,
+    val adaptiveIdleDelayMs: Int = 1500
 )
 
 data class PresetItem(

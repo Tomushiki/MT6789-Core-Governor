@@ -67,7 +67,10 @@ fun AppsScreen(
     usageStatsGranted: Boolean,
     onToggleGamePackage: (String) -> Unit,
     onRefreshUsageStats: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    smartControls: Map<String, com.example.governor.AppControlInfo> = emptyMap(),
+    onSmartSet: (String, com.example.governor.AppControl, com.example.governor.AppOverride) -> Unit = { _, _, _ -> },
+    onSmartReset: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val ext = LocalExtendedColors.current
@@ -228,6 +231,12 @@ fun AppsScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
+                                )
+                                SmartProfileControl(
+                                    pkg = app.packageName,
+                                    info = smartControls[app.packageName],
+                                    onSet = { c, o -> onSmartSet(app.packageName, c, o) },
+                                    onReset = { onSmartReset(app.packageName) }
                                 )
                             }
                             Checkbox(

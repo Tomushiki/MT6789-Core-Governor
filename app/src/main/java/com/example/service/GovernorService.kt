@@ -283,6 +283,7 @@ class GovernorService : Service() {
         engine.stopAndRestore()
         engine.storage.flush()
         engine.powerModel.flush()
+        engine.appDemand.flush()
         engine.batteryEstimator.flush()
         overlayNotifyJob?.cancel()
         telemetryJob?.cancel()

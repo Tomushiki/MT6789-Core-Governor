@@ -2,6 +2,15 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.7.0] - 2026-11-23
+
+### Added
+- **Smart app profiles (opt-in, default OFF).** Learns per app how much each CPU cluster and the GPU typically and at peak ask for (capacity-independent work units), the discharge power it costs, and how bursty it is. Apps are classified LIGHT / MODERATE / HEAVY / NOISY with a confidence that grows with use; new apps start from shared category/global priors. Light apps get a lower ceiling (learned peak plus headroom), heavy/noisy apps get a raised floor. Conservative / Balanced / Aggressive modes. Full ceiling is restored within one tick on saturation or touch, with a warm-up on every app switch. Thermal, user caps, pins, manual profiles and Game mode always take precedence. Per-app **Auto / Locked / Override (Light, Moderate, Heavy, Never touch)** plus per-app reset in the Apps tab, and an **App demand** card in the Energy tab. Stored in `app_profiles.json` (atomic, saved at most every ~5 min).
+- **Adaptive refresh rate [Experimental] (opt-in, default OFF).** Drops the display to the lowest supported rate when idle and boosts on touch (touch detected from the touchscreen interrupt counter, with an input-event fallback). Auto-detects a working root method, verifies every switch, auto-disables after 3 failures, and always restores the original refresh-rate settings (toggle off, service stop, next start after a crash). Energy tab card with idle/active rate, idle delay, time share, switch count and a Test switch button.
+
+### Changed
+- Version 2.7.0 (versionCode 41).
+
 ## [2.6.2] - 2026-11-23
 
 ### Added

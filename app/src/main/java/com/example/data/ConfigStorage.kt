@@ -28,6 +28,7 @@ import com.example.model.PowerPolarity
 import com.example.model.PowerThrottleConfig
 import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
+import com.example.model.SmartAppMode
 import com.example.model.TempThrottleConfig
 import com.example.model.ThrottleCurveShape
 import kotlinx.coroutines.CoroutineScope
@@ -496,6 +497,12 @@ class ConfigStorage(private val context: Context) {
             val gamesArr = JSONArray()
             c.gamePackages.sorted().forEach { gamesArr.put(it) }
             put("gamePackages", gamesArr)
+            put("smartAppProfilesEnabled", c.smartAppProfilesEnabled)
+            put("smartAppMode", c.smartAppMode.name)
+            put("adaptiveRefreshEnabled", c.adaptiveRefreshEnabled)
+            put("adaptiveIdleHz", c.adaptiveIdleHz)
+            put("adaptiveActiveHz", c.adaptiveActiveHz)
+            put("adaptiveIdleDelayMs", c.adaptiveIdleDelayMs)
         }
     }
 
@@ -616,7 +623,13 @@ class ConfigStorage(private val context: Context) {
             explorationRate = enumOrDefault(obj.optString("explorationRate"), default.explorationRate),
             batteryEstimationEnabled = obj.optBoolean("batteryEstimationEnabled", default.batteryEstimationEnabled),
             batteryDesignCapacityOverrideMah = obj.optInt("batteryDesignCapacityOverrideMah", default.batteryDesignCapacityOverrideMah).coerceAtLeast(0),
-            gamePackages = games
+            gamePackages = games,
+            smartAppProfilesEnabled = obj.optBoolean("smartAppProfilesEnabled", default.smartAppProfilesEnabled),
+            smartAppMode = enumOrDefault(obj.optString("smartAppMode"), default.smartAppMode),
+            adaptiveRefreshEnabled = obj.optBoolean("adaptiveRefreshEnabled", default.adaptiveRefreshEnabled),
+            adaptiveIdleHz = obj.optInt("adaptiveIdleHz", default.adaptiveIdleHz).coerceIn(0, 360),
+            adaptiveActiveHz = obj.optInt("adaptiveActiveHz", default.adaptiveActiveHz).coerceIn(0, 360),
+            adaptiveIdleDelayMs = obj.optInt("adaptiveIdleDelayMs", default.adaptiveIdleDelayMs).coerceIn(500, 5000)
         )
     }
 

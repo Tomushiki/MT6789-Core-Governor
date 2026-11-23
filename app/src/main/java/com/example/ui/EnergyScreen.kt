@@ -115,7 +115,8 @@ fun EnergyScreen(
         designCapacityOverrideMah: Int?
     ) -> Unit,
     onResetBatteryEstimate: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    extraContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val ext = LocalExtendedColors.current
@@ -570,6 +571,8 @@ fun EnergyScreen(
                 )
             }
         }
+
+        extraContent?.invoke(this)
     }
 }
 

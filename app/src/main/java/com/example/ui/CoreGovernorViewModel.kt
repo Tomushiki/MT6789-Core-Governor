@@ -466,7 +466,28 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     fun setEnergyTabVisible(visible: Boolean) {
         engine.powerModel.setUiVisible(visible)
         engine.batteryEstimator.setUiVisible(visible)
+        engine.setSmartUiVisible(visible)
     }
+
+    // v2.7.0 Smart app profiles / Adaptive refresh rate
+    val appDemandRows = engine.appDemand.rows
+    val appControls = engine.appDemand.controls
+    val refreshState = engine.refreshCtl.state
+
+    fun setSmartEnabled(on: Boolean) = engine.updateConfig { it.copy(smartAppProfilesEnabled = on) }
+    fun setSmartMode(m: com.example.model.SmartAppMode) = engine.updateConfig { it.copy(smartAppMode = m) }
+    fun smartSetControl(pkg: String, c: com.example.governor.AppControl, o: com.example.governor.AppOverride) =
+        engine.appDemand.setControl(pkg, c, o)
+    fun smartResetApp(pkg: String) = engine.appDemand.resetApp(pkg)
+    fun setAdaptiveRefresh(on: Boolean) = engine.updateConfig { it.copy(adaptiveRefreshEnabled = on) }
+    fun setAdaptiveHz(idle: Int? = null, active: Int? = null, delayMs: Int? = null) = engine.updateConfig {
+        it.copy(
+            adaptiveIdleHz = idle ?: it.adaptiveIdleHz,
+            adaptiveActiveHz = active ?: it.adaptiveActiveHz,
+            adaptiveIdleDelayMs = delayMs ?: it.adaptiveIdleDelayMs
+        )
+    }
+    fun testRefreshSwitch() = engine.refreshCtl.testSwitch()
 
     fun updateBatterySettings(
         estimationEnabled: Boolean? = null,

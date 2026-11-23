@@ -99,6 +99,40 @@ class GovernorEngine(context: Context) {
         log(level, tag, msg)
     }
 
+    /** v2.7.0 Smart app profiles: per-app learned demand + ceilings/floors. */
+    val appDemand = AppDemandModel(java.io.File(appContext.filesDir, "app_profiles.json"), engineScope, { l, t, m -> log(l, t, m) }) { pkg ->
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 26) appContext.packageManager.getApplicationInfo(pkg, 0).category else -1
+        } catch (_: Throwable) {
+            -1
+        }
+    }
+
+    /** v2.7.0 Shared touch interaction signal (smart profiles + adaptive refresh). */
+    val interaction = InteractionSignal(rootShell, engineScope) { l, t, m -> log(l, t, m) }
+
+    /** v2.7.0 Adaptive refresh rate (EXPERIMENTAL). */
+    val refreshCtl = RefreshRateController(
+        context = appContext,
+        rootShell = rootShell,
+        scope = engineScope,
+        log = { l, t, m -> log(l, t, m) },
+        interaction = interaction,
+        cfgProvider = { _config.value },
+        fpsProvider = { _telemetry.value.fps },
+        gameProvider = { _telemetry.value.activeMode == GovernorMode.GAME },
+        screenOnProvider = { isScreenInteractive && !isSleepSaving },
+        onAutoDisable = { updateConfig { it.copy(adaptiveRefreshEnabled = false) } }
+    )
+    private val smartLoad = FloatArray(4)
+    private val smartRatio = FloatArray(4)
+    private var smartWasOn = false
+
+    fun setSmartUiVisible(visible: Boolean) {
+        appDemand.uiActive = visible
+        refreshCtl.uiActive = visible
+    }
+
     private val _hardwareSpec = MutableStateFlow(HardwareSpec())
     val hardwareSpec: StateFlow<HardwareSpec> = _hardwareSpec.asStateFlow()
 
@@ -338,6 +372,7 @@ class GovernorEngine(context: Context) {
                 log(LogLevel.ERROR, "Start", "Cannot start governor: no CPU cpufreq policies discovered.")
                 return@launch
             }
+            refreshCtl.start()
 
             val backup = OriginalHardwareBackup(
                 cpus = hw.cpuPolicies.map {
@@ -425,6 +460,8 @@ class GovernorEngine(context: Context) {
     }
 
     fun onScreenOff() {
+        interaction.setActive(false, false)
+        appDemand.flush()
         isScreenInteractive = false
         sensorPinner.setScreenInteractive(false)
         if (controlJob?.isActive == true && _config.value.screenOffSavingEnabled) {
@@ -613,6 +650,11 @@ class GovernorEngine(context: Context) {
         storage.flush()
         powerModel.flush()
         batteryEstimator.flush()
+        appDemand.flush()
+        appDemand.release()
+        smartWasOn = false
+        interaction.setActive(false, false)
+        refreshCtl.shutdown()
         metrics.onStopped()
         stopFpsSampler()
         sensorPinner.setServiceRunning(false)
@@ -1052,6 +1094,53 @@ class GovernorEngine(context: Context) {
         val latestFps = prevTelemetry.fps
         val effBatteryPct = cachedBatteryPct.coerceAtLeast(0)
 
+        // 5b. v2.7.0 smart app profiles (learning + ceilings/floors). Skipped entirely when disabled.
+        val needTouch = cfg.smartAppProfilesEnabled || cfg.adaptiveRefreshEnabled
+        interaction.setActive(needTouch, isScreenInteractive && !isSleepSaving)
+        val smartOn = cfg.smartAppProfilesEnabled && isScreenInteractive && !isSleepSaving && fgPkg.isNotBlank()
+        if (smartOn) {
+            smartLoad.fill(-1f)
+            smartRatio.fill(-1f)
+            var si = 0
+            for (p in hw.cpuPolicies) {
+                if (si > 2) break
+                val maxA = p.availableFreqsKhz.lastOrNull() ?: p.origMaxFreqKhz
+                val cur = batch["${p.path}/scaling_cur_freq"]?.trim()?.toLongOrNull() ?: 0L
+                if (maxA > 0L && cur > 0L) {
+                    smartLoad[si] = clusterRawLoads[p.policyId] ?: 0f
+                    smartRatio[si] = (cur.toFloat() / maxA.toFloat()).coerceIn(0f, 1f)
+                }
+                si++
+            }
+            val pg = prevTelemetry.gpu
+            if (pg.available && pg.maxAvailableKhz > 0L) {
+                val gf = if (pg.currentFreqKhz > 0L) pg.currentFreqKhz else pg.targetFreqKhz
+                if (gf > 0L) {
+                    smartLoad[3] = pg.loadPct
+                    smartRatio[3] = (gf.toFloat() / pg.maxAvailableKhz.toFloat()).coerceIn(0f, 1f)
+                }
+            }
+            appDemand.tick(
+                nowMs = nowMs,
+                pkg = fgPkg,
+                isGame = isGameMode,
+                mode = cfg.smartAppMode,
+                cpuClusters = si.coerceAtMost(3),
+                load = smartLoad,
+                freqRatio = smartRatio,
+                fps = latestFps,
+                discharging = stableBatteryState == BatteryState.DISCHARGING,
+                watts = rawReading.dischargeWatts,
+                touchAtMs = interaction.lastTouchMs
+            )
+            appDemand.flushIfDue(nowMs)
+            smartWasOn = true
+        } else if (smartWasOn) {
+            appDemand.release()
+            smartWasOn = false
+        }
+        val smartApply = smartOn && !isGameMode && appDemand.outputsActive
+
         // 6. CPU cluster target selection & write-on-change (min = max)
         val clusterLiveList = mutableListOf<ClusterLiveState>()
         var pmClusterIdx = 0
@@ -1072,12 +1161,33 @@ class GovernorEngine(context: Context) {
             val maxAvailable = p.availableFreqsKhz.lastOrNull() ?: p.origMaxFreqKhz
             val allowedMin = (range?.minKhz ?: minAvailable).coerceIn(minAvailable, maxAvailable)
             val allowedMax = (range?.maxKhz ?: maxAvailable).coerceIn(allowedMin, maxAvailable)
+            val baseCapPct = clusterCapPct[p.policyId] ?: effectiveCpuCapPct
+            var smartMin = allowedMin
+            var smartCapPct = baseCapPct
+            if (smartApply && allowedMax > allowedMin) {
+                val ci = hw.cpuPolicies.indexOf(p)
+                if (ci in 0..2) {
+                    val cw = appDemand.ceilWork[ci]
+                    if (cw < 99.5f) {
+                        val cf = cw / 100f * maxAvailable
+                        if (cf < allowedMax) {
+                            val span = (allowedMax - allowedMin).toFloat()
+                            smartCapPct = minOf(baseCapPct, ((cf - allowedMin) / span * 100f).coerceIn(0f, 100f))
+                        }
+                    }
+                    val fw = appDemand.floorWork[ci]
+                    if (fw > 0f && baseCapPct >= 99.5f && rawLoad >= 10f) {
+                        val ff = (fw / 100f * maxAvailable).toLong()
+                        if (ff > allowedMin) smartMin = ff.coerceIn(allowedMin, allowedMax)
+                    }
+                }
+            }
 
             val (stdTargetFreq, cappedMax) = GovernorMath.selectFrequency(
                 availableFreqsKhz = p.availableFreqsKhz,
-                allowedMinKhz = allowedMin,
+                allowedMinKhz = smartMin,
                 allowedMaxKhz = allowedMax,
-                capPct = clusterCapPct[p.policyId] ?: effectiveCpuCapPct,
+                capPct = smartCapPct,
                 loadPct = smoothed,
                 forceMaxDuringBurst = burstActive
             )
@@ -1086,7 +1196,7 @@ class GovernorEngine(context: Context) {
                 powerModel.selectEfficientCpuFreqKhz(
                     policyId = p.policyId,
                     availableFreqsKhz = p.availableFreqsKhz,
-                    allowedMinKhz = allowedMin,
+                    allowedMinKhz = smartMin,
                     cappedMaxKhz = cappedMax,
                     standardTargetKhz = stdTargetFreq,
                     currentFreqKhz = preActualFreq,
@@ -1322,11 +1432,28 @@ class GovernorEngine(context: Context) {
             val gAllowedMin = (gRange?.minKhz ?: gMinAvail).coerceIn(gMinAvail, gMaxAvail)
             val gAllowedMax = (gRange?.maxKhz ?: gMaxAvail).coerceIn(gAllowedMin, gMaxAvail)
 
+            var gSmartMin = gAllowedMin
+            var gSmartCap = effectiveGpuCapPct
+            if (smartApply && gAllowedMax > gAllowedMin) {
+                val cw = appDemand.ceilWork[3]
+                if (cw < 99.5f) {
+                    val cf = cw / 100f * gMaxAvail
+                    if (cf < gAllowedMax) {
+                        val span = (gAllowedMax - gAllowedMin).toFloat()
+                        gSmartCap = minOf(effectiveGpuCapPct, ((cf - gAllowedMin) / span * 100f).coerceIn(0f, 100f))
+                    }
+                }
+                val fw = appDemand.floorWork[3]
+                if (fw > 0f && effectiveGpuCapPct >= 99.5f && smoothedGpuLoad >= 10f) {
+                    val ff = (fw / 100f * gMaxAvail).toLong()
+                    if (ff > gAllowedMin) gSmartMin = ff.coerceIn(gAllowedMin, gAllowedMax)
+                }
+            }
             val selection = GovernorMath.selectGpuOppPosition(
                 sortedOpps = gpuSpec.oppTable,
-                allowedMinKhz = gAllowedMin,
+                allowedMinKhz = gSmartMin,
                 allowedMaxKhz = gAllowedMax,
-                capPct = effectiveGpuCapPct,
+                capPct = gSmartCap,
                 loadPct = smoothedGpuLoad,
                 forceMaxDuringBurst = burstActive
             )

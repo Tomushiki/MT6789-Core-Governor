@@ -79,6 +79,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.governor.UpdateState
+import com.example.ui.AdaptiveRefreshCard
+import com.example.ui.AppDemandCard
 import com.example.ui.AppsScreen
 import com.example.ui.CoreGovernorViewModel
 import com.example.ui.EnergyScreen
@@ -121,6 +123,7 @@ class MainActivity : ComponentActivity() {
         val engine = (application as CoreGovernorApp).engine
         engine.storage.flush()
         engine.powerModel.flush()
+        engine.appDemand.flush()
         engine.batteryEstimator.flush()
     }
 }
@@ -150,6 +153,7 @@ fun CoreGovernorRootScreen(
     val updateState by vm.updateState.collectAsStateWithLifecycle()
     var updateDismissed by rememberSaveable { mutableStateOf(false) }
 
+    val smartControls by vm.appControls.collectAsStateWithLifecycle()
     var currentTab by rememberSaveable { mutableStateOf(NavTab.MONITOR) }
     LaunchedEffect(currentTab) {
         vm.setEnergyTabVisible(currentTab == NavTab.ENERGY)
@@ -303,6 +307,8 @@ fun CoreGovernorRootScreen(
             NavTab.ENERGY -> {
                 val energySnapshot by vm.powerModelSnapshot.collectAsStateWithLifecycle()
                 val batterySnapshot by vm.batterySnapshot.collectAsStateWithLifecycle()
+                val demandRows by vm.appDemandRows.collectAsStateWithLifecycle()
+                val refreshUi by vm.refreshState.collectAsStateWithLifecycle()
                 EnergyScreen(
                     snapshot = energySnapshot,
                     batterySnapshot = batterySnapshot,
@@ -313,7 +319,27 @@ fun CoreGovernorRootScreen(
                     onExportJson = vm::exportPowerModelJson,
                     onUpdateBatterySettings = vm::updateBatterySettings,
                     onResetBatteryEstimate = vm::resetBatteryEstimate,
-                    modifier = Modifier
+                    modifier = Modifier,
+                    extraContent = {
+                        item(key = "smart_app_demand") {
+                            AppDemandCard(
+                                config = config,
+                                rows = demandRows,
+                                labels = installedApps.associate { it.packageName to it.label },
+                                onToggle = vm::setSmartEnabled,
+                                onMode = vm::setSmartMode
+                            )
+                        }
+                        item(key = "adaptive_refresh") {
+                            AdaptiveRefreshCard(
+                                config = config,
+                                state = refreshUi,
+                                onToggle = vm::setAdaptiveRefresh,
+                                onHz = { i, a, d -> vm.setAdaptiveHz(i, a, d) },
+                                onTest = vm::testRefreshSwitch
+                            )
+                        }
+                    }
                 )
             }
             NavTab.TUNING -> TuningScreen(
@@ -358,7 +384,10 @@ fun CoreGovernorRootScreen(
                 usageStatsGranted = usageStatsGranted,
                 onToggleGamePackage = vm::toggleGamePackage,
                 onRefreshUsageStats = vm::refreshUsageStatsPermission,
-                modifier = Modifier
+                modifier = Modifier,
+                smartControls = smartControls,
+                onSmartSet = vm::smartSetControl,
+                onSmartReset = vm::smartResetApp
             )
             NavTab.LOG -> LogScreen(
                 logs = logs,
