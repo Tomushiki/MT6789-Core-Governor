@@ -2,6 +2,30 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [1.11.0] - 2026-11-23
+
+### Added
+- **Smart split by component** (Tuning > Power): when power is over the limit, the heavier consumer (CPU or GPU) is throttled more than the lighter one, using each component's load and frequency as an estimate. A light per-cluster split inside the CPU cut shifts a small share to the busiest cluster. On by default, can be turned off.
+
+### Changed
+- The overlay CPU value and the Monitor chart now use the true average utilization of all cores instead of the busiest core.
+- Version 1.11 (versionCode 13).
+
+## [1.10.0] - 2026-11-23
+
+### Added
+- **Background opacity** slider (0–100%) that only fades the dark pill of the overlay. The old "Opacity" slider is now "Overall opacity".
+
+### Changed
+- Cheaper foreground app detection.
+- Cheaper root file reads (shell built-ins with automatic fallback to cat).
+- Version 1.10 (versionCode 12).
+
+## [1.9.1] - 2026-11-23
+
+### Added
+- New Tuning chips: **Screen-off** and **Overlay**. Those cards now have their own filter, and Control shows only the control loop.
+
 ## [1.9.0] - 2026-11-23
 
 ### Added
