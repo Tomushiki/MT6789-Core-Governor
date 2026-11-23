@@ -15,11 +15,22 @@
 
 package com.example.ui
 
+import android.content.Context
+import android.content.res.Configuration
+import android.os.SystemClock
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -28,9 +39,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -43,16 +56,37 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.governor.SensorPinner
 import com.example.model.FreqRange
@@ -65,11 +99,18 @@ import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
 import com.example.model.TelemetryState
 import com.example.model.ThrottleCurveShape
+import com.example.service.OverlaySizing
+import com.example.service.OverlayStyle
 import com.example.ui.components.DiscreteFreqSlider
 import com.example.ui.components.EcuCard
 import com.example.ui.components.SettingSliderRow
 import com.example.ui.components.SettingSwitchRow
+import com.example.ui.theme.MonoMetricStyle
+import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 private enum class TuningCategory(val label: String) {
     ALL("All"),
@@ -165,6 +206,7 @@ fun TuningScreen(
     var selectedCategory by remember { mutableStateOf(TuningCategory.ALL) }
     var editingMode by remember { mutableStateOf(GovernorMode.NORMAL) }
     var presetNameInput by remember { mutableStateOf("") }
+    var fineOverlayControl by remember { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -681,76 +723,162 @@ fun TuningScreen(
                             testTag = "overlay_bg_opacity_slider"
                         )
 
+                        val configuration = LocalConfiguration.current
+                        val density = LocalDensity.current.density
+                        val windowManager = remember(context) {
+                            context.applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                        }
+                        val (screenW, screenH) = remember(
+                            configuration.orientation,
+                            configuration.screenWidthDp,
+                            configuration.screenHeightDp
+                        ) {
+                            OverlaySizing.getScreenSizePx(windowManager)
+                        }
+                        val detailedRowCount = remember(
+                            telemetry.clusters.size,
+                            telemetry.clusters.sumOf { it.relatedCpus.size },
+                            hardwareSpec.cpuPolicies.size,
+                            hardwareSpec.cpuPolicies.sumOf { it.relatedCpus.size }
+                        ) {
+                            when {
+                                telemetry.clusters.isNotEmpty() -> 3 + telemetry.clusters.sumOf { 1 + it.relatedCpus.size }
+                                hardwareSpec.cpuPolicies.isNotEmpty() -> 3 + hardwareSpec.cpuPolicies.sumOf { 1 + it.relatedCpus.size }
+                                else -> OverlaySizing.DEFAULT_DETAILED_ROW_COUNT
+                            }
+                        }
+                        val compactMaxScalePct = remember(screenW, screenH, density) {
+                            val (natW, natH) = OverlaySizing.measureNaturalSizeAtScaleOne(density, OverlayStyle.COMPACT)
+                            OverlaySizing.maxScalePct(screenW, screenH, OverlayStyle.COMPACT, natW, natH)
+                        }
+                        val expandedStyle = if (config.overlayDetailed) OverlayStyle.DETAILED else OverlayStyle.EXPANDED
+                        val expandedMaxScalePct = remember(screenW, screenH, density, expandedStyle, detailedRowCount) {
+                            val (natW, natH) = OverlaySizing.measureNaturalSizeAtScaleOne(
+                                density,
+                                expandedStyle,
+                                detailedRowCount
+                            )
+                            OverlaySizing.maxScalePct(screenW, screenH, expandedStyle, natW, natH)
+                        }
+                        val compactDisplayPct = config.overlayCompactScalePct.coerceIn(
+                            OverlaySizing.MIN_SCALE_PCT,
+                            compactMaxScalePct
+                        )
+                        val expandedDisplayPct = config.overlayExpandedScalePct.coerceIn(
+                            OverlaySizing.MIN_SCALE_PCT,
+                            expandedMaxScalePct
+                        )
+
                         Spacer(modifier = Modifier.height(10.dp))
-                        SettingSliderRow(
+                        val headerAlpha = if (config.overlayEnabled) 1f else 0.38f
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Size & position",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = headerAlpha)
+                                )
+                                Text(
+                                    text = if (fineOverlayControl) {
+                                        "Fine: sliders zoomed to \u00b110 pts around current value."
+                                    } else {
+                                        "Enable Fine to zoom sliders, or use \u2212 / + to step."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = headerAlpha)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            FilterChip(
+                                selected = fineOverlayControl,
+                                onClick = { fineOverlayControl = !fineOverlayControl },
+                                enabled = config.overlayEnabled,
+                                label = { Text("Fine") },
+                                modifier = Modifier.testTag("overlay_fine_chip")
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OverlayFineSliderRow(
                             title = "Compact size",
-                            valueText = "${config.overlayCompactScalePct}%",
-                            explanation = "Scales the compact overlay pill from 40% to 400%.",
-                            value = config.overlayCompactScalePct.toFloat(),
-                            valueRange = 40f..400f,
-                            steps = 71,
-                            onValueChange = {
-                                val snapped = ((it / 5f).roundToInt() * 5).coerceIn(40, 400)
-                                onUpdateOverlay(null, null, null, null, snapped, null, null)
+                            valueText = "${compactDisplayPct}%",
+                            explanation = "Scales the compact overlay pill (${OverlaySizing.MIN_SCALE_PCT}%–${compactMaxScalePct}% on this screen).",
+                            value = compactDisplayPct,
+                            fullMin = OverlaySizing.MIN_SCALE_PCT,
+                            fullMax = compactMaxScalePct,
+                            stepAmount = 1,
+                            fineHalfWindow = 10,
+                            fineMode = fineOverlayControl,
+                            onIntValueChange = {
+                                onUpdateOverlay(null, null, null, null, it, null, null)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_compact_scale_slider"
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
-                        SettingSliderRow(
+                        OverlayFineSliderRow(
                             title = "Expanded size",
-                            valueText = "${config.overlayExpandedScalePct}%",
-                            explanation = "Scales the expanded overlay card from 40% to 400%.",
-                            value = config.overlayExpandedScalePct.toFloat(),
-                            valueRange = 40f..400f,
-                            steps = 71,
-                            onValueChange = {
-                                val snapped = ((it / 5f).roundToInt() * 5).coerceIn(40, 400)
-                                onUpdateOverlay(null, null, null, null, null, snapped, null)
+                            valueText = "${expandedDisplayPct}%",
+                            explanation = "Scales the expanded overlay card (${OverlaySizing.MIN_SCALE_PCT}%–${expandedMaxScalePct}% on this screen).",
+                            value = expandedDisplayPct,
+                            fullMin = OverlaySizing.MIN_SCALE_PCT,
+                            fullMax = expandedMaxScalePct,
+                            stepAmount = 1,
+                            fineHalfWindow = 10,
+                            fineMode = fineOverlayControl,
+                            onIntValueChange = {
+                                onUpdateOverlay(null, null, null, null, null, it, null)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_expanded_scale_slider"
                         )
 
-                        val isLandscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
-                            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                        val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
                         val posStyle = (when {
                             config.overlayDetailed -> "detailed"
                             config.overlayExpanded -> "expanded"
                             else -> "compact"
                         }) + if (isLandscape) ", landscape" else ", portrait"
                         val (posXPm, posYPm) = config.overlayPosPm(isLandscape)
-                        val posXPct = (posXPm / 10).coerceIn(0, 100)
-                        val posYPct = (posYPm / 10).coerceIn(0, 100)
+                        val clampedXPm = posXPm.coerceIn(0, 1000)
+                        val clampedYPm = posYPm.coerceIn(0, 1000)
 
                         Spacer(modifier = Modifier.height(10.dp))
-                        SettingSliderRow(
+                        OverlayFineSliderRow(
                             title = "Horizontal position ($posStyle)",
-                            valueText = "${posXPct}%",
+                            valueText = "${String.format(Locale.US, "%.1f", clampedXPm / 10f)}%",
                             explanation = "Positions the overlay horizontally along available screen width.",
-                            value = posXPct.toFloat(),
-                            valueRange = 0f..100f,
-                            steps = 99,
-                            onValueChange = {
-                                val pct = it.roundToInt().coerceIn(0, 100)
-                                onUpdateOverlayPosition(pct * 10, null, false)
+                            value = clampedXPm,
+                            fullMin = 0,
+                            fullMax = 1000,
+                            stepAmount = 1,
+                            fineHalfWindow = 100,
+                            fineMode = fineOverlayControl,
+                            onIntValueChange = {
+                                onUpdateOverlayPosition(it, null, false)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_pos_x_slider"
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
-                        SettingSliderRow(
+                        OverlayFineSliderRow(
                             title = "Vertical position ($posStyle)",
-                            valueText = "${posYPct}%",
+                            valueText = "${String.format(Locale.US, "%.1f", clampedYPm / 10f)}%",
                             explanation = "Positions the overlay vertically along available screen height.",
-                            value = posYPct.toFloat(),
-                            valueRange = 0f..100f,
-                            steps = 99,
-                            onValueChange = {
-                                val pct = it.roundToInt().coerceIn(0, 100)
-                                onUpdateOverlayPosition(null, pct * 10, false)
+                            value = clampedYPm,
+                            fullMin = 0,
+                            fullMax = 1000,
+                            stepAmount = 1,
+                            fineHalfWindow = 100,
+                            fineMode = fineOverlayControl,
+                            onIntValueChange = {
+                                onUpdateOverlayPosition(null, it, false)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_pos_y_slider"
@@ -946,3 +1074,262 @@ fun TuningScreen(
         }
     }
 }
+
+@Composable
+private fun OverlayFineSliderRow(
+    title: String,
+    valueText: String,
+    explanation: String,
+    value: Int,
+    fullMin: Int,
+    fullMax: Int,
+    stepAmount: Int,
+    fineHalfWindow: Int,
+    fineMode: Boolean,
+    onIntValueChange: (Int) -> Unit,
+    enabled: Boolean,
+    testTag: String,
+    modifier: Modifier = Modifier
+) {
+    val safeMax = fullMax.coerceAtLeast(fullMin)
+    val clampedValue = value.coerceIn(fullMin, safeMax)
+    var fineAnchor by remember(fineMode, fullMin, safeMax) {
+        mutableIntStateOf(clampedValue)
+    }
+    var isDragging by remember { mutableStateOf(false) }
+    var lastCommittedInDrag by remember { mutableIntStateOf(clampedValue) }
+    val isNudgingRef = remember { booleanArrayOf(false) }
+    val liveValueRef = remember { intArrayOf(clampedValue) }
+
+    SideEffect {
+        if (!isNudgingRef[0] && !isDragging) {
+            liveValueRef[0] = clampedValue
+        }
+    }
+
+    LaunchedEffect(clampedValue, fineMode, fullMin, safeMax) {
+        if (!isDragging && !isNudgingRef[0]) {
+            fineAnchor = clampedValue
+        }
+    }
+
+    val rangeStart = if (fineMode) (fineAnchor - fineHalfWindow).coerceAtLeast(fullMin) else fullMin
+    val rangeEnd = if (fineMode) (fineAnchor + fineHalfWindow).coerceAtMost(safeMax) else safeMax
+    val hasSpan = rangeEnd > rangeStart
+    val sliderStart = rangeStart.toFloat()
+    val sliderEnd = if (hasSpan) rangeEnd.toFloat() else (rangeStart + 1).toFloat()
+    val sliderVal = clampedValue.coerceIn(rangeStart, rangeEnd).toFloat()
+    val contentAlpha = if (enabled) 1f else 0.38f
+
+    fun stepBy(delta: Int) {
+        val prev = liveValueRef[0]
+        val next = (prev + delta).coerceIn(fullMin, safeMax)
+        if (next != prev) {
+            liveValueRef[0] = next
+            fineAnchor = next
+            onIntValueChange(next)
+        }
+    }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha),
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = valueText,
+                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelMedium.fontSize),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = contentAlpha)
+            )
+        }
+        Slider(
+            value = sliderVal,
+            onValueChange = { raw ->
+                isDragging = true
+                val snapped = raw.roundToInt().coerceIn(rangeStart, rangeEnd)
+                lastCommittedInDrag = snapped
+                liveValueRef[0] = snapped
+                onIntValueChange(snapped)
+            },
+            onValueChangeFinished = {
+                isDragging = false
+                fineAnchor = lastCommittedInDrag.coerceIn(fullMin, safeMax)
+            },
+            valueRange = sliderStart..sliderEnd,
+            steps = 0,
+            enabled = enabled && hasSpan,
+            modifier = if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier,
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary
+            )
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = explanation,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha),
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NudgeButton(
+                    symbol = "\u2212",
+                    contentDescription = "Decrease $title",
+                    enabled = enabled && clampedValue > fullMin,
+                    onPressStart = {
+                        isNudgingRef[0] = true
+                        liveValueRef[0] = clampedValue
+                    },
+                    onStep = { stepBy(-stepAmount) },
+                    onPressEnd = {
+                        isNudgingRef[0] = false
+                        fineAnchor = liveValueRef[0].coerceIn(fullMin, safeMax)
+                    },
+                    testTag = if (testTag.isNotEmpty()) "${testTag}_minus" else ""
+                )
+                NudgeButton(
+                    symbol = "+",
+                    contentDescription = "Increase $title",
+                    enabled = enabled && clampedValue < safeMax,
+                    onPressStart = {
+                        isNudgingRef[0] = true
+                        liveValueRef[0] = clampedValue
+                    },
+                    onStep = { stepBy(stepAmount) },
+                    onPressEnd = {
+                        isNudgingRef[0] = false
+                        fineAnchor = liveValueRef[0].coerceIn(fullMin, safeMax)
+                    },
+                    testTag = if (testTag.isNotEmpty()) "${testTag}_plus" else ""
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NudgeButton(
+    symbol: String,
+    contentDescription: String,
+    enabled: Boolean,
+    onPressStart: () -> Unit,
+    onStep: () -> Unit,
+    onPressEnd: () -> Unit,
+    testTag: String,
+    modifier: Modifier = Modifier
+) {
+    val latestEnabled by rememberUpdatedState(enabled)
+    val latestOnPressStart by rememberUpdatedState(onPressStart)
+    val latestOnStep by rememberUpdatedState(onStep)
+    val latestOnPressEnd by rememberUpdatedState(onPressEnd)
+    val interactionSource = remember { MutableInteractionSource() }
+    val scope = rememberCoroutineScope()
+    val shape = RoundedCornerShape(10.dp)
+    val contentAlpha = if (enabled) 1f else 0.38f
+
+    Surface(
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (enabled) 0.7f else 0.3f),
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (enabled) 0.8f else 0.3f)
+        ),
+        modifier = modifier
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            .clip(shape)
+            .indication(interactionSource, ripple())
+            .semantics(mergeDescendants = true) {
+                this.contentDescription = contentDescription
+                role = Role.Button
+                if (!latestEnabled) {
+                    disabled()
+                } else {
+                    onClick {
+                        latestOnPressStart()
+                        latestOnStep()
+                        latestOnPressEnd()
+                        true
+                    }
+                }
+            }
+            .let { if (testTag.isNotEmpty()) it.testTag(testTag) else it }
+            .pointerInput(interactionSource) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = true)
+                    if (!latestEnabled) return@awaitEachGesture
+                    val press = PressInteraction.Press(down.position)
+                    interactionSource.tryEmit(press)
+                    latestOnPressStart()
+
+                    var cancelled = false
+                    var heldRepeated = false
+                    val holdStartMs = SystemClock.uptimeMillis()
+                    val repeatJob = scope.launch {
+                        delay(400L)
+                        heldRepeated = true
+                        while (isActive && latestEnabled) {
+                            latestOnStep()
+                            val elapsed = SystemClock.uptimeMillis() - holdStartMs
+                            val interval = if (elapsed >= 1500L) 35L else 80L
+                            delay(interval)
+                        }
+                    }
+
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null || !change.pressed) {
+                                if (change != null && change.changedToUp()) {
+                                    change.consume()
+                                }
+                                break
+                            }
+                            val distSq = (change.position - down.position).getDistanceSquared()
+                            val slop = viewConfiguration.touchSlop
+                            if (distSq > slop * slop || change.isConsumed) {
+                                cancelled = true
+                                break
+                            }
+                        }
+                    } finally {
+                        repeatJob.cancel()
+                        if (cancelled) {
+                            interactionSource.tryEmit(PressInteraction.Cancel(press))
+                        } else {
+                            interactionSource.tryEmit(PressInteraction.Release(press))
+                            if (!heldRepeated && latestEnabled) {
+                                latestOnStep()
+                            }
+                        }
+                        latestOnPressEnd()
+                    }
+                }
+            }
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = symbol,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)
+            )
+        }
+    }
+}
+

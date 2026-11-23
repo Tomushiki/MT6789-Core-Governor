@@ -221,8 +221,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                                 overlayGameOnly = gameOnly ?: cfg.overlayGameOnly,
                                 overlayOpacityPct = (opacityPct ?: cfg.overlayOpacityPct).coerceIn(30, 100),
                                 overlayBgOpacityPct = (bgOpacityPct ?: cfg.overlayBgOpacityPct).coerceIn(0, 100),
-                                overlayCompactScalePct = (compactScalePct ?: cfg.overlayCompactScalePct).coerceIn(40, 400),
-                                overlayExpandedScalePct = (expandedScalePct ?: cfg.overlayExpandedScalePct).coerceIn(40, 400)
+                                overlayCompactScalePct = (compactScalePct ?: cfg.overlayCompactScalePct).coerceIn(50, 200),
+                                overlayExpandedScalePct = (expandedScalePct ?: cfg.overlayExpandedScalePct).coerceIn(50, 200)
                             )
                         }
                     } else {
@@ -245,8 +245,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                 overlayGameOnly = gameOnly ?: cfg.overlayGameOnly,
                 overlayOpacityPct = (opacityPct ?: cfg.overlayOpacityPct).coerceIn(30, 100),
                 overlayBgOpacityPct = (bgOpacityPct ?: cfg.overlayBgOpacityPct).coerceIn(0, 100),
-                overlayCompactScalePct = (compactScalePct ?: cfg.overlayCompactScalePct).coerceIn(40, 400),
-                overlayExpandedScalePct = (expandedScalePct ?: cfg.overlayExpandedScalePct).coerceIn(40, 400)
+                overlayCompactScalePct = (compactScalePct ?: cfg.overlayCompactScalePct).coerceIn(50, 200),
+                overlayExpandedScalePct = (expandedScalePct ?: cfg.overlayExpandedScalePct).coerceIn(50, 200)
             )
         }
     }

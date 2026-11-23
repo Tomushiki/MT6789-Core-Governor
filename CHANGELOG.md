@@ -2,6 +2,14 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.6.1] - 2026-11-23
+
+### Changed
+- **Overlay size & position fine-tuning.** Replaced the 40%–400% (5% step) overlay scale sliders with continuous 1% sliders capped dynamically per orientation and overlay style (up to 60%×35% of screen for compact, 45%×35% for expanded/detailed, bounded within 50%–200%), and switched position sliders to 0.1% precision matching permille storage.
+- **Micro-adjustment controls & Fine mode.** Added a non-persisted **Fine** toggle zooming size (±10%) and position (±10.0%) sliders around the current value, plus hold-to-repeat `-` / `+` nudge buttons under each slider.
+- **Screen-bounds position clamping.** Overlay measuring and positioning now share full display metrics and re-clamp after scale, style, orientation, or detailed row-count changes so the overlay can reach all edges and never extends off-screen.
+- Version 2.6.1 (versionCode 39).
+
 ## [2.6.0] - 2026-11-23
 
 ### Added

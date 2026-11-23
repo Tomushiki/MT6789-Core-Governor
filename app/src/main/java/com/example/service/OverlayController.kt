@@ -51,9 +51,178 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+
+enum class OverlayStyle {
+    COMPACT,
+    EXPANDED,
+    DETAILED
+}
+
+object OverlaySizing {
+    const val MIN_SCALE_PCT = 50
+    const val MAX_SCALE_PCT = 200
+    const val DEFAULT_DETAILED_ROW_COUNT = 13
+
+    private val measureLock = Any()
+    private val compactLabelPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE }
+    }
+    private val compactTextPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE }
+    }
+    private val ringLabelPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE }
+    }
+    private val ringSubPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE }
+    }
+    private val detailedTextPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE }
+    }
+    private val detailedBoldPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        }
+    }
+
+    fun getScreenSizePx(windowManager: WindowManager): Pair<Int, Int> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windowManager.currentWindowMetrics.bounds
+            bounds.width() to bounds.height()
+        } else {
+            val dm = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(dm)
+            dm.widthPixels to dm.heightPixels
+        }
+    }
+
+    fun measureNaturalSizeAtScaleOne(
+        density: Float,
+        style: OverlayStyle,
+        detailedRowCount: Int = DEFAULT_DETAILED_ROW_COUNT,
+        extraRightColWidthAt1: Float = 0f
+    ): Pair<Float, Float> {
+        val d = density.coerceAtLeast(0.5f)
+        synchronized(measureLock) {
+            return when (style) {
+                OverlayStyle.COMPACT -> {
+                    val hPad = 14f * d
+                    val vPad = 8f * d
+                    val dotR = 3.5f * d
+                    val dotGap = 4f * d
+                    val labelGap = 3f * d
+                    val itemGap = 10f * d
+                    compactLabelPaint.textSize = 9f * d
+                    compactTextPaint.textSize = 11.5f * d
+                    val cpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("CPU") + labelGap + compactTextPaint.measureText("100%")
+                    val gpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("GPU") + labelGap + compactTextPaint.measureText("100%")
+                    val tempItemW = dotR * 2f + dotGap + compactTextPaint.measureText("100°")
+                    val fpsItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("FPS") + labelGap + compactTextPaint.measureText("240")
+                    val powerItemW = maxOf(
+                        compactTextPaint.measureText("-10.00W"),
+                        compactTextPaint.measureText("\u221210.00W")
+                    )
+                    val fm = compactTextPaint.fontMetrics
+                    val textH = fm.descent - fm.ascent
+                    val w = hPad * 2f + cpuItemW + itemGap + gpuItemW + itemGap + fpsItemW + itemGap + tempItemW + itemGap + powerItemW
+                    val h = vPad * 2f + textH
+                    w to h
+                }
+                OverlayStyle.EXPANDED -> {
+                    val ringSize = 48f * d
+                    val hPad = 12f * d
+                    val vPad = 12f * d
+                    val cellGap = 8f * d
+                    val labelGap = 6f * d
+                    val subGap = 2f * d
+                    ringLabelPaint.textSize = 10f * d
+                    ringSubPaint.textSize = 9.5f * d
+                    val widestLabel = maxOf(
+                        ringLabelPaint.measureText("CPU"),
+                        ringLabelPaint.measureText("GPU"),
+                        ringLabelPaint.measureText("TEMP"),
+                        ringLabelPaint.measureText("FPS"),
+                        ringLabelPaint.measureText("POWER")
+                    )
+                    val cellWidth = maxOf(ringSize, widestLabel)
+                    val labelFm = ringLabelPaint.fontMetrics
+                    val subFm = ringSubPaint.fontMetrics
+                    val labelH = labelFm.descent - labelFm.ascent
+                    val subH = subFm.descent - subFm.ascent
+                    val w = hPad * 2f + cellWidth * 5f + cellGap * 4f
+                    val h = vPad * 2f + ringSize + labelGap + labelH + subGap + subH
+                    w to h
+                }
+                OverlayStyle.DETAILED -> {
+                    val hPad = 14f * d
+                    val vPad = 14f * d
+                    val leftColW = 78f * d
+                    val colGap = 16f * d
+                    ringSubPaint.textSize = 12f * d
+                    detailedTextPaint.textSize = 14.5f * d
+                    detailedBoldPaint.textSize = 14.5f * d
+                    val refRightW = maxOf(
+                        detailedTextPaint.measureText("DDR  4266 MHz"),
+                        detailedBoldPaint.measureText("#0~5  2000MHz"),
+                        detailedTextPaint.measureText("100%  2000M"),
+                        detailedTextPaint.measureText("FPS  120.0"),
+                        detailedTextPaint.measureText("PWR  -10.00W"),
+                        detailedTextPaint.measureText("PWR  \u221210.00W")
+                    )
+                    val rightW = maxOf(refRightW, extraRightColWidthAt1)
+                    val subFm = ringSubPaint.fontMetrics
+                    val subH = subFm.descent - subFm.ascent
+                    val slotH = 66f * d + 4f * d + subH
+                    val minLeftColH = 3f * slotH + 2f * (12f * d)
+                    val rightColH = detailedRowCount.coerceAtLeast(1) * (14.5f * d * 1.5f)
+                    val contentH = maxOf(minLeftColH, rightColH)
+                    val w = hPad * 2f + leftColW + colGap + rightW
+                    val h = vPad * 2f + contentH
+                    w to h
+                }
+            }
+        }
+    }
+
+    fun maxScalePct(
+        screenW: Int,
+        screenH: Int,
+        style: OverlayStyle,
+        naturalWAt1: Float,
+        naturalHAt1: Float
+    ): Int {
+        if (screenW <= 0 || screenH <= 0) return MIN_SCALE_PCT
+        val wFactor = if (style == OverlayStyle.COMPACT) 0.60f else 0.45f
+        val hFactor = 0.35f
+        val allowedW = screenW.toFloat() * wFactor
+        val allowedH = screenH.toFloat() * hFactor
+        val ratio = minOf(
+            allowedW / naturalWAt1.coerceAtLeast(1f),
+            allowedH / naturalHAt1.coerceAtLeast(1f)
+        )
+        return floor((ratio * 100f).toDouble()).toInt().coerceIn(MIN_SCALE_PCT, MAX_SCALE_PCT)
+    }
+
+    fun computeWindowOriginPx(
+        screenW: Int,
+        screenH: Int,
+        viewW: Int,
+        viewH: Int,
+        xPm: Int,
+        yPm: Int
+    ): Pair<Int, Int> {
+        val freeW = max(0, screenW - viewW)
+        val freeH = max(0, screenH - viewH)
+        val x = (xPm.coerceIn(0, 1000) / 1000f * freeW).roundToInt().coerceIn(0, freeW)
+        val y = (yPm.coerceIn(0, 1000) / 1000f * freeH).roundToInt().coerceIn(0, freeH)
+        return x to y
+    }
+}
 
 class OverlayController(
     context: Context,
@@ -217,12 +386,11 @@ class OverlayController(
                     layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
                 }
             }
-            applyPermillePosition(view, params, cfg)
-
             val initialData = toDisplayData(engine.telemetry.value)
             lastAppliedDisplay = initialData
             lastApplyTimeMs = System.currentTimeMillis()
             view.setDisplayData(initialData)
+            applyPermillePosition(view, params, cfg)
 
             try {
                 windowManager.addView(view, params)
@@ -278,17 +446,8 @@ class OverlayController(
     private fun currentPosPm(cfg: GovernorConfig): Pair<Int, Int> =
         cfg.overlayPosPm(isLandscapeNow())
 
-    private fun getScreenSize(): Pair<Int, Int> {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = windowManager.currentWindowMetrics.bounds
-            bounds.width() to bounds.height()
-        } else {
-            val dm = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(dm)
-            dm.widthPixels to dm.heightPixels
-        }
-    }
+    private fun getScreenSize(): Pair<Int, Int> =
+        OverlaySizing.getScreenSizePx(windowManager)
 
     private fun getMeasuredViewSize(view: View, screenW: Int, screenH: Int): Pair<Int, Int> {
         if (view.measuredWidth <= 0 || view.measuredHeight <= 0 || view.isLayoutRequested) {
@@ -308,8 +467,9 @@ class OverlayController(
         val (xPm, yPm) = currentPosPm(cfg)
         val (screenW, screenH) = getScreenSize()
         val (viewW, viewH) = getMeasuredViewSize(view, screenW, screenH)
-        params.x = (xPm / 1000f * max(0, screenW - viewW)).roundToInt()
-        params.y = (yPm / 1000f * max(0, screenH - viewH)).roundToInt()
+        val (x, y) = OverlaySizing.computeWindowOriginPx(screenW, screenH, viewW, viewH, xPm, yPm)
+        params.x = x
+        params.y = y
         lastAppliedXPm = xPm
         lastAppliedYPm = yPm
     }
@@ -346,7 +506,9 @@ class OverlayController(
                 lastApplyTimeMs = now
                 if (hasDisplayedValuesChanged(lastAppliedDisplay, next)) {
                     lastAppliedDisplay = next
-                    view.setDisplayData(next)
+                    if (view.setDisplayData(next)) {
+                        repositionForCurrentScreen()
+                    }
                 }
             }
         }
@@ -515,10 +677,12 @@ class OverlayController(
             applyPaintSizes(1f)
         }
 
-        private fun requestedScale(): Float {
+        private fun requestedScalePct(): Int {
             val pct = if (expanded || detailed) expandedScalePct else compactScalePct
-            return pct.coerceIn(40, 400) / 100f
+            return pct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
         }
+
+        private fun requestedScale(): Float = requestedScalePct() / 100f
 
         private fun effDensityFor(s: Float): Float = baseDensity * s
 
@@ -562,8 +726,8 @@ class OverlayController(
         }
 
         fun setScales(compactPct: Int, expandedPct: Int): Boolean {
-            val clampedCompact = compactPct.coerceIn(40, 400)
-            val clampedExpanded = expandedPct.coerceIn(40, 400)
+            val clampedCompact = compactPct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
+            val clampedExpanded = expandedPct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
             val prevEffective = effectiveScale
             compactScalePct = clampedCompact
             expandedScalePct = clampedExpanded
@@ -590,7 +754,7 @@ class OverlayController(
             }
         }
 
-        fun setDisplayData(next: DisplayData) {
+        fun setDisplayData(next: DisplayData): Boolean {
             val structureChanged = detailed && (
                 data.clusters.size != next.clusters.size ||
                     data.clusters.sumOf { it.cores.size } != next.clusters.sumOf { it.cores.size } ||
@@ -601,6 +765,7 @@ class OverlayController(
                 requestLayout()
             }
             invalidate()
+            return structureChanged
         }
 
         private fun computeExpandedCellWidth(d: Float): Float {
@@ -664,55 +829,34 @@ class OverlayController(
             return maxOf(minLeftColH, rightColH)
         }
 
-        private fun measureNaturalWidthAtScaleOne(): Float {
-            applyPaintSizes(1f)
-            val d = baseDensity
-            return if (detailed) {
-                val hPad = 14f * d
-                val leftColW = 78f * d
-                val colGap = 16f * d
-                hPad * 2f + leftColW + colGap + measureDetailedRightColWidth()
-            } else if (expanded) {
-                val hPad = 12f * d
-                val cellGap = 8f * d
-                val cellWidth = computeExpandedCellWidth(d)
-                hPad * 2f + cellWidth * 5f + cellGap * 4f
-            } else {
-                val hPad = 14f * d
-                val dotR = 3.5f * d
-                val dotGap = 4f * d
-                val labelGap = 3f * d
-                val itemGap = 10f * d
-
-                val cpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("CPU") + labelGap + compactTextPaint.measureText("100%")
-                val gpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("GPU") + labelGap + compactTextPaint.measureText("100%")
-                val tempItemW = dotR * 2f + dotGap + compactTextPaint.measureText("100°")
-                val fpsItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("FPS") + labelGap + compactTextPaint.measureText("240")
-                val powerItemW = maxOf(
-                    compactTextPaint.measureText("-10.00W"),
-                    compactTextPaint.measureText("\u221210.00W")
-                )
-
-                hPad * 2f + cpuItemW + itemGap + gpuItemW + itemGap + fpsItemW + itemGap + tempItemW + itemGap + powerItemW
-            }
-        }
-
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            if (detailed) {
-                val (screenW, screenH) = getScreenSize()
-                val maxAllowedWidth = (screenW * 0.70f).coerceAtLeast(48f * baseDensity)
-                val maxAllowedHeight = (screenH * 0.60f).coerceAtLeast(48f * baseDensity)
-                val naturalWidthAt1 = measureNaturalWidthAtScaleOne().coerceAtLeast(1f)
-                val naturalHeightAt1 = (14f * baseDensity * 2f + measureDetailedContentHeight(baseDensity)).coerceAtLeast(1f)
-                val clampedS = minOf(
-                    requestedScale(),
-                    maxAllowedWidth / naturalWidthAt1,
-                    maxAllowedHeight / naturalHeightAt1
-                ).coerceAtLeast(0.1f)
-                effectiveScale = clampedS
-                applyPaintSizes(clampedS)
-                val d = effDensityFor(clampedS)
+            val (screenW, screenH) = getScreenSize()
+            val style = when {
+                detailed -> OverlayStyle.DETAILED
+                expanded -> OverlayStyle.EXPANDED
+                else -> OverlayStyle.COMPACT
+            }
+            val extraRightWAt1 = if (detailed) {
+                applyPaintSizes(1f)
+                measureDetailedRightColWidth()
+            } else {
+                0f
+            }
+            val (natWAt1, natHAt1) = OverlaySizing.measureNaturalSizeAtScaleOne(
+                density = baseDensity,
+                style = style,
+                detailedRowCount = detailedRowCount(data),
+                extraRightColWidthAt1 = extraRightWAt1
+            )
+            val maxPct = OverlaySizing.maxScalePct(screenW, screenH, style, natWAt1, natHAt1)
+            val effectivePct = minOf(requestedScalePct(), maxPct)
+                .coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
+            val clampedS = effectivePct / 100f
+            effectiveScale = clampedS
+            applyPaintSizes(clampedS)
+            val d = effDensityFor(clampedS)
 
+            if (detailed) {
                 val hPad = 14f * d
                 val vPad = 14f * d
                 val leftColW = 78f * d
@@ -724,14 +868,6 @@ class OverlayController(
                 setMeasuredDimension(width, height)
                 return
             }
-
-            val screenWidth = resources.displayMetrics.widthPixels.toFloat()
-            val maxAllowedWidth = (screenWidth - 16f * baseDensity).coerceAtLeast(48f * baseDensity)
-            val naturalWidthAt1 = measureNaturalWidthAtScaleOne().coerceAtLeast(1f)
-            val clampedS = minOf(requestedScale(), maxAllowedWidth / naturalWidthAt1).coerceAtLeast(0.1f)
-            effectiveScale = clampedS
-            applyPaintSizes(clampedS)
-            val d = effDensityFor(clampedS)
 
             if (expanded) {
                 val ringSize = 48f * d
@@ -1191,8 +1327,11 @@ class OverlayController(
                             yPm >= 992 -> 1000
                             else -> yPm
                         }
-                        params.x = (xPm / 1000f * freeW).roundToInt()
-                        params.y = (yPm / 1000f * freeH).roundToInt()
+                        val (finalX, finalY) = OverlaySizing.computeWindowOriginPx(
+                            screenW, screenH, viewW, viewH, xPm, yPm
+                        )
+                        params.x = finalX
+                        params.y = finalY
                         lastAppliedXPm = xPm
                         lastAppliedYPm = yPm
                         try {
