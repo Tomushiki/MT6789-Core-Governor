@@ -73,6 +73,8 @@ private enum class TuningCategory(val label: String) {
     ALL("All"),
     RANGES("Ranges"),
     CONTROL("Control"),
+    SCREEN_OFF("Screen-off"),
+    OVERLAY("Overlay"),
     THERMAL("Thermal"),
     POWER("Power"),
     PRESETS("Presets & HW")
@@ -498,7 +500,10 @@ fun TuningScreen(
                         )
                     }
                 }
+            }
 
+            // 2b. Screen-off power saving
+            if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.SCREEN_OFF) {
                 item {
                     EcuCard {
                         Text(
@@ -552,7 +557,10 @@ fun TuningScreen(
                         )
                     }
                 }
+            }
 
+            // 2c. Overlay
+            if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.OVERLAY) {
                 item {
                     EcuCard {
                         Text(
