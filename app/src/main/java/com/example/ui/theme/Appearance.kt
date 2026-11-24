@@ -51,35 +51,35 @@ object Appearance {
     private const val MAX_SIDE = 1600
 
     /** null = default border color of the theme. */
-    var borderColor by mutableStateOf<Color?>(null)
-        private set
+    private var _borderColor by mutableStateOf<Color?>(null)
+    val borderColor: Color? get() = _borderColor
 
     /** null = plain background. */
-    var background by mutableStateOf<ImageBitmap?>(null)
-        private set
+    private var _background by mutableStateOf<ImageBitmap?>(null)
+    val background: ImageBitmap? get() = _background
 
     /** How strongly the picture is darkened (0.3 .. 0.95). */
-    var dim by mutableStateOf(0.7f)
-        private set
+    private var _dim by mutableStateOf<Float>(0.7f)
+    val dim: Float get() = _dim
 
-    var themeMode by mutableStateOf(ThemeMode.SYSTEM)
-        private set
+    private var _themeMode by mutableStateOf<ThemeMode>(ThemeMode.SYSTEM)
+    val themeMode: ThemeMode get() = _themeMode
 
     /** null = the theme's own accent color. */
-    var accent by mutableStateOf<Color?>(null)
-        private set
+    private var _accent by mutableStateOf<Color?>(null)
+    val accent: Color? get() = _accent
 
     /** Corner radius of cards and other surfaces, in dp (0 .. 28). */
-    var cornerRadius by mutableStateOf(14f)
-        private set
+    private var _cornerRadius by mutableStateOf<Float>(14f)
+    val cornerRadius: Float get() = _cornerRadius
 
     /** How see-through cards and panels are (0 = solid, 0.7 = very transparent). */
-    var transparency by mutableStateOf(0f)
-        private set
+    private var _transparency by mutableStateOf<Float>(0f)
+    val transparency: Float get() = _transparency
 
     /** Frosted "liquid glass" look for cards. */
-    var liquidGlass by mutableStateOf(false)
-        private set
+    private var _liquidGlass by mutableStateOf<Boolean>(false)
+    val liquidGlass: Boolean get() = _liquidGlass
 
     private var appContext: Context? = null
 
@@ -90,19 +90,19 @@ object Appearance {
         val app = context.applicationContext
         appContext = app
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (prefs.contains(KEY_BORDER)) borderColor = Color(prefs.getInt(KEY_BORDER, 0))
-        dim = prefs.getFloat(KEY_DIM, 0.7f).coerceIn(0.3f, 0.95f)
-        themeMode = ThemeMode.values().getOrElse(prefs.getInt(KEY_THEME, 0)) { ThemeMode.SYSTEM }
-        if (prefs.contains(KEY_ACCENT)) accent = Color(prefs.getInt(KEY_ACCENT, 0))
-        cornerRadius = prefs.getFloat(KEY_RADIUS, 14f).coerceIn(0f, 28f)
-        transparency = prefs.getFloat(KEY_TRANS, 0f).coerceIn(0f, 0.7f)
-        liquidGlass = prefs.getBoolean(KEY_GLASS, false)
+        if (prefs.contains(KEY_BORDER)) _borderColor = Color(prefs.getInt(KEY_BORDER, 0))
+        _dim = prefs.getFloat(KEY_DIM, 0.7f).coerceIn(0.3f, 0.95f)
+        _themeMode = ThemeMode.values().getOrElse(prefs.getInt(KEY_THEME, 0)) { ThemeMode.SYSTEM }
+        if (prefs.contains(KEY_ACCENT)) _accent = Color(prefs.getInt(KEY_ACCENT, 0))
+        _cornerRadius = prefs.getFloat(KEY_RADIUS, 14f).coerceIn(0f, 28f)
+        _transparency = prefs.getFloat(KEY_TRANS, 0f).coerceIn(0f, 0.7f)
+        _liquidGlass = prefs.getBoolean(KEY_GLASS, false)
         val f = File(app.filesDir, FILE_NAME)
         if (f.exists()) {
             thread(name = "appearance-load") {
                 try {
                     val bmp = decode { f.inputStream() }
-                    if (bmp != null) background = bmp.asImageBitmap()
+                    if (bmp != null) _background = bmp.asImageBitmap()
                 } catch (_: Throwable) {
                 }
             }
@@ -110,7 +110,7 @@ object Appearance {
     }
 
     fun setBorder(color: Color?) {
-        borderColor = color
+        _borderColor = color
         val ctx = appContext ?: return
         val e = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
         if (color == null) e.remove(KEY_BORDER) else e.putInt(KEY_BORDER, color.toArgb())
@@ -118,29 +118,29 @@ object Appearance {
     }
 
     fun setThemeMode(mode: ThemeMode) {
-        themeMode = mode
+        _themeMode = mode
         prefs()?.edit()?.putInt(KEY_THEME, mode.ordinal)?.apply()
     }
 
     fun setAccent(color: Color?) {
-        accent = color
+        _accent = color
         val e = prefs()?.edit() ?: return
         if (color == null) e.remove(KEY_ACCENT) else e.putInt(KEY_ACCENT, color.toArgb())
         e.apply()
     }
 
     fun setCornerRadius(value: Float) {
-        cornerRadius = value.coerceIn(0f, 28f)
+        _cornerRadius = value.coerceIn(0f, 28f)
         prefs()?.edit()?.putFloat(KEY_RADIUS, cornerRadius)?.apply()
     }
 
     fun setTransparency(value: Float) {
-        transparency = value.coerceIn(0f, 0.7f)
+        _transparency = value.coerceIn(0f, 0.7f)
         prefs()?.edit()?.putFloat(KEY_TRANS, transparency)?.apply()
     }
 
     fun setLiquidGlass(on: Boolean) {
-        liquidGlass = on
+        _liquidGlass = on
         prefs()?.edit()?.putBoolean(KEY_GLASS, on)?.apply()
     }
 
@@ -157,7 +157,7 @@ object Appearance {
     }
 
     fun setDim(value: Float) {
-        dim = value.coerceIn(0.3f, 0.95f)
+        _dim = value.coerceIn(0.3f, 0.95f)
         val ctx = appContext ?: return
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putFloat(KEY_DIM, dim).apply()
     }
@@ -187,7 +187,7 @@ object Appearance {
                 File(app.filesDir, FILE_NAME).outputStream().use { out ->
                     bmp.compress(Bitmap.CompressFormat.JPEG, 88, out)
                 }
-                background = bmp.asImageBitmap()
+                _background = bmp.asImageBitmap()
                 val pr = prefs()
                 if (pr != null && !pr.contains(KEY_TRANS)) setTransparency(0.2f)
             } catch (_: Throwable) {
@@ -197,7 +197,7 @@ object Appearance {
     }
 
     fun clearBackground() {
-        background = null
+        _background = null
         val ctx = appContext ?: return
         try {
             File(ctx.filesDir, FILE_NAME).delete()
