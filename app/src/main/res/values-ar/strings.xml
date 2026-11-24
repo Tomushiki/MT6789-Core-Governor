@@ -676,6 +676,9 @@
     <string name="nifty_no_sensors">لم يُعثر على مستشعرات حركة مدعومة في هذا الجهاز.</string>
     <string name="nifty_pause_off_title">إيقاف مؤقت عند إطفاء الشاشة</string>
     <string name="nifty_pause_off_desc">يحرر المستشعرات عند إطفاء الشاشة ويثبتها مجدداً عند إضاءتها. يوفّر البطارية.</string>
+    <string name="nifty_game_only_title">التثبيت أثناء اللعب فقط</string>
+    <string name="nifty_game_only_desc">يثبّت المستشعرات فقط أثناء اكتشاف لعبة وتشغيلها (وضع اللعبة) ويحررها في غير ذلك. يقلل استهلاك الطاقة في وضع الخمول.</string>
+    <string name="nifty_status_game_wait">بانتظار لعبة. المستشعرات غير مثبّتة حالياً.</string>
     <string name="nifty_status_active">نشط</string>
     <string name="nifty_status_waiting">بانتظار التشغيل: يبدأ عند تشغيل الحاكم.</string>
     <string name="nifty_status_paused">متوقف مؤقتاً (الشاشة مطفأة) أو تعذر تسجيل أي مستشعر. راجع السجل.</string>
@@ -902,4 +905,12 @@
         <item quantity="many">%1$d إيقاظاً</item>
         <item quantity="other">%1$d إيقاظ</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">المنظّم: حد الحرارة</string>
+    <string name="hunter_res_gov_battery">المنظّم: حد البطارية</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → المنظّم</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN مخفَّض</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • تم خفض التعزيز</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN متوقف</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • محظور بسبب الحرارة</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • محظور بسبب البطارية</string>
 </resources>

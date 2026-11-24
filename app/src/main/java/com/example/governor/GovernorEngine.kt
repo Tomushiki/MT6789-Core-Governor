@@ -493,6 +493,7 @@ class GovernorEngine(context: Context) {
             } finally {
                 metrics.onStopped()
                 stopFpsSampler()
+                sensorPinner.setGameActive(false)
                 sensorPinner.setServiceRunning(false)
                 sleepWatcherJob?.cancel()
                 sleepWatcherJob = null
@@ -876,6 +877,7 @@ class GovernorEngine(context: Context) {
             ModeOverride.AUTO -> if (fgPkg in cfg.gamePackages) GovernorMode.GAME else GovernorMode.NORMAL
         }
         val modeProfile = if (activeMode == GovernorMode.GAME) cfg.gameMode else cfg.normalMode
+        sensorPinner.setGameActive(activeMode == GovernorMode.GAME)
 
         // 2. CPU loads from /proc/stat
         val currTicks = SysfsParsers.parseProcStat(batch["/proc/stat"].orEmpty())
@@ -1055,7 +1057,12 @@ class GovernorEngine(context: Context) {
                     newState = afterburnDecision.state,
                     strength = cfg.afterburn.strength,
                     toastEnabled = cfg.afterburn.toastEnabled,
-                    timestampMs = nowMs
+                    timestampMs = nowMs,
+                    inSelectedGame = com.example.service.AfterburnToastPolicy.isSelectedGameForeground(
+                        eventPkg = fgPkg,
+                        gamePackages = cfg.gamePackages,
+                        foregroundPkg = fgPkg
+                    )
                 )
             )
         }

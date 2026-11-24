@@ -87,6 +87,7 @@ A small always-visible strip showing CPU, GPU, temperature and power. It is off 
 Some phones read the gyroscope slowly until an app asks for faster data. This option keeps the chosen sensors (gyroscope by default) running at a fast, fixed rate for every app, so aiming and tilt controls respond quicker. It needs no root.
 
 - Pin sensor refresh rate: turns it on. It runs while the governor service is running.
+- Only pin while in a game: holds the sensors at the chosen rate only while a game (Game mode) is running, and releases them otherwise to save idle power.
 - Rate: Max asks for the sensor's fastest rate. Lower rates use less battery.
 - Sensors: pick which motion sensors to pin. At least one stays selected.
 - Pause while the screen is off: releases the sensors when the screen turns off. On by default.

@@ -6,6 +6,11 @@ All notable changes to **CoreGovernor** will be documented in this file.
 
 No changes yet.
 
+## [3.6.4] - 2026-11-24
+
+### Added
+- **Pin sensors only in games.** New switch under Pin sensor refresh rate: "Only pin while in a game". The sensors are held at your chosen rate only while a game is detected and running (Game mode) and are released the rest of the time, which cuts idle power use. Works together with "Pause while the screen is off". Off by default, so existing behaviour is unchanged.
+
 ## [3.6.3] - 2026-11-24
 
 ### Changed

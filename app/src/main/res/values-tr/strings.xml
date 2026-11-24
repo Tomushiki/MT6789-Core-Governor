@@ -676,6 +676,9 @@
     <string name="nifty_no_sensors">Bu cihazda desteklenen hareket sensörü bulunamadı.</string>
     <string name="nifty_pause_off_title">Ekran kapalıyken duraklat</string>
     <string name="nifty_pause_off_desc">Ekran kapandığında sensörleri serbest bırakır ve açıldığında yeniden sabitler. Pil tasarrufu sağlar.</string>
+    <string name="nifty_game_only_title">Yalnızca oyundayken sabitle</string>
+    <string name="nifty_game_only_desc">Sensörleri yalnızca bir oyun algılanıp çalışırken (Oyun modu) sabitler, aksi halde serbest bırakır. Boştaki güç tüketimini azaltır.</string>
+    <string name="nifty_status_game_wait">Oyun bekleniyor. Sensörler şu anda sabitlenmiş değil.</string>
     <string name="nifty_status_active">AKTİF</string>
     <string name="nifty_status_waiting">Bekliyor: governor başladığında başlar.</string>
     <string name="nifty_status_paused">Duraklatıldı (ekran kapalı) veya sensör kaydedilemedi. Kayda bakın.</string>
@@ -870,4 +873,12 @@
         <item quantity="one">%1$d uyandırma</item>
         <item quantity="other">%1$d uyandırma</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">Governor: ısı sınırı</string>
+    <string name="hunter_res_gov_battery">Governor: pil sınırı</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → governor</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN AZALTILDI</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • boost düşürüldü</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN DURDU</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • ısı nedeniyle engellendi</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • pil nedeniyle engellendi</string>
 </resources>

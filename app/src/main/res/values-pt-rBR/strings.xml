@@ -676,6 +676,9 @@
     <string name="nifty_no_sensors">Nenhum sensor de movimento compatível encontrado.</string>
     <string name="nifty_pause_off_title">Pausar com a tela desligada</string>
     <string name="nifty_pause_off_desc">Libera os sensores ao desligar a tela e os fixa novamente ao ligar. Economiza bateria.</string>
+    <string name="nifty_game_only_title">Fixar apenas em jogos</string>
+    <string name="nifty_game_only_desc">Fixa os sensores somente enquanto um jogo é detectado e está em execução (modo Jogo) e os libera nos demais momentos. Reduz o consumo em repouso.</string>
+    <string name="nifty_status_game_wait">Aguardando um jogo. Os sensores não estão fixados agora.</string>
     <string name="nifty_status_active">ATIVO</string>
     <string name="nifty_status_waiting">Aguardando: inicia quando o governador iniciar.</string>
     <string name="nifty_status_paused">Pausado (tela desligada) ou nenhum sensor pôde ser registrado. Veja o registro.</string>
@@ -870,4 +873,12 @@
         <item quantity="one">%1$d ativação</item>
         <item quantity="other">%1$d ativações</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">Governor: limite térmico</string>
+    <string name="hunter_res_gov_battery">Governor: limite de bateria</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → governor</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN REDUZIDO</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • boost reduzido</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN PARADO</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • bloqueado por calor</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • bloqueado pela bateria</string>
 </resources>

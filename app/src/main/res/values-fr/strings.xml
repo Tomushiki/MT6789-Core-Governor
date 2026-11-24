@@ -676,6 +676,9 @@
     <string name="nifty_no_sensors">Aucun capteur de mouvement compatible trouvé sur cet appareil.</string>
     <string name="nifty_pause_off_title">Pause quand l\'écran est éteint</string>
     <string name="nifty_pause_off_desc">Libère les capteurs à l\'extinction de l\'écran et les refixe au rallumage. Économise la batterie.</string>
+    <string name="nifty_game_only_title">Fixer uniquement en jeu</string>
+    <string name="nifty_game_only_desc">Ne fixe les capteurs que lorsqu\'un jeu est détecté et en cours (mode Jeu), et les libère sinon. Réduit la consommation au repos.</string>
+    <string name="nifty_status_game_wait">En attente d\'un jeu. Les capteurs ne sont pas fixés pour le moment.</string>
     <string name="nifty_status_active">ACTIF</string>
     <string name="nifty_status_waiting">En attente : démarre avec le gouverneur.</string>
     <string name="nifty_status_paused">En pause (écran éteint) ou aucun capteur enregistré. Voir le journal.</string>
@@ -870,4 +873,12 @@
         <item quantity="one">%1$d réveil</item>
         <item quantity="other">%1$d réveils</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">Gouverneur : limite thermique</string>
+    <string name="hunter_res_gov_battery">Gouverneur : limite batterie</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → gouverneur</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN RÉDUIT</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • boost réduit</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN ARRÊTÉ</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • bloqué par la chaleur</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • bloqué par la batterie</string>
 </resources>

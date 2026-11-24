@@ -676,6 +676,9 @@
     <string name="nifty_no_sensors">Không tìm thấy cảm biến chuyển động hỗ trợ trên thiết bị này.</string>
     <string name="nifty_pause_off_title">Tạm dừng khi tắt màn hình</string>
     <string name="nifty_pause_off_desc">Giải phóng cảm biến khi tắt màn hình và ghim lại khi bật lên. Tiết kiệm pin.</string>
+    <string name="nifty_game_only_title">Chỉ ghim khi chơi game</string>
+    <string name="nifty_game_only_desc">Chỉ ghim cảm biến khi phát hiện và đang chạy game (chế độ Game), còn lại thì giải phóng. Giảm tiêu thụ điện khi nhàn rỗi.</string>
+    <string name="nifty_status_game_wait">Đang chờ game. Hiện chưa ghim cảm biến.</string>
     <string name="nifty_status_active">ĐANG BẬT</string>
     <string name="nifty_status_waiting">Đang chờ: bắt đầu khi bộ điều tốc khởi động.</string>
     <string name="nifty_status_paused">Đang tạm dừng (tắt màn) hoặc không đăng ký được cảm biến. Xem nhật ký.</string>
@@ -862,4 +865,12 @@
     <plurals name="plural_wakeups">
         <item quantity="other">%1$d lần đánh thức</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">Governor: giới hạn nhiệt</string>
+    <string name="hunter_res_gov_battery">Governor: giới hạn pin</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → governor</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN GIẢM</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • đã giảm tăng cường</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN DỪNG</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • bị chặn do nhiệt</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • bị chặn do pin</string>
 </resources>

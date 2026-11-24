@@ -676,6 +676,9 @@
     <string name="nifty_no_sensors">Поддерживаемые датчики движения не найдены.</string>
     <string name="nifty_pause_off_title">Пауза при выключенном экране</string>
     <string name="nifty_pause_off_desc">Освобождает датчики при выключении экрана и снова фиксирует при включении. Экономит батарею.</string>
+    <string name="nifty_game_only_title">Фиксировать только в играх</string>
+    <string name="nifty_game_only_desc">Фиксирует датчики только пока обнаружена и запущена игра (режим «Игра»), в остальное время освобождает их. Снижает расход в простое.</string>
+    <string name="nifty_status_game_wait">Ожидание игры. Датчики сейчас не зафиксированы.</string>
     <string name="nifty_status_active">АКТИВНО</string>
     <string name="nifty_status_waiting">Ожидание: включится при запуске говернора.</string>
     <string name="nifty_status_paused">На паузе (экран выкл.) или не удалось зарегистрировать датчики. См. лог.</string>
@@ -886,4 +889,12 @@
         <item quantity="many">%1$d пробуждений</item>
         <item quantity="other">%1$d пробуждения</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">Губернатор: лимит нагрева</string>
+    <string name="hunter_res_gov_battery">Губернатор: лимит батареи</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → губернатор</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN СНИЖЕН</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • буст снижен</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN ОСТАНОВЛЕН</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • заблокирован из-за нагрева</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • заблокирован из-за батареи</string>
 </resources>

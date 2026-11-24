@@ -676,6 +676,9 @@
     <string name="nifty_no_sensors">Tidak ada sensor gerak yang didukung di perangkat ini.</string>
     <string name="nifty_pause_off_title">Jeda saat layar mati</string>
     <string name="nifty_pause_off_desc">Melepas sensor saat layar mati dan menguncinya lagi saat menyala. Menghemat baterai.</string>
+    <string name="nifty_game_only_title">Kunci hanya saat bermain game</string>
+    <string name="nifty_game_only_desc">Mengunci sensor hanya saat game terdeteksi dan berjalan (mode Game), lalu melepasnya di luar itu. Mengurangi konsumsi daya saat diam.</string>
+    <string name="nifty_status_game_wait">Menunggu game. Sensor tidak dikunci saat ini.</string>
     <string name="nifty_status_active">AKTIF</string>
     <string name="nifty_status_waiting">Menunggu: mulai saat governor berjalan.</string>
     <string name="nifty_status_paused">Dijeda (layar mati) atau tidak ada sensor yang dapat didaftarkan. Lihat log.</string>
@@ -862,4 +865,12 @@
     <plurals name="plural_wakeups">
         <item quantity="other">%1$d kali bangun</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">Governor: batas panas</string>
+    <string name="hunter_res_gov_battery">Governor: batas baterai</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → governor</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN DIKURANGI</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • boost diturunkan</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN BERHENTI</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • diblokir panas</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • diblokir baterai</string>
 </resources>

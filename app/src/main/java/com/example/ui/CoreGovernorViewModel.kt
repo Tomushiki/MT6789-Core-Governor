@@ -66,6 +66,7 @@ import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
 import com.example.model.ThrottleCurveShape
 import com.example.model.withOverlayPosPm
+import com.example.model.withOverlayPositionsReset
 import com.example.model.withOverlayScalePct
 import com.example.service.GovernorService
 import kotlinx.coroutines.Dispatchers
@@ -331,19 +332,12 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    fun updateOverlayPosition(xPm: Int?, yPm: Int?, reset: Boolean = false) {
-        val landscape = getApplication<Application>().resources.configuration.orientation ==
-            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    fun updateOverlayPosition(xPm: Int?, yPm: Int?, reset: Boolean = false, isLandscape: Boolean = false) {
+        // Orientation comes from the screen the user is looking at (same as the size sliders).
+        val landscape = isLandscape
         engine.updateConfig { cfg ->
             if (reset) {
-                cfg.copy(
-                    overlayCompactXPm = 40, overlayCompactYPm = 60,
-                    overlayExpandedXPm = 40, overlayExpandedYPm = 60,
-                    overlayDetailedXPm = 40, overlayDetailedYPm = 60,
-                    overlayCompactXPmL = 40, overlayCompactYPmL = 60,
-                    overlayExpandedXPmL = 40, overlayExpandedYPmL = 60,
-                    overlayDetailedXPmL = 40, overlayDetailedYPmL = 60
-                )
+                cfg.withOverlayPositionsReset()
             } else {
                 cfg.withOverlayPosPm(landscape, xPm, yPm)
             }
@@ -354,7 +348,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         enabled: Boolean? = null,
         rate: SensorPinner.Rate? = null,
         toggleType: Int? = null,
-        pauseWhenScreenOff: Boolean? = null
+        pauseWhenScreenOff: Boolean? = null,
+        gameOnly: Boolean? = null
     ) {
         engine.sensorPinner.setConfig { cfg ->
             val types = if (toggleType == null) {
@@ -369,7 +364,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                 enabled = enabled ?: cfg.enabled,
                 rate = rate ?: cfg.rate,
                 sensorTypes = types,
-                pauseWhenScreenOff = pauseWhenScreenOff ?: cfg.pauseWhenScreenOff
+                pauseWhenScreenOff = pauseWhenScreenOff ?: cfg.pauseWhenScreenOff,
+                gameOnly = gameOnly ?: cfg.gameOnly
             )
         }
     }

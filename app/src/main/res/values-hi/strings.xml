@@ -676,6 +676,9 @@
     <string name="nifty_no_sensors">इस डिवाइस पर कोई समर्थित मोशन सेंसर नहीं मिला।</string>
     <string name="nifty_pause_off_title">स्क्रीन बंद रहने पर रोकें</string>
     <string name="nifty_pause_off_desc">स्क्रीन बंद होने पर सेंसर मुक्त करता है और चालू होने पर फिर से पिन करता है। बैटरी बचाता है।</string>
+    <string name="nifty_game_only_title">केवल गेम में पिन करें</string>
+    <string name="nifty_game_only_desc">सेंसर को केवल तब पिन करता है जब कोई गेम पहचाना और चल रहा हो (गेम मोड), अन्यथा उन्हें मुक्त करता है। निष्क्रिय बिजली खपत घटाता है।</string>
+    <string name="nifty_status_game_wait">गेम की प्रतीक्षा है। सेंसर अभी पिन नहीं हैं।</string>
     <string name="nifty_status_active">सक्रिय</string>
     <string name="nifty_status_waiting">प्रतीक्षारत: गवर्नर शुरू होने पर प्रारंभ होता है।</string>
     <string name="nifty_status_paused">रुका हुआ (स्क्रीन बंद) या कोई सेंसर पंजीकृत नहीं हो सका। लॉग देखें।</string>
@@ -870,4 +873,12 @@
         <item quantity="one">%1$d वेकअप</item>
         <item quantity="other">%1$d वेकअप</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">गवर्नर: तापमान सीमा</string>
+    <string name="hunter_res_gov_battery">गवर्नर: बैटरी सीमा</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → गवर्नर</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN कम किया गया</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • बूस्ट घटाया गया</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN रुका</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • गर्मी के कारण रोका गया</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • बैटरी के कारण रोका गया</string>
 </resources>

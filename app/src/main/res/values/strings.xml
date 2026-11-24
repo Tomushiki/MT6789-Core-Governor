@@ -682,6 +682,9 @@
     <string name="nifty_no_sensors">No supported motion sensors found on this device.</string>
     <string name="nifty_pause_off_title">Pause while the screen is off</string>
     <string name="nifty_pause_off_desc">Releases the sensors when the screen turns off and pins them again when it turns on. Saves battery.</string>
+    <string name="nifty_game_only_title">Only pin while in a game</string>
+    <string name="nifty_game_only_desc">Pins the sensors only while a game is detected and running (Game mode), and releases them otherwise. Cuts idle power use.</string>
+    <string name="nifty_status_game_wait">Waiting for a game. Sensors are not pinned right now.</string>
     <string name="nifty_status_active">ACTIVE</string>
     <string name="nifty_status_waiting">Waiting: starts when the governor starts.</string>
     <string name="nifty_status_paused">Paused (screen off) or no sensor could be registered. See the log.</string>
@@ -876,4 +879,12 @@
         <item quantity="one">%1$d wakeup</item>
         <item quantity="other">%1$d wakeups</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">Governor: heat limit</string>
+    <string name="hunter_res_gov_battery">Governor: battery limit</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → governor</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN REDUCED</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • boost lowered</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN STOPPED</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • blocked by heat</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • blocked by battery</string>
 </resources>

@@ -170,7 +170,7 @@ fun TuningScreen(
         bgOpacityPct: Int?,
         isLandscape: Boolean
     ) -> Unit,
-    onUpdateOverlayPosition: (Int?, Int?, Boolean) -> Unit,
+    onUpdateOverlayPosition: (Int?, Int?, Boolean, Boolean) -> Unit,
     onUpdateRamPin: (Boolean?, Boolean?) -> Unit,
     onUpdateClusterRange: (GovernorMode, Int, FreqRange) -> Unit,
     onUpdateGpuRange: (GovernorMode, FreqRange) -> Unit,
@@ -231,7 +231,8 @@ fun TuningScreen(
         enabled: Boolean?,
         rate: SensorPinner.Rate?,
         toggleType: Int?,
-        pauseWhenScreenOff: Boolean?
+        pauseWhenScreenOff: Boolean?,
+        gameOnly: Boolean?
     ) -> Unit,
     protectionStatus: com.example.governor.ProtectionStatus = com.example.governor.ProtectionStatus(),
     onSetProtectFromKill: (Boolean) -> Unit = {},
@@ -1007,7 +1008,7 @@ fun TuningScreen(
                             fineHalfWindow = 100,
                             fineMode = fineOverlayControl,
                             onIntValueChange = {
-                                onUpdateOverlayPosition(it, null, false)
+                                onUpdateOverlayPosition(it, null, false, isLandscape)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_pos_x_slider"
@@ -1025,7 +1026,7 @@ fun TuningScreen(
                             fineHalfWindow = 100,
                             fineMode = fineOverlayControl,
                             onIntValueChange = {
-                                onUpdateOverlayPosition(null, it, false)
+                                onUpdateOverlayPosition(null, it, false, isLandscape)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_pos_y_slider"
@@ -1033,7 +1034,7 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         OutlinedButton(
-                            onClick = { onUpdateOverlayPosition(null, null, true) },
+                            onClick = { onUpdateOverlayPosition(null, null, true, isLandscape) },
                             enabled = config.overlayEnabled,
                             modifier = Modifier
                                 .fillMaxWidth()

@@ -45,7 +45,7 @@ import com.example.ui.theme.MonoMetricStyle
 fun SensorPinSection(
     state: SensorPinner.State,
     isRunning: Boolean,
-    onUpdate: (enabled: Boolean?, rate: SensorPinner.Rate?, toggleType: Int?, pauseWhenScreenOff: Boolean?) -> Unit
+    onUpdate: (enabled: Boolean?, rate: SensorPinner.Rate?, toggleType: Int?, pauseWhenScreenOff: Boolean?, gameOnly: Boolean?) -> Unit
 ) {
     val cfg = state.config
     EcuCard {
@@ -60,7 +60,7 @@ fun SensorPinSection(
             title = stringResource(R.string.nifty_enable_title),
             explanation = stringResource(R.string.nifty_enable_desc),
             checked = cfg.enabled,
-            onCheckedChange = { onUpdate(it, null, null, null) },
+            onCheckedChange = { onUpdate(it, null, null, null, null) },
             testTag = "sensor_pin_switch"
         )
 
@@ -80,7 +80,7 @@ fun SensorPinSection(
             SensorPinner.Rate.entries.forEach { rate ->
                 FilterChip(
                     selected = cfg.rate == rate,
-                    onClick = { onUpdate(null, rate, null, null) },
+                    onClick = { onUpdate(null, rate, null, null, null) },
                     label = { Text(stringResource(rate.labelRes)) },
                     enabled = cfg.enabled,
                     modifier = Modifier.testTag("sensor_pin_rate_${rate.key}")
@@ -117,7 +117,7 @@ fun SensorPinSection(
                     val label = if (info.labelRes != 0) stringResource(info.labelRes) else info.label
                     FilterChip(
                         selected = info.type in cfg.sensorTypes,
-                        onClick = { onUpdate(null, null, info.type, null) },
+                        onClick = { onUpdate(null, null, info.type, null, null) },
                         label = { Text(label) },
                         enabled = cfg.enabled,
                         modifier = Modifier.testTag("sensor_pin_type_${info.type}")
@@ -131,9 +131,19 @@ fun SensorPinSection(
             title = stringResource(R.string.nifty_pause_off_title),
             explanation = stringResource(R.string.nifty_pause_off_desc),
             checked = cfg.pauseWhenScreenOff,
-            onCheckedChange = { onUpdate(null, null, null, it) },
+            onCheckedChange = { onUpdate(null, null, null, it, null) },
             enabled = cfg.enabled,
             testTag = "sensor_pin_pause_switch"
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+        SettingSwitchRow(
+            title = stringResource(R.string.nifty_game_only_title),
+            explanation = stringResource(R.string.nifty_game_only_desc),
+            checked = cfg.gameOnly,
+            onCheckedChange = { onUpdate(null, null, null, null, it) },
+            enabled = cfg.enabled,
+            testTag = "sensor_pin_game_only_switch"
         )
 
         if (cfg.enabled) {
@@ -142,6 +152,7 @@ fun SensorPinSection(
                 text = when {
                     state.active -> stringResource(R.string.nifty_status_active)
                     !isRunning -> stringResource(R.string.nifty_status_waiting)
+                    cfg.gameOnly && !state.gameActive -> stringResource(R.string.nifty_status_game_wait)
                     else -> stringResource(R.string.nifty_status_paused)
                 },
                 style = MaterialTheme.typography.labelMedium,
