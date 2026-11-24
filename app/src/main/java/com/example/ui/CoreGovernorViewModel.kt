@@ -43,6 +43,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import com.example.CoreGovernorApp
+import com.example.R
+import com.example.data.LocaleHelper
 import com.example.governor.BatteryEstimatorUiSnapshot
 import com.example.governor.MetricSample
 import com.example.governor.PowerModelUiSnapshot
@@ -77,6 +79,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
 
     private val engine = (application as CoreGovernorApp).engine
 
+    private fun lctx(): Context = LocaleHelper.wrap(getApplication())
+
     val hardwareSpec = engine.hardwareSpec
     val config = engine.config
     val presets = engine.presets
@@ -92,6 +96,7 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), telemetry.value.isRunning)
     val sensorPin = engine.sensorPinner.state
+    val protectionStatus: StateFlow<com.example.governor.ProtectionStatus> = engine.processProtection.status
     val logs: StateFlow<List<LogEntry>> = engine.logs
     val powerModelSnapshot: StateFlow<PowerModelUiSnapshot> = engine.powerModel.uiSnapshot
     val batterySnapshot: StateFlow<BatteryEstimatorUiSnapshot> = engine.batteryEstimator.snapshot
@@ -124,6 +129,16 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     )
     val autoUpdateCheck: StateFlow<Boolean> = _autoUpdateCheck.asStateFlow()
 
+    private val _includePrereleases = MutableStateFlow(
+        UpdateChecker.includePrereleases(application)
+    )
+    val includePrereleases: StateFlow<Boolean> = _includePrereleases.asStateFlow()
+
+    private val _dismissedUpdateVersion = MutableStateFlow(
+        UpdateChecker.dismissedVersion(application)
+    )
+    val dismissedUpdateVersion: StateFlow<String?> = _dismissedUpdateVersion.asStateFlow()
+
     val currentVersion: String = com.example.BuildConfig.VERSION_NAME
 
     init {
@@ -134,14 +149,13 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         if (UpdateChecker.autoCheckDue(application)) checkForUpdate()
     }
 
-    /** Asks GitHub for the latest release. Safe to call repeatedly; ignores taps while busy. */
+    /** Asks GitHub for releases with ETag & rate-limit caching. Safe to call repeatedly; ignores taps while busy. */
     fun checkForUpdate() {
         if (_updateState.value == UpdateState.Checking) return
         _updateState.value = UpdateState.Checking
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { UpdateChecker.fetch(currentVersion) }
-            if (result !is UpdateState.Failed) {
-                UpdateChecker.markChecked(getApplication())
+            val result = withContext(Dispatchers.IO) {
+                UpdateChecker.fetch(getApplication(), currentVersion)
             }
             _updateState.value = result
             when (result) {
@@ -149,7 +163,7 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                     engine.log(LogLevel.INFO, "Update", "New version ${result.latest} available (installed ${result.current})")
                 is UpdateState.Failed ->
                     engine.log(LogLevel.WARN, "Update", "Update check failed: ${result.reason}")
-                else -> {}
+                else -> Unit
             }
         }
     }
@@ -159,12 +173,33 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         _autoUpdateCheck.value = on
     }
 
+    fun setIncludePrereleases(on: Boolean) {
+        val ctx = getApplication<Application>()
+        UpdateChecker.setIncludePrereleases(ctx, on)
+        _includePrereleases.value = on
+        val cached = UpdateChecker.evaluateFromCache(ctx, currentVersion)
+        if (cached != null) {
+            _updateState.value = cached
+        } else {
+            checkForUpdate()
+        }
+    }
+
+    fun dismissUpdate(version: String) {
+        UpdateChecker.setDismissedVersion(getApplication(), version)
+        _dismissedUpdateVersion.value = version
+    }
+
     fun openUrl(url: String) {
         if (url.isBlank()) return
         val ctx = getApplication<Application>()
         val i = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        try { ctx.startActivity(i) } catch (_: Exception) {
+        try {
+            ctx.startActivity(i)
+        } catch (_: android.content.ActivityNotFoundException) {
             engine.log(LogLevel.WARN, "Update", "No browser available to open $url")
+        } catch (_: Exception) {
+            engine.log(LogLevel.WARN, "Update", "Could not open $url")
         }
     }
 
@@ -213,6 +248,9 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     fun updateStartOnBoot(enabled: Boolean) {
         engine.updateConfig { it.copy(startOnBoot = enabled) }
     }
+
+    fun setProtectFromKill(enabled: Boolean) = engine.setProtectFromKill(enabled)
+    fun reverifyProtection() = engine.reverifyProtection()
 
     fun updateCpuLoadUsesBusiestCore(enabled: Boolean) {
         engine.updateConfig { it.copy(cpuLoadUsesBusiestCore = enabled) }
@@ -467,7 +505,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         thermalMarginC: Float? = null,
         batteryConditionEnabled: Boolean? = null,
         batteryThresholdPct: Int? = null,
-        voltageSagEnabled: Boolean? = null
+        voltageSagEnabled: Boolean? = null,
+        toastEnabled: Boolean? = null
     ) {
         engine.updateConfig { cfg ->
             val b = cfg.afterburn
@@ -479,7 +518,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                     thermalMarginC = (thermalMarginC ?: b.thermalMarginC).coerceIn(3f, 8f),
                     batteryConditionEnabled = batteryConditionEnabled ?: b.batteryConditionEnabled,
                     batteryThresholdPct = (batteryThresholdPct ?: b.batteryThresholdPct).coerceIn(10, 90),
-                    voltageSagEnabled = voltageSagEnabled ?: b.voltageSagEnabled
+                    voltageSagEnabled = voltageSagEnabled ?: b.voltageSagEnabled,
+                    toastEnabled = toastEnabled ?: b.toastEnabled
                 )
             )
         }
@@ -726,7 +766,7 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
             val now = System.currentTimeMillis()
             val procs = ProcessMonitor.parse(r.stdout)
             if (procs.isEmpty()) {
-                _systemError.value = "Could not read the process list. Root access is needed."
+                _systemError.value = lctx().getString(R.string.system_err_no_root)
                 return
             }
             _systemError.value = null
@@ -739,7 +779,7 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
             prevMs = now
             _systemRows.value = tracker.update(rows, _culpritThreshold.value)
         } catch (e: Exception) {
-            _systemError.value = "Process list failed: ${e.message}"
+            _systemError.value = lctx().getString(R.string.system_err_failed, e.message ?: "")
         }
     }
 
@@ -772,7 +812,11 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch(Dispatchers.IO) {
             val r = engine.rootShell.exec("am force-stop ${row.key}")
             val ok = r.isSuccess
-            _systemNote.value = if (ok) "Stopped ${row.key}. It may start again by itself." else "Could not stop ${row.key}."
+            _systemNote.value = if (ok) {
+                lctx().getString(R.string.system_note_stopped, row.key)
+            } else {
+                lctx().getString(R.string.system_note_stop_failed, row.key)
+            }
             engine.log(if (ok) LogLevel.INFO else LogLevel.WARN, "System", "Stop ${row.key}: ${if (ok) "ok" else r.error ?: "failed"}")
         }
     }

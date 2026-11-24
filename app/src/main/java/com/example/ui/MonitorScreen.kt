@@ -58,6 +58,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,10 +67,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.model.BatteryState
 import com.example.model.ClusterLiveState
 import com.example.model.GovernorMode
@@ -125,31 +130,29 @@ fun MonitorScreen(
                         ) {
                             StatusPill(
                                 label = when {
-                                    telemetry.isDiscovering -> "PROBING HW"
-                                    telemetry.isRunning -> "ACTIVE • ${telemetry.lastPollDurationMs}ms"
-                                    else -> "IDLE"
+                                    telemetry.isDiscovering -> stringResource(R.string.monitor_probing_hw)
+                                    telemetry.isRunning -> stringResource(R.string.monitor_active_ms, telemetry.lastPollDurationMs.toInt())
+                                    else -> stringResource(R.string.monitor_idle)
                                 },
                                 color = if (telemetry.isRunning) ext.optimal else MaterialTheme.colorScheme.onSurfaceVariant,
                                 containerColor = if (telemetry.isRunning) ext.optimalContainer else MaterialTheme.colorScheme.surfaceVariant
                             )
                             StatusPill(
-                                label = if (telemetry.rootGranted) "ROOT OK" else "NO ROOT",
+                                label = stringResource(if (telemetry.rootGranted) R.string.monitor_root_ok else R.string.monitor_no_root),
                                 color = if (telemetry.rootGranted) MaterialTheme.colorScheme.primary else ext.throttle,
                                 containerColor = if (telemetry.rootGranted) MaterialTheme.colorScheme.primaryContainer else ext.throttleContainer
                             )
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = if (telemetry.isRunning) {
-                                "Single Controller Online"
-                            } else {
-                                "Kernel Governors Untouched"
-                            },
+                            text = stringResource(
+                                if (telemetry.isRunning) R.string.monitor_controller_online else R.string.monitor_governors_untouched
+                            ),
                             style = MaterialTheme.typography.titleMedium
                         )
-                        val fgText = telemetry.foregroundPackage.ifBlank { "No foreground package yet" }
+                        val fgText = telemetry.foregroundPackage.ifBlank { stringResource(R.string.monitor_no_fg_pkg) }
                         Text(
-                            text = "App: $fgText",
+                            text = stringResource(R.string.monitor_app_label, fgText),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -163,7 +166,7 @@ fun MonitorScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
-                            contentDescription = "Re-discover hardware"
+                            contentDescription = stringResource(R.string.monitor_rediscover_cd)
                         )
                     }
                 }
@@ -188,7 +191,9 @@ fun MonitorScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (telemetry.isRunning) "STOP & RESTORE KERNEL" else "START COREGOVERNOR",
+                        text = stringResource(
+                            if (telemetry.isRunning) R.string.monitor_stop_restore else R.string.monitor_start_gov
+                        ),
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                     )
                 }
@@ -200,12 +205,15 @@ fun MonitorScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val activeModeLabel = stringResource(
+                        if (telemetry.activeMode == GovernorMode.GAME) R.string.mode_game else R.string.mode_normal
+                    )
                     ModeOverride.entries.forEach { modeOpt ->
                         val selected = telemetry.modeOverride == modeOpt
                         val label = when (modeOpt) {
-                            ModeOverride.AUTO -> "Auto (${telemetry.activeMode.name})"
-                            ModeOverride.FORCE_NORMAL -> "Normal"
-                            ModeOverride.FORCE_GAME -> "Game"
+                            ModeOverride.AUTO -> stringResource(R.string.monitor_mode_auto, activeModeLabel)
+                            ModeOverride.FORCE_NORMAL -> stringResource(R.string.mode_normal)
+                            ModeOverride.FORCE_GAME -> stringResource(R.string.mode_game)
                         }
                         FilterChip(
                             selected = selected,
@@ -227,7 +235,7 @@ fun MonitorScreen(
                 if (telemetry.burstActive) {
                     Spacer(modifier = Modifier.height(8.dp))
                     StatusPill(
-                        label = "LAUNCH BURST ACTIVE • ${telemetry.burstRemainingMs}ms",
+                        label = stringResource(R.string.monitor_burst_active, telemetry.burstRemainingMs.toInt()),
                         color = ext.warning,
                         containerColor = ext.warningContainer
                     )
@@ -242,18 +250,18 @@ fun MonitorScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Warning,
-                            contentDescription = "Root required",
+                            contentDescription = stringResource(R.string.monitor_root_req_cd),
                             tint = ext.throttle
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "Root Access Required",
+                                text = stringResource(R.string.monitor_root_req_title),
                                 style = MaterialTheme.typography.titleSmall,
                                 color = ext.throttle
                             )
                             Text(
-                                text = "Grant superuser (su) in Magisk / KernelSU / APatch, then tap refresh above.",
+                                text = stringResource(R.string.monitor_root_req_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -273,20 +281,20 @@ fun MonitorScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Thermostat,
-                            contentDescription = "Temperature",
+                            contentDescription = stringResource(R.string.monitor_temp_cd),
                             tint = if (telemetry.tempThrottleActive) ext.throttle else MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "THERMAL",
+                            text = stringResource(R.string.monitor_thermal),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "${"%.1f".format(telemetry.temperatureC)} °C",
+                        text = "${"%.1f".format(Locale.US, telemetry.temperatureC)} °C",
                         style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.headlineSmall.fontSize),
                         color = if (telemetry.tempThrottleActive) ext.throttle else MaterialTheme.colorScheme.onSurface
                     )
@@ -299,9 +307,13 @@ fun MonitorScreen(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     val tempStatus = if (telemetry.tempThrottleActive) {
-                        "CAP: CPU ${telemetry.tempCpuCapPct.toInt()}% • GPU ${telemetry.tempGpuCapPct.toInt()}%"
+                        stringResource(
+                            R.string.monitor_temp_cap_active,
+                            telemetry.tempCpuCapPct.toInt(),
+                            telemetry.tempGpuCapPct.toInt()
+                        )
                     } else {
-                        "Temp Cap: Inactive (100%)"
+                        stringResource(R.string.monitor_temp_cap_inactive)
                     }
                     Text(
                         text = tempStatus,
@@ -319,14 +331,13 @@ fun MonitorScreen(
                         else -> ext.optimal
                     }
                     val pwrHeader = when (battState) {
-                        BatteryState.CHARGING -> "CHARGING"
-                        BatteryState.FULL_PLUGGED -> "PLUGGED"
-                        BatteryState.DISCHARGING -> "POWER DRAW"
-                        BatteryState.UNKNOWN -> "POWER DRAW"
+                        BatteryState.CHARGING -> stringResource(R.string.monitor_charging)
+                        BatteryState.FULL_PLUGGED -> stringResource(R.string.monitor_plugged)
+                        BatteryState.DISCHARGING, BatteryState.UNKNOWN -> stringResource(R.string.monitor_power_draw)
                     }
                     val pwrValue = when (battState) {
                         BatteryState.CHARGING -> "\u26A1 +${"%.2f".format(Locale.US, telemetry.chargeWatts)} W"
-                        BatteryState.FULL_PLUGGED -> "PLUG 0.0 W"
+                        BatteryState.FULL_PLUGGED -> stringResource(R.string.monitor_plug_val)
                         BatteryState.DISCHARGING -> "${"%.2f".format(Locale.US, telemetry.watts)} W"
                         BatteryState.UNKNOWN -> "-- W"
                     }
@@ -339,7 +350,7 @@ fun MonitorScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Bolt,
-                            contentDescription = "Power status",
+                            contentDescription = stringResource(R.string.monitor_pwr_status_cd),
                             tint = pwrTint,
                             modifier = Modifier.size(18.dp)
                         )
@@ -364,11 +375,15 @@ fun MonitorScreen(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     val (pwrStatus, pwrStatusColor) = when {
-                        battState == BatteryState.CHARGING -> "Power Cap: Inactive (charging)" to ext.optimal
-                        battState == BatteryState.FULL_PLUGGED -> "Power Cap: Inactive (full, plugged)" to ext.optimal
-                        telemetry.powerThrottleActive -> "POWER CAP: ${telemetry.powerCapPct.toInt()}% (-${(100f - telemetry.powerCapPct).toInt()}%)" to ext.warning
-                        battState == BatteryState.UNKNOWN -> "Waiting for reading…" to MaterialTheme.colorScheme.onSurfaceVariant
-                        else -> "Power Cap: Inactive (100%)" to ext.optimal
+                        battState == BatteryState.CHARGING -> stringResource(R.string.monitor_pwr_cap_charging) to ext.optimal
+                        battState == BatteryState.FULL_PLUGGED -> stringResource(R.string.monitor_pwr_cap_plugged) to ext.optimal
+                        telemetry.powerThrottleActive -> stringResource(
+                            R.string.monitor_pwr_cap_active,
+                            telemetry.powerCapPct.toInt(),
+                            (100f - telemetry.powerCapPct).toInt()
+                        ) to ext.warning
+                        battState == BatteryState.UNKNOWN -> stringResource(R.string.monitor_pwr_cap_waiting) to MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> stringResource(R.string.monitor_pwr_cap_inactive) to ext.optimal
                     }
                     Text(
                         text = pwrStatus,
@@ -385,13 +400,17 @@ fun MonitorScreen(
                 EcuCard(accentBorder = ext.throttle) {
                     Column {
                         Text(
-                            text = "STACKED THROTTLE ACTIVE (LOWER CAP WINS)",
+                            text = stringResource(R.string.monitor_stacked_throttle),
                             style = MaterialTheme.typography.labelMedium,
                             color = ext.throttle
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "CPU Ceiling: ${telemetry.effectiveCpuCapPct.toInt()}%  •  GPU Ceiling: ${telemetry.effectiveGpuCapPct.toInt()}%",
+                            text = stringResource(
+                                R.string.monitor_stacked_ceilings,
+                                telemetry.effectiveCpuCapPct.toInt(),
+                                telemetry.effectiveGpuCapPct.toInt()
+                            ),
                             style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodyMedium.fontSize),
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -421,14 +440,19 @@ fun MonitorScreen(
                     ) {
                         Text(text = spec.name, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            text = "gov: ${spec.origGovernor}",
+                            text = stringResource(R.string.monitor_gov_short, spec.origGovernor),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "${spec.availableFreqsKhz.size} frequencies (${(spec.availableFreqsKhz.firstOrNull() ?: 0) / 1000}–${(spec.availableFreqsKhz.lastOrNull() ?: 0) / 1000} MHz)",
+                        text = stringResource(
+                            R.string.monitor_freqs_range,
+                            spec.availableFreqsKhz.size,
+                            (spec.availableFreqsKhz.firstOrNull() ?: 0) / 1000,
+                            (spec.availableFreqsKhz.lastOrNull() ?: 0) / 1000
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -452,7 +476,7 @@ private fun CpuClusterCard(cluster: ClusterLiveState) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                 Icon(
                     imageVector = Icons.Default.Memory,
                     contentDescription = null,
@@ -462,56 +486,69 @@ private fun CpuClusterCard(cluster: ClusterLiveState) {
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "Policy ${cluster.policyId} • ${cluster.name}",
+                        text = stringResource(R.string.monitor_policy_header, cluster.policyId, cluster.name),
                         style = MaterialTheme.typography.titleSmall
                     )
                     Text(
-                        text = "Gov: ${cluster.governor} • Load ${cluster.loadPct.toInt()}% (smoothed ${cluster.smoothedLoadPct.toInt()}%)",
+                        text = stringResource(
+                            R.string.monitor_cluster_load,
+                            cluster.governor,
+                            cluster.loadPct.toInt(),
+                            cluster.smoothedLoadPct.toInt()
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = "${cluster.targetFreqKhz / 1000} MHz",
-                    style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.titleMedium.fontSize),
-                    color = primary
-                )
-                Text(
-                    text = "actual ${cluster.actualFreqKhz / 1000} MHz",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "${cluster.targetFreqKhz / 1000} MHz",
+                        style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.titleMedium.fontSize),
+                        color = primary
+                    )
+                    Text(
+                        text = stringResource(R.string.monitor_actual_mhz, (cluster.actualFreqKhz / 1000).toInt()),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
-        FrequencyRangeBar(
-            minAvailableKhz = cluster.minAvailableKhz,
-            maxAvailableKhz = cluster.maxAvailableKhz,
-            allowedMinKhz = cluster.allowedMinKhz,
-            allowedMaxKhz = cluster.allowedMaxKhz,
-            cappedMaxKhz = cluster.cappedMaxKhz,
-            targetKhz = cluster.targetFreqKhz,
-            accentColor = primary
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = "Range: ${cluster.allowedMinKhz / 1000}–${cluster.allowedMaxKhz / 1000} MHz",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            FrequencyRangeBar(
+                minAvailableKhz = cluster.minAvailableKhz,
+                maxAvailableKhz = cluster.maxAvailableKhz,
+                allowedMinKhz = cluster.allowedMinKhz,
+                allowedMaxKhz = cluster.allowedMaxKhz,
+                cappedMaxKhz = cluster.cappedMaxKhz,
+                targetKhz = cluster.targetFreqKhz,
+                accentColor = primary
             )
-            Text(
-                text = "Cap: ${cluster.cappedMaxKhz / 1000} MHz",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = stringResource(
+                        R.string.monitor_range_mhz,
+                        (cluster.allowedMinKhz / 1000).toInt(),
+                        (cluster.allowedMaxKhz / 1000).toInt()
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = stringResource(R.string.monitor_cap_mhz, (cluster.cappedMaxKhz / 1000).toInt()),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
@@ -543,12 +580,17 @@ private fun GpuMonitorCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "GPU (gpufreqv2 OPP Pinning)",
+                        text = stringResource(R.string.monitor_gpu_header),
                         style = MaterialTheme.typography.titleSmall
                     )
-                    val loadSrcShort = gpu.loadSourcePath.substringAfterLast('/').ifBlank { "probe" }
+                    val loadSrcShort = gpu.loadSourcePath.substringAfterLast('/').ifBlank { stringResource(R.string.monitor_probe) }
                     Text(
-                        text = "Load ${gpu.loadPct.toInt()}% (smooth ${gpu.smoothedLoadPct.toInt()}%) • $loadSrcShort",
+                        text = stringResource(
+                            R.string.monitor_gpu_load,
+                            gpu.loadPct.toInt(),
+                            gpu.smoothedLoadPct.toInt(),
+                            loadSrcShort
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -557,48 +599,66 @@ private fun GpuMonitorCard(
                 }
             }
 
-            Column(horizontalAlignment = Alignment.End) {
-                val liveFreq = if (gpu.currentFreqKhz > 0L) gpu.currentFreqKhz else gpu.targetFreqKhz
-                val oppBadge = if (gpu.currentOppIndex >= 0) "OPP ${gpu.currentOppIndex}" else "OPP --"
-                Text(
-                    text = "${liveFreq / 1000} MHz ($oppBadge)",
-                    style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize),
-                    color = gpuAccent
-                )
-                Text(
-                    text = "target ${gpu.targetFreqKhz / 1000}M • idx ${gpu.targetOppIndex} (pos ${gpu.targetSortedPos})",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Column(horizontalAlignment = Alignment.End) {
+                    val liveFreq = if (gpu.currentFreqKhz > 0L) gpu.currentFreqKhz else gpu.targetFreqKhz
+                    val oppBadge = if (gpu.currentOppIndex >= 0) "OPP ${gpu.currentOppIndex}" else "OPP --"
+                    Text(
+                        text = "${liveFreq / 1000} MHz ($oppBadge)",
+                        style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize),
+                        color = gpuAccent
+                    )
+                    Text(
+                        text = stringResource(
+                            R.string.monitor_gpu_target,
+                            (gpu.targetFreqKhz / 1000).toInt(),
+                            gpu.targetOppIndex,
+                            gpu.targetSortedPos
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
         if (gpu.available && gpu.maxAvailableKhz > 0L) {
             Spacer(modifier = Modifier.height(10.dp))
-            FrequencyRangeBar(
-                minAvailableKhz = gpu.minAvailableKhz,
-                maxAvailableKhz = gpu.maxAvailableKhz,
-                allowedMinKhz = gpu.allowedMinKhz,
-                allowedMaxKhz = gpu.allowedMaxKhz,
-                cappedMaxKhz = gpu.cappedMaxKhz,
-                targetKhz = gpu.targetFreqKhz,
-                accentColor = gpuAccent
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Range: ${gpu.allowedMinKhz / 1000}–${gpu.allowedMaxKhz / 1000} MHz (${hardwareSpec.gpu.oppTable.size} OPPs)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                FrequencyRangeBar(
+                    minAvailableKhz = gpu.minAvailableKhz,
+                    maxAvailableKhz = gpu.maxAvailableKhz,
+                    allowedMinKhz = gpu.allowedMinKhz,
+                    allowedMaxKhz = gpu.allowedMaxKhz,
+                    cappedMaxKhz = gpu.cappedMaxKhz,
+                    targetKhz = gpu.targetFreqKhz,
+                    accentColor = gpuAccent
                 )
-                Text(
-                    text = "Cap: pos ${gpu.cappedMaxPos} (${gpu.cappedMaxKhz / 1000}M)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.monitor_gpu_range_opps,
+                            (gpu.allowedMinKhz / 1000).toInt(),
+                            (gpu.allowedMaxKhz / 1000).toInt(),
+                            hardwareSpec.gpu.oppTable.size
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = stringResource(
+                            R.string.monitor_gpu_cap_pos,
+                            gpu.cappedMaxPos,
+                            (gpu.cappedMaxKhz / 1000).toInt()
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         } else {
             Spacer(modifier = Modifier.height(6.dp))
@@ -625,36 +685,43 @@ private fun GpuMonitorCard(
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Raw gpufreq_status")
+                Text(stringResource(R.string.monitor_raw_gpufreq))
             }
 
             if (gpu.rawGpufreqStatus.isNotBlank()) {
+                val copiedMsg = stringResource(R.string.monitor_copied_gpufreq)
                 OutlinedButton(
                     onClick = {
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cm.setPrimaryClip(ClipData.newPlainText("gpufreq_status", gpu.rawGpufreqStatus))
-                        Toast.makeText(context, "Copied gpufreq_status", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, copiedMsg, Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.testTag("copy_raw_gpufreq_status_monitor")
                 ) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy raw status", modifier = Modifier.size(15.dp))
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = stringResource(R.string.monitor_copy_raw_cd),
+                        modifier = Modifier.size(15.dp)
+                    )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Copy", style = MaterialTheme.typography.labelSmall)
+                    Text(stringResource(R.string.common_copy), style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
 
         AnimatedVisibility(visible = showRawStatus) {
-            Text(
-                text = gpu.rawGpufreqStatus.ifBlank { "No gpufreq_status data read yet." },
-                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                    .padding(10.dp)
-            )
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Text(
+                    text = gpu.rawGpufreqStatus.ifBlank { stringResource(R.string.monitor_no_gpufreq) },
+                    style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .padding(10.dp)
+                )
+            }
         }
     }
 }

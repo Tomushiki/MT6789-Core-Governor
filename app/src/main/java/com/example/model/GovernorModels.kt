@@ -15,6 +15,9 @@
 
 package com.example.model
 
+import androidx.annotation.StringRes
+import com.example.R
+
 enum class GovernorMode {
     NORMAL,
     GAME
@@ -52,10 +55,10 @@ enum class LogLevel {
     ERROR
 }
 
-enum class SmartAppMode(val label: String) {
-    CONSERVATIVE("Conservative"),
-    BALANCED("Balanced"),
-    AGGRESSIVE("Aggressive")
+enum class SmartAppMode(val label: String, @StringRes val labelRes: Int) {
+    CONSERVATIVE("Conservative", R.string.smart_mode_conservative),
+    BALANCED("Balanced", R.string.smart_mode_balanced),
+    AGGRESSIVE("Aggressive", R.string.smart_mode_aggressive)
 }
 
 enum class EfficiencyMode {
@@ -192,19 +195,19 @@ data class PowerThrottleConfig(
     val componentAware: Boolean = true
 )
 
-enum class BoostStrength(val label: String, val factor: Float) {
-    LIGHT("Light", 0.45f),
-    MEDIUM("Medium", 0.75f),
-    MAX("Max", 1.0f)
+enum class BoostStrength(val label: String, val factor: Float, @StringRes val labelRes: Int) {
+    LIGHT("Light", 0.45f, R.string.boost_strength_light),
+    MEDIUM("Medium", 0.75f, R.string.boost_strength_medium),
+    MAX("Max", 1.0f, R.string.boost_strength_max)
 }
 
-enum class AfterburnState(val label: String) {
-    OFF("Off"),
-    IDLE("Idle"),
-    BOOSTING("Boosting"),
-    REDUCED("Reduced"),
-    BLOCKED_THERMAL("Blocked: heat"),
-    BLOCKED_BATTERY("Blocked: battery")
+enum class AfterburnState(val label: String, @StringRes val labelRes: Int) {
+    OFF("Off", R.string.afterburn_state_off),
+    IDLE("Idle", R.string.afterburn_state_idle),
+    BOOSTING("Boosting", R.string.afterburn_state_boosting),
+    REDUCED("Reduced", R.string.afterburn_state_reduced),
+    BLOCKED_THERMAL("Blocked: heat", R.string.afterburn_state_blocked_thermal),
+    BLOCKED_BATTERY("Blocked: battery", R.string.afterburn_state_blocked_battery)
 }
 
 /** v3.0.0 Afterburn: temporarily relaxes power-cap banding while the conditions below are met. */
@@ -218,13 +221,16 @@ data class AfterburnConfig(
     /** Below this battery % (discharging) the boost is reduced. */
     val batteryThresholdPct: Int = 40,
     /** Boost less when the battery voltage sags a lot under load (uses the learned internal resistance). */
-    val voltageSagEnabled: Boolean = true
+    val voltageSagEnabled: Boolean = true,
+    /** Show a brief neon overlay pill when Afterburn engages for a selected app. */
+    val toastEnabled: Boolean = true
 )
 
 data class GovernorConfig(
     val pollIntervalMs: Long = 150L,
     val adaptivePollingEnabled: Boolean = true,
     val startOnBoot: Boolean = false,
+    val protectFromKillEnabled: Boolean = true,
     val cpuLoadUsesBusiestCore: Boolean = true,
     val screenOffSavingEnabled: Boolean = false,
     val screenOffDelaySec: Int = 5,

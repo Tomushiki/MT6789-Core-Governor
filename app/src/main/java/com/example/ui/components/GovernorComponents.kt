@@ -40,6 +40,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,9 +49,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.model.TelemetrySample
 import com.example.ui.theme.Appearance
 import com.example.ui.theme.LocalExtendedColors
@@ -146,45 +151,47 @@ fun FrequencyRangeBar(
     val ext = LocalExtendedColors.current
     val trackBg = MaterialTheme.colorScheme.surfaceContainerHigh
 
-    Canvas(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(10.dp)
-            .clip(RoundedCornerShape(5.dp))
-    ) {
-        val span = (maxAvailableKhz - minAvailableKhz).coerceAtLeast(1L).toFloat()
-        fun norm(khz: Long): Float = ((khz - minAvailableKhz).toFloat() / span).coerceIn(0f, 1f)
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Canvas(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .clip(RoundedCornerShape(5.dp))
+        ) {
+            val span = (maxAvailableKhz - minAvailableKhz).coerceAtLeast(1L).toFloat()
+            fun norm(khz: Long): Float = ((khz - minAvailableKhz).toFloat() / span).coerceIn(0f, 1f)
 
-        drawRect(color = trackBg)
+            drawRect(color = trackBg)
 
-        val leftX = norm(allowedMinKhz) * size.width
-        val allowedRightX = norm(allowedMaxKhz) * size.width
-        val cappedRightX = norm(cappedMaxKhz) * size.width
-        val targetX = norm(targetKhz) * size.width
+            val leftX = norm(allowedMinKhz) * size.width
+            val allowedRightX = norm(allowedMaxKhz) * size.width
+            val cappedRightX = norm(cappedMaxKhz) * size.width
+            val targetX = norm(targetKhz) * size.width
 
-        // Allowed range subtle band
-        if (allowedRightX > leftX) {
-            drawRect(
-                color = accentColor.copy(alpha = 0.22f),
-                topLeft = Offset(leftX, 0f),
-                size = androidx.compose.ui.geometry.Size(allowedRightX - leftX, size.height)
-            )
-        }
-        // Throttled region in coral if cappedMax < allowedMax
-        if (cappedMaxKhz < allowedMaxKhz && allowedRightX > cappedRightX) {
-            drawRect(
-                color = ext.throttle.copy(alpha = 0.45f),
-                topLeft = Offset(cappedRightX, 0f),
-                size = androidx.compose.ui.geometry.Size(allowedRightX - cappedRightX, size.height)
-            )
-        }
-        // Active target fill
-        if (targetX > leftX) {
-            drawRect(
-                color = accentColor,
-                topLeft = Offset(leftX, 0f),
-                size = androidx.compose.ui.geometry.Size(targetX - leftX, size.height)
-            )
+            // Allowed range subtle band
+            if (allowedRightX > leftX) {
+                drawRect(
+                    color = accentColor.copy(alpha = 0.22f),
+                    topLeft = Offset(leftX, 0f),
+                    size = androidx.compose.ui.geometry.Size(allowedRightX - leftX, size.height)
+                )
+            }
+            // Throttled region in coral if cappedMax < allowedMax
+            if (cappedMaxKhz < allowedMaxKhz && allowedRightX > cappedRightX) {
+                drawRect(
+                    color = ext.throttle.copy(alpha = 0.45f),
+                    topLeft = Offset(cappedRightX, 0f),
+                    size = androidx.compose.ui.geometry.Size(allowedRightX - cappedRightX, size.height)
+                )
+            }
+            // Active target fill
+            if (targetX > leftX) {
+                drawRect(
+                    color = accentColor,
+                    topLeft = Offset(leftX, 0f),
+                    size = androidx.compose.ui.geometry.Size(targetX - leftX, size.height)
+                )
+            }
         }
     }
 }
@@ -206,15 +213,15 @@ fun TelemetryHistoryGraph(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Telemetry history",
+                text = stringResource(R.string.telemetry_history_title),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                LegendDot("CPU%", primary)
-                LegendDot("GPU%", secondary)
-                LegendDot("TEMP", ext.throttle)
-                LegendDot("WATTS", ext.optimal)
+                LegendDot(stringResource(R.string.telemetry_legend_cpu), primary)
+                LegendDot(stringResource(R.string.telemetry_legend_gpu), secondary)
+                LegendDot(stringResource(R.string.telemetry_legend_temp), ext.throttle)
+                LegendDot(stringResource(R.string.telemetry_legend_watts), ext.optimal)
             }
         }
         Spacer(modifier = Modifier.height(10.dp))
@@ -229,53 +236,55 @@ fun TelemetryHistoryGraph(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Start governor to stream live telemetry history",
+                    text = stringResource(R.string.telemetry_history_empty),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         } else {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(130.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                    .padding(vertical = 8.dp, horizontal = 4.dp)
-            ) {
-                // Horizontal reference grid lines (25%, 50%, 75%)
-                for (frac in listOf(0.25f, 0.5f, 0.75f)) {
-                    val y = size.height * frac
-                    drawLine(
-                        color = gridColor.copy(alpha = 0.35f),
-                        start = Offset(0f, y),
-                        end = Offset(size.width, y),
-                        strokeWidth = 1f
-                    )
-                }
-
-                fun drawSeries(values: List<Float>, color: Color, strokeWidth: Float = 3f) {
-                    if (values.size < 2) return
-                    val path = Path()
-                    val stepX = size.width / (values.size - 1).coerceAtLeast(1)
-                    values.forEachIndexed { idx, norm ->
-                        val x = idx * stepX
-                        val y = size.height * (1f - norm.coerceIn(0f, 1f))
-                        if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .padding(vertical = 8.dp, horizontal = 4.dp)
+                ) {
+                    // Horizontal reference grid lines (25%, 50%, 75%)
+                    for (frac in listOf(0.25f, 0.5f, 0.75f)) {
+                        val y = size.height * frac
+                        drawLine(
+                            color = gridColor.copy(alpha = 0.35f),
+                            start = Offset(0f, y),
+                            end = Offset(size.width, y),
+                            strokeWidth = 1f
+                        )
                     }
-                    drawPath(
-                        path = path,
-                        color = color,
-                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                    )
-                }
 
-                drawSeries(history.map { it.avgCpuLoadPct / 100f }, primary, 2f)
-                drawSeries(history.map { it.gpuLoadPct / 100f }, secondary, 2f)
-                // Temp scaled 20C..80C -> 0..1
-                drawSeries(history.map { (it.tempC - 20f) / 60f }, ext.throttle, 1.8f)
-                // Watts scaled 0..12W -> 0..1
-                drawSeries(history.map { it.watts / 12f }, ext.optimal, 1.8f)
+                    fun drawSeries(values: List<Float>, color: Color, strokeWidth: Float = 3f) {
+                        if (values.size < 2) return
+                        val path = Path()
+                        val stepX = size.width / (values.size - 1).coerceAtLeast(1)
+                        values.forEachIndexed { idx, norm ->
+                            val x = idx * stepX
+                            val y = size.height * (1f - norm.coerceIn(0f, 1f))
+                            if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                        }
+                        drawPath(
+                            path = path,
+                            color = color,
+                            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                        )
+                    }
+
+                    drawSeries(history.map { it.avgCpuLoadPct / 100f }, primary, 2f)
+                    drawSeries(history.map { it.gpuLoadPct / 100f }, secondary, 2f)
+                    // Temp scaled 20C..80C -> 0..1
+                    drawSeries(history.map { (it.tempC - 20f) / 60f }, ext.throttle, 1.8f)
+                    // Watts scaled 0..12W -> 0..1
+                    drawSeries(history.map { it.watts / 12f }, ext.optimal, 1.8f)
+                }
             }
         }
     }

@@ -56,6 +56,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
@@ -71,11 +72,16 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.governor.BatteryEstimatorUiSnapshot
 import com.example.governor.ComponentFreqCurvePoint
 import com.example.governor.ComponentPowerSummary
@@ -130,25 +136,27 @@ fun EnergyScreen(
     if (showResetDialog) {
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
-            title = { Text("Reset learned power model?") },
-            text = {
-                Text("This clears all collected frequency power estimates and per-app scenarios. Re-learning takes a few hours of normal and gaming use.")
-            },
+            title = { Text(stringResource(R.string.energy_reset_model_title)) },
+            text = { Text(stringResource(R.string.energy_reset_model_body)) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showResetDialog = false
                         onResetModel()
-                        Toast.makeText(context, "Power model reset", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.energy_reset_model_toast),
+                            Toast.LENGTH_SHORT
+                        ).show()
                     },
                     modifier = Modifier.testTag("confirm_reset_power_model")
                 ) {
-                    Text("Reset", color = ext.throttle)
+                    Text(stringResource(R.string.common_reset), color = ext.throttle)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showResetDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.common_cancel))
                 }
             }
         )
@@ -157,25 +165,27 @@ fun EnergyScreen(
     if (showResetBatteryDialog) {
         AlertDialog(
             onDismissRequest = { showResetBatteryDialog = false },
-            title = { Text("Reset battery estimate?") },
-            text = {
-                Text("This clears the learned discharge/charge capacity segments and restarts battery capacity estimation from scratch.")
-            },
+            title = { Text(stringResource(R.string.energy_reset_batt_title)) },
+            text = { Text(stringResource(R.string.energy_reset_batt_body)) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showResetBatteryDialog = false
                         onResetBatteryEstimate()
-                        Toast.makeText(context, "Battery estimate reset", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.energy_reset_batt_toast),
+                            Toast.LENGTH_SHORT
+                        ).show()
                     },
                     modifier = Modifier.testTag("confirm_reset_battery_estimate")
                 ) {
-                    Text("Reset", color = ext.throttle)
+                    Text(stringResource(R.string.common_reset), color = ext.throttle)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showResetBatteryDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.common_cancel))
                 }
             }
         )
@@ -193,11 +203,11 @@ fun EnergyScreen(
         }
         AlertDialog(
             onDismissRequest = { showDesignOverrideDialog = false },
-            title = { Text("Design capacity override (mAh)") },
+            title = { Text(stringResource(R.string.energy_design_override_title)) },
             text = {
                 Column {
                     Text(
-                        text = "Enter your battery's rated design capacity in mAh, or leave 0 / empty for auto-detection from sysfs.",
+                        text = stringResource(R.string.energy_design_override_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -207,7 +217,7 @@ fun EnergyScreen(
                         onValueChange = { raw ->
                             overrideInput = raw.filter { it.isDigit() }.take(6)
                         },
-                        label = { Text("Design mAh (0 = auto)") },
+                        label = { Text(stringResource(R.string.energy_design_override_label)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier
@@ -225,7 +235,7 @@ fun EnergyScreen(
                     },
                     modifier = Modifier.testTag("confirm_design_capacity_override")
                 ) {
-                    Text("Save")
+                    Text(stringResource(R.string.common_save))
                 }
             },
             dismissButton = {
@@ -236,10 +246,10 @@ fun EnergyScreen(
                             showDesignOverrideDialog = false
                         }
                     ) {
-                        Text("Auto (0)")
+                        Text(stringResource(R.string.energy_design_auto_btn))
                     }
                     TextButton(onClick = { showDesignOverrideDialog = false }) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.common_cancel))
                     }
                 }
             }
@@ -279,26 +289,26 @@ fun EnergyScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Filled.Eco,
-                            contentDescription = "Power model status",
+                            contentDescription = stringResource(R.string.energy_model_cd),
                             tint = activeAccent,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "ON-DEVICE POWER MODEL",
+                            text = stringResource(R.string.energy_model_header),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     StatusPill(
                         label = when {
-                            snapshot.learningPausedCharging && isRunning -> "PAUSED: CHARGING"
-                            snapshot.backoffActive -> "BACKOFF ${snapshot.backoffRemainingSec}s"
-                            config.efficiencyLearningEnabled && isRunning -> "EFFICIENCY ON"
-                            config.efficiencyLearningEnabled -> "EFFICIENCY ARMED"
-                            config.powerModelLearningEnabled && isRunning -> "LEARNING"
-                            config.powerModelLearningEnabled -> "LEARN READY"
-                            else -> "PAUSED"
+                            snapshot.learningPausedCharging && isRunning -> stringResource(R.string.energy_pill_paused_chg)
+                            snapshot.backoffActive -> stringResource(R.string.energy_pill_backoff, snapshot.backoffRemainingSec)
+                            config.efficiencyLearningEnabled && isRunning -> stringResource(R.string.energy_pill_eff_on)
+                            config.efficiencyLearningEnabled -> stringResource(R.string.energy_pill_eff_armed)
+                            config.powerModelLearningEnabled && isRunning -> stringResource(R.string.energy_pill_learning)
+                            config.powerModelLearningEnabled -> stringResource(R.string.energy_pill_learn_ready)
+                            else -> stringResource(R.string.energy_pill_paused)
                         },
                         color = if (snapshot.learningPausedCharging) ext.warning else activeAccent,
                         containerColor = (if (snapshot.learningPausedCharging) ext.warning else activeAccent).copy(alpha = 0.16f)
@@ -308,7 +318,7 @@ fun EnergyScreen(
                 if (snapshot.learningPausedCharging) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Learning paused: charging (settled discharging samples only)",
+                        text = stringResource(R.string.energy_paused_chg_note),
                         style = MaterialTheme.typography.bodySmall,
                         color = ext.warning
                     )
@@ -321,18 +331,18 @@ fun EnergyScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     MetricStatBlock(
-                        label = "SAMPLES",
+                        label = stringResource(R.string.energy_stat_samples),
                         value = "${snapshot.totalSamples}",
                         modifier = Modifier.weight(1f)
                     )
                     MetricStatBlock(
-                        label = "CONFIDENCE",
+                        label = stringResource(R.string.energy_stat_confidence),
                         value = "${snapshot.overallConfidencePct.roundToInt()}%",
                         valueColor = if (snapshot.overallConfidencePct >= config.minConfidencePct) ext.optimal else ext.warning,
                         modifier = Modifier.weight(1f)
                     )
                     MetricStatBlock(
-                        label = "SCENARIOS",
+                        label = stringResource(R.string.energy_stat_scenarios),
                         value = "${snapshot.scenariosLearned}/24",
                         modifier = Modifier.weight(1f)
                     )
@@ -349,27 +359,30 @@ fun EnergyScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Estimated vs Measured",
+                            text = stringResource(R.string.energy_est_vs_meas),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         val measText = if (snapshot.batteryState.isPluggedOrCharging) {
-                            "0.00 W (chg)"
+                            stringResource(R.string.energy_meas_chg)
                         } else {
                             "${"%.2f".format(Locale.US, snapshot.liveMeasuredMw / 1000f)} W"
                         }
-                        Text(
-                            text = "${"%.2f".format(Locale.US, snapshot.liveEstimatedMw / 1000f)} W  vs  $measText",
-                            style = MonoMetricStyle.copy(
-                                fontSize = MaterialTheme.typography.titleMedium.fontSize,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        val estText = "%.2f".format(Locale.US, snapshot.liveEstimatedMw / 1000f)
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Text(
+                                text = stringResource(R.string.energy_est_vs_meas_val, estText, measText),
+                                style = MonoMetricStyle.copy(
+                                    fontSize = MaterialTheme.typography.titleMedium.fontSize,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         val errText = if (!snapshot.batteryState.isPluggedOrCharging && snapshot.liveMeasuredMw > 50f) {
-                            "${snapshot.liveErrorPct.roundToInt()}% err"
+                            stringResource(R.string.energy_err_pct, snapshot.liveErrorPct.roundToInt())
                         } else "--"
                         Text(
                             text = errText,
@@ -378,7 +391,7 @@ fun EnergyScreen(
                         )
                         if (config.efficiencyLearningEnabled && snapshot.efficiencySavingsPct >= 0.5f) {
                             Text(
-                                text = "Est. saved ~${snapshot.efficiencySavingsPct.roundToInt()}%",
+                                text = stringResource(R.string.energy_est_saved, snapshot.efficiencySavingsPct.roundToInt()),
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                                 color = ext.optimal
                             )
@@ -389,12 +402,18 @@ fun EnergyScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 val savedLabel = if (snapshot.lastSavedMs > 0L) {
                     timeFormatter.format(Date(snapshot.lastSavedMs))
-                } else "not yet"
+                } else stringResource(R.string.energy_not_yet)
                 val skipNote = if (snapshot.samplesSkippedCharging > 0L) {
-                    " • Skipped (chg): ${snapshot.samplesSkippedCharging}"
+                    stringResource(R.string.energy_skipped_chg, snapshot.samplesSkippedCharging)
                 } else ""
                 Text(
-                    text = "Scenario: ${snapshot.activeScenario} • Baseline: ${snapshot.baselineMw.roundToInt()} mW • Saved: $savedLabel$skipNote",
+                    text = stringResource(
+                        R.string.energy_scenario_line,
+                        snapshot.activeScenario,
+                        snapshot.baselineMw.roundToInt(),
+                        savedLabel,
+                        skipNote
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -409,13 +428,13 @@ fun EnergyScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Filled.Bolt,
-                        contentDescription = "Efficiency controls",
+                        contentDescription = stringResource(R.string.energy_eff_cd),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "EFFICIENCY GOVERNOR",
+                        text = stringResource(R.string.energy_eff_header),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -424,8 +443,8 @@ fun EnergyScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 SettingSwitchRow(
-                    title = "Learn power model",
-                    explanation = "Passively learns device power vs frequency and load in the background while discharging. Takes hours of normal + game use for high confidence.",
+                    title = stringResource(R.string.energy_learn_title),
+                    explanation = stringResource(R.string.energy_learn_desc),
                     checked = config.powerModelLearningEnabled,
                     onCheckedChange = { onUpdateSettings(it, null, null, null, null) },
                     testTag = "switch_learn_power_model"
@@ -434,8 +453,8 @@ fun EnergyScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 SettingSwitchRow(
-                    title = "Efficiency governor (opt-in)",
-                    explanation = "Uses learned power/perf curves to pick lower-energy frequencies within your allowed min/max and thermal/power caps once confident.",
+                    title = stringResource(R.string.energy_eff_title),
+                    explanation = stringResource(R.string.energy_eff_desc),
                     checked = config.efficiencyLearningEnabled,
                     onCheckedChange = { onUpdateSettings(null, it, null, null, null) },
                     testTag = "switch_efficiency_governor"
@@ -444,7 +463,7 @@ fun EnergyScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = "Optimization Mode",
+                    text = stringResource(R.string.energy_opt_mode),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -455,9 +474,9 @@ fun EnergyScreen(
                 ) {
                     EfficiencyMode.entries.forEach { mode ->
                         val label = when (mode) {
-                            EfficiencyMode.BALANCED -> "Balanced"
-                            EfficiencyMode.AGGRESSIVE_SAVER -> "Aggressive saver"
-                            EfficiencyMode.PERFORMANCE_FIRST -> "Performance-first"
+                            EfficiencyMode.BALANCED -> stringResource(R.string.energy_mode_balanced)
+                            EfficiencyMode.AGGRESSIVE_SAVER -> stringResource(R.string.energy_mode_saver)
+                            EfficiencyMode.PERFORMANCE_FIRST -> stringResource(R.string.energy_mode_perf)
                         }
                         FilterChip(
                             selected = config.efficiencyMode == mode,
@@ -471,9 +490,9 @@ fun EnergyScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 SettingSliderRow(
-                    title = "Minimum model confidence",
+                    title = stringResource(R.string.energy_min_conf),
                     valueText = "${config.minConfidencePct}%",
-                    explanation = "Standard scaling is kept for any frequency bucket below this confidence threshold.",
+                    explanation = stringResource(R.string.energy_min_conf_desc),
                     value = config.minConfidencePct.toFloat(),
                     valueRange = 20f..95f,
                     steps = 14,
@@ -487,12 +506,12 @@ fun EnergyScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "Exploration Rate",
+                    text = stringResource(R.string.energy_explore_rate),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Occasional safe adjacent-step probes while Efficiency governor is active.",
+                    text = stringResource(R.string.energy_explore_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -503,9 +522,9 @@ fun EnergyScreen(
                 ) {
                     ExplorationRate.entries.forEach { rate ->
                         val label = when (rate) {
-                            ExplorationRate.LOW -> "Low"
-                            ExplorationRate.MEDIUM -> "Medium"
-                            ExplorationRate.HIGH -> "High"
+                            ExplorationRate.LOW -> stringResource(R.string.energy_explore_low)
+                            ExplorationRate.MEDIUM -> stringResource(R.string.energy_explore_med)
+                            ExplorationRate.HIGH -> stringResource(R.string.energy_explore_high)
                         }
                         FilterChip(
                             selected = config.explorationRate == rate,
@@ -530,7 +549,11 @@ fun EnergyScreen(
                             val json = onExportJson()
                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             cm.setPrimaryClip(ClipData.newPlainText("CoreGovernor Power Model JSON", json))
-                            Toast.makeText(context, "Power model JSON copied", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.energy_model_copied),
+                                Toast.LENGTH_SHORT
+                            ).show()
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -538,7 +561,7 @@ fun EnergyScreen(
                     ) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Export JSON")
+                        Text(stringResource(R.string.energy_export_json))
                     }
                     OutlinedButton(
                         onClick = { showResetDialog = true },
@@ -549,7 +572,7 @@ fun EnergyScreen(
                     ) {
                         Icon(Icons.Filled.DeleteForever, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Reset model")
+                        Text(stringResource(R.string.energy_reset_model_btn))
                     }
                 }
             }
@@ -560,7 +583,7 @@ fun EnergyScreen(
             item {
                 EcuCard {
                     Text(
-                        text = "Hardware components not discovered yet. Start the governor or run discovery on Monitor to inspect learned power curves.",
+                        text = stringResource(R.string.energy_no_hw),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -602,10 +625,10 @@ private fun BatteryCard(
         BatteryState.UNKNOWN -> MaterialTheme.colorScheme.outline
     }
     val stateLabel = when (batt.batteryState) {
-        BatteryState.CHARGING -> "CHARGING"
-        BatteryState.FULL_PLUGGED -> "PLUGGED FULL"
-        BatteryState.DISCHARGING -> "DISCHARGING"
-        BatteryState.UNKNOWN -> "IDLE"
+        BatteryState.CHARGING -> stringResource(R.string.batt_state_charging)
+        BatteryState.FULL_PLUGGED -> stringResource(R.string.batt_state_plugged_full)
+        BatteryState.DISCHARGING -> stringResource(R.string.batt_state_discharging)
+        BatteryState.UNKNOWN -> stringResource(R.string.batt_state_idle)
     }
     val pctLabel = if (batt.batteryPct in 0..100) "${batt.batteryPct}%" else "--%"
 
@@ -618,13 +641,13 @@ private fun BatteryCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Filled.BatteryChargingFull,
-                    contentDescription = "Battery estimator",
+                    contentDescription = stringResource(R.string.batt_estimator_cd),
                     tint = stateAccent,
                     modifier = Modifier.size(20.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "BATTERY",
+                    text = stringResource(R.string.batt_header),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -659,23 +682,23 @@ private fun BatteryCard(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             MetricStatBlock(
-                label = "EST. CAPACITY",
+                label = stringResource(R.string.batt_stat_est_cap),
                 value = capText,
                 modifier = Modifier.weight(1.1f)
             )
             MetricStatBlock(
-                label = "ENERGY",
+                label = stringResource(R.string.batt_stat_energy),
                 value = whText,
                 modifier = Modifier.weight(0.8f)
             )
             MetricStatBlock(
-                label = "CONFIDENCE",
+                label = stringResource(R.string.energy_stat_confidence),
                 value = if (batt.totalValidSegments > 0) "${batt.confidencePct}%" else "--",
                 valueColor = if (batt.confidencePct >= 50) ext.optimal else ext.warning,
                 modifier = Modifier.weight(0.8f)
             )
             MetricStatBlock(
-                label = "SoH",
+                label = stringResource(R.string.batt_stat_soh),
                 value = sohText,
                 valueColor = sohColor,
                 modifier = Modifier.weight(0.75f)
@@ -686,42 +709,42 @@ private fun BatteryCard(
 
         if (batt.totalValidSegments == 0) {
             val dirWord = if (batt.activeSegmentState == BatteryState.CHARGING || batt.batteryState == BatteryState.CHARGING) {
-                "charge"
+                stringResource(R.string.batt_dir_charge)
             } else {
-                "discharge"
+                stringResource(R.string.batt_dir_discharge)
             }
             val progressNote = if (batt.activeSegmentDeltaPct > 0) {
-                " (${batt.activeSegmentDeltaPct}%/${batt.neededPctToEstimate}% captured so far)"
+                stringResource(R.string.batt_collecting_progress, batt.activeSegmentDeltaPct, batt.neededPctToEstimate)
             } else {
                 ""
             }
             Text(
-                text = "Collecting data: needs about ${batt.neededPctToEstimate}% uninterrupted $dirWord (\u22653 min) for initial estimate$progressNote.",
+                text = stringResource(R.string.batt_collecting_info, batt.neededPctToEstimate, dirWord, progressNote),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
             val disText = if (batt.dischargeSegmentCount > 0) {
-                "${batt.dischargeCapacityMah.roundToInt()} mAh (${batt.dischargeSegmentCount} seg)"
+                stringResource(R.string.batt_seg_item, batt.dischargeCapacityMah.roundToInt(), batt.dischargeSegmentCount)
             } else "--"
             val chgText = if (batt.chargeSegmentCount > 0) {
-                "${batt.chargeCapacityMah.roundToInt()} mAh (${batt.chargeSegmentCount} seg)"
+                stringResource(R.string.batt_seg_item, batt.chargeCapacityMah.roundToInt(), batt.chargeSegmentCount)
             } else "--"
             Text(
-                text = "Discharge est: $disText • Charge est: $chgText",
+                text = stringResource(R.string.batt_est_summary, disText, chgText),
                 style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
                 color = MaterialTheme.colorScheme.onSurface
             )
             if (batt.hasDirectionDisagreement) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Discharge vs charge differ by ${batt.directionDisagreementPct.roundToInt()}% (>12%); charger efficiency or gauge drift may vary.",
+                    text = stringResource(R.string.batt_disagree_note, batt.directionDisagreementPct.roundToInt()),
                     style = MaterialTheme.typography.bodySmall,
                     color = ext.warning
                 )
             }
             Text(
-                text = "Uses battery-side net current (screen, idle, and charger/load balance included).",
+                text = stringResource(R.string.batt_net_current_note),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -730,7 +753,12 @@ private fun BatteryCard(
         if (batt.chargeCounterEstimateMah > 0f) {
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "Gauge second opinion: ~${batt.chargeCounterEstimateMah.roundToInt()} mAh (${batt.chargeCounterMah.roundToInt()} mAh left at $pctLabel)",
+                text = stringResource(
+                    R.string.batt_gauge_opinion,
+                    batt.chargeCounterEstimateMah.roundToInt(),
+                    batt.chargeCounterMah.roundToInt(),
+                    pctLabel
+                ),
                 style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -741,15 +769,17 @@ private fun BatteryCard(
         Spacer(modifier = Modifier.height(10.dp))
 
         val livePwrText = when (batt.batteryState) {
-            BatteryState.CHARGING -> "\u26A1+${"%.2f".format(Locale.US, batt.livePowerInWatts)} W in"
-            BatteryState.FULL_PLUGGED -> "PLUG 0.0 W"
-            BatteryState.DISCHARGING -> "-${"%.2f".format(Locale.US, batt.livePowerOutWatts)} W out"
+            BatteryState.CHARGING -> stringResource(R.string.batt_live_in, "%.2f".format(Locale.US, batt.livePowerInWatts))
+            BatteryState.FULL_PLUGGED -> stringResource(R.string.monitor_plug_val)
+            BatteryState.DISCHARGING -> stringResource(R.string.batt_live_out, "%.2f".format(Locale.US, batt.livePowerOutWatts))
             BatteryState.UNKNOWN -> "--"
         }
         val remWhText = if (batt.remainingWh > 0f) "${"%.1f".format(Locale.US, batt.remainingWh)} Wh" else "--"
         val etaText = when {
-            batt.batteryState == BatteryState.CHARGING && batt.timeToFullMin >= 0 -> "${formatMinutesEta(batt.timeToFullMin)} to full"
-            batt.batteryState == BatteryState.DISCHARGING && batt.timeRemainingMin >= 0 -> "${formatMinutesEta(batt.timeRemainingMin)} left"
+            batt.batteryState == BatteryState.CHARGING && batt.timeToFullMin >= 0 ->
+                stringResource(R.string.batt_eta_full, formatMinutesEta(batt.timeToFullMin))
+            batt.batteryState == BatteryState.DISCHARGING && batt.timeRemainingMin >= 0 ->
+                stringResource(R.string.batt_eta_left, formatMinutesEta(batt.timeRemainingMin))
             else -> "--"
         }
 
@@ -757,29 +787,32 @@ private fun BatteryCard(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            MetricStatBlock(label = "LIVE POWER", value = livePwrText, modifier = Modifier.weight(1f))
-            MetricStatBlock(label = "REMAINING", value = remWhText, modifier = Modifier.weight(0.8f))
-            MetricStatBlock(label = "EST. TIME", value = etaText, modifier = Modifier.weight(0.95f))
+            MetricStatBlock(label = stringResource(R.string.batt_stat_live_power), value = livePwrText, modifier = Modifier.weight(1f))
+            MetricStatBlock(label = stringResource(R.string.batt_stat_remaining), value = remWhText, modifier = Modifier.weight(0.8f))
+            MetricStatBlock(label = stringResource(R.string.batt_stat_est_time), value = etaText, modifier = Modifier.weight(0.95f))
         }
 
         Spacer(modifier = Modifier.height(8.dp))
         val designStr = when {
-            config.batteryDesignCapacityOverrideMah > 0 -> "${config.batteryDesignCapacityOverrideMah} mAh (manual)"
+            config.batteryDesignCapacityOverrideMah > 0 ->
+                stringResource(R.string.batt_design_manual, config.batteryDesignCapacityOverrideMah)
             batt.designCapacityMah > 0 -> "${batt.designCapacityMah} mAh"
-            batt.sysfsDesignCapacityMah > 0 -> "${batt.sysfsDesignCapacityMah} mAh (looks wrong, set manually)"
+            batt.sysfsDesignCapacityMah > 0 ->
+                stringResource(R.string.batt_design_wrong, batt.sysfsDesignCapacityMah)
             else -> "--"
         }
         val cyclesStr = if (batt.cycleCount >= 0) "${batt.cycleCount}" else "--"
         val tempStr = if (batt.batteryTempC != 0f) "${"%.1f".format(Locale.US, batt.batteryTempC)}°C" else "--"
         val voltStr = if (batt.batteryVoltageMv > 0f) "${"%.2f".format(Locale.US, batt.batteryVoltageMv / 1000f)}V" else "--"
-        val kernelFullNote = if (batt.sysfsFullCapacityMah > 0) " • Kernel full ${batt.sysfsFullCapacityMah} mAh" else ""
+        val kernelFullNote = if (batt.sysfsFullCapacityMah > 0) stringResource(R.string.batt_kernel_full, batt.sysfsFullCapacityMah) else ""
+        val healthLabel = if (batt.batteryHealthLabel == "n/a") stringResource(R.string.common_na) else batt.batteryHealthLabel
         Text(
-            text = "Design: $designStr$kernelFullNote • Cycles: $cyclesStr",
+            text = stringResource(R.string.batt_design_cycles, designStr, kernelFullNote, cyclesStr),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            text = "Temp: $tempStr • Voltage: $voltStr • Health: ${batt.batteryHealthLabel}",
+            text = stringResource(R.string.batt_temp_volt_health, tempStr, voltStr, healthLabel),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -788,44 +821,60 @@ private fun BatteryCard(
         }
 
         Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = String.format(
-                Locale.US,
-                "Session: Out %.2f Wh (%.0f mAh)  •  In %.2f Wh (%.0f mAh)",
-                batt.sessionWhOut, batt.sessionMahOut, batt.sessionWhIn, batt.sessionMahIn
-            ),
-            style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Text(
-            text = String.format(
-                Locale.US,
-                "Lifetime: Out %.1f Wh (%.0f mAh)  •  In %.1f Wh (%.0f mAh)",
-                batt.lifetimeWhOut, batt.lifetimeMahOut, batt.lifetimeWhIn, batt.lifetimeMahIn
-            ),
-            style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Text(
+                text = stringResource(
+                    R.string.batt_session_line,
+                    String.format(Locale.US, "%.2f", batt.sessionWhOut),
+                    String.format(Locale.US, "%.0f", batt.sessionMahOut),
+                    String.format(Locale.US, "%.2f", batt.sessionWhIn),
+                    String.format(Locale.US, "%.0f", batt.sessionMahIn)
+                ),
+                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = stringResource(
+                    R.string.batt_lifetime_line,
+                    String.format(Locale.US, "%.1f", batt.lifetimeWhOut),
+                    String.format(Locale.US, "%.0f", batt.lifetimeMahOut),
+                    String.format(Locale.US, "%.1f", batt.lifetimeWhIn),
+                    String.format(Locale.US, "%.0f", batt.lifetimeMahIn)
+                ),
+                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
         if (batt.recentSegments.isNotEmpty()) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Recent segments (${batt.recentSegments.size}):",
+                text = stringResource(R.string.batt_recent_segments, batt.recentSegments.size),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            batt.recentSegments.take(4).forEach { seg ->
-                val dirTag = if (seg.direction == BatteryState.DISCHARGING) "DISCH" else "CHG"
-                val durMin = (seg.durationMs / 60_000L).coerceAtLeast(1L)
-                Text(
-                    text = String.format(
-                        Locale.US,
-                        "• %s %d%%→%d%% (%dm): %.0f mAh / %.1f Wh",
-                        dirTag, seg.startPct, seg.endPct, durMin, seg.estCapacityMah, seg.estCapacityWh
-                    ),
-                    style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                batt.recentSegments.take(4).forEach { seg ->
+                    val dirTag = if (seg.direction == BatteryState.DISCHARGING) {
+                        stringResource(R.string.batt_seg_dir_disch)
+                    } else {
+                        stringResource(R.string.batt_seg_dir_chg)
+                    }
+                    val durMin = (seg.durationMs / 60_000L).coerceAtLeast(1L).toInt()
+                    Text(
+                        text = stringResource(
+                            R.string.batt_seg_line,
+                            dirTag,
+                            seg.startPct,
+                            seg.endPct,
+                            durMin,
+                            String.format(Locale.US, "%.0f", seg.estCapacityMah),
+                            String.format(Locale.US, "%.1f", seg.estCapacityWh)
+                        ),
+                        style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
@@ -834,8 +883,8 @@ private fun BatteryCard(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSwitchRow(
-            title = "Estimate battery capacity",
-            explanation = "Tracks charge/discharge energy across uninterrupted percent steps (~8%+ and 3+ min) to estimate real battery health.",
+            title = stringResource(R.string.batt_est_switch_title),
+            explanation = stringResource(R.string.batt_est_switch_desc),
             checked = config.batteryEstimationEnabled,
             onCheckedChange = onToggleEstimation,
             testTag = "switch_battery_estimation"
@@ -856,9 +905,9 @@ private fun BatteryCard(
             ) {
                 Text(
                     text = if (config.batteryDesignCapacityOverrideMah > 0) {
-                        "Design: ${config.batteryDesignCapacityOverrideMah} mAh"
+                        stringResource(R.string.batt_design_btn_set, config.batteryDesignCapacityOverrideMah)
                     } else {
-                        "Design mAh (Auto)"
+                        stringResource(R.string.batt_design_btn_auto)
                     },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -873,7 +922,7 @@ private fun BatteryCard(
             ) {
                 Icon(Icons.Filled.DeleteForever, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Reset estimate", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(stringResource(R.string.batt_reset_est_btn), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -892,14 +941,16 @@ private fun MetricStatBlock(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Text(
-            text = value,
-            style = MonoMetricStyle.copy(
-                fontSize = MaterialTheme.typography.titleMedium.fontSize,
-                fontWeight = FontWeight.Bold
-            ),
-            color = valueColor
-        )
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Text(
+                text = value,
+                style = MonoMetricStyle.copy(
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = valueColor
+            )
+        }
     }
 }
 
@@ -926,9 +977,14 @@ private fun ComponentPowerCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 val liveLine = if (comp.liveFreqMhz > 0) {
-                    "${comp.liveFreqMhz} MHz • ${comp.liveUtilPct.roundToInt()}% load -> ${comp.livePredictedMw.roundToInt()} mW"
+                    stringResource(
+                        R.string.comp_live_line,
+                        comp.liveFreqMhz,
+                        comp.liveUtilPct.roundToInt(),
+                        comp.livePredictedMw.roundToInt()
+                    )
                 } else {
-                    "Idle / not sampling"
+                    stringResource(R.string.comp_idle_sampling)
                 }
                 Text(
                     text = liveLine,
@@ -937,7 +993,7 @@ private fun ComponentPowerCard(
                 )
             }
             StatusPill(
-                label = "${comp.liveConfidencePct.roundToInt()}% conf",
+                label = stringResource(R.string.comp_conf_pill, comp.liveConfidencePct.roundToInt()),
                 color = if (confident) ext.optimal else MaterialTheme.colorScheme.onSurfaceVariant,
                 containerColor = if (confident) ext.optimalContainer else MaterialTheme.colorScheme.surfaceVariant
             )
@@ -945,41 +1001,43 @@ private fun ComponentPowerCard(
 
         if (comp.curvePoints.isNotEmpty()) {
             Spacer(modifier = Modifier.height(10.dp))
-            PowerCurveChart(
-                points = comp.curvePoints,
-                minConfidencePct = minConfidencePct,
-                accentColor = accent,
-                gridColor = ext.chartGrid
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            comp.curvePoints.forEach { pt ->
-                val rowAlpha = if (pt.confidencePct >= minConfidencePct) 1f else 0.52f
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .alpha(rowAlpha)
-                        .padding(vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "${pt.freqMhz} MHz",
-                        style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "${pt.predictedMw.roundToInt()} mW",
-                        style = MonoMetricStyle.copy(
-                            fontSize = MaterialTheme.typography.labelSmall.fontSize,
-                            fontWeight = FontWeight.SemiBold
-                        ),
-                        color = accent
-                    )
-                    Text(
-                        text = "${pt.confidencePct.roundToInt()}% (${pt.samples})",
-                        style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                PowerCurveChart(
+                    points = comp.curvePoints,
+                    minConfidencePct = minConfidencePct,
+                    accentColor = accent,
+                    gridColor = ext.chartGrid
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                comp.curvePoints.forEach { pt ->
+                    val rowAlpha = if (pt.confidencePct >= minConfidencePct) 1f else 0.52f
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .alpha(rowAlpha)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${pt.freqMhz} MHz",
+                            style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "${pt.predictedMw.roundToInt()} mW",
+                            style = MonoMetricStyle.copy(
+                                fontSize = MaterialTheme.typography.labelSmall.fontSize,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = accent
+                        )
+                        Text(
+                            text = "${pt.confidencePct.roundToInt()}% (${pluralStringResource(R.plurals.plural_samples, pt.samples.toInt(), pt.samples.toInt())})",
+                            style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -1047,13 +1105,13 @@ private fun BatteryTruthLine(telemetryFlow: kotlinx.coroutines.flow.StateFlow<co
     val line1 = if (t.truePct >= 0f) {
         val head = t.trueHeadroomPct
         val tag = when {
-            head >= 3f -> "+${head.roundToInt()}% headroom the gauge hides"
-            head <= -3f -> "${head.roundToInt()}% below the gauge"
-            else -> "matches the gauge"
+            head >= 3f -> stringResource(R.string.batt_truth_headroom, head.roundToInt())
+            head <= -3f -> stringResource(R.string.batt_truth_below, head.roundToInt())
+            else -> stringResource(R.string.batt_truth_matches)
         }
-        "Real level: ~${t.truePct.roundToInt()}% ($tag)"
+        stringResource(R.string.batt_truth_real_level, t.truePct.roundToInt(), tag)
     } else {
-        "Real level: grading (needs unplugged use)"
+        stringResource(R.string.batt_truth_grading)
     }
     Text(
         text = line1,
@@ -1061,19 +1119,28 @@ private fun BatteryTruthLine(telemetryFlow: kotlinx.coroutines.flow.StateFlow<co
         color = if (t.truePct >= 0f && t.trueHeadroomPct >= 3f) ext.optimal else MaterialTheme.colorScheme.onSurfaceVariant
     )
     Text(
-        text = "${t.batteryChemistry} • R ${t.batteryResistanceMohm.roundToInt()} mΩ • sag ${t.batterySagMv.roundToInt()} mV • trust ${t.truthConfidencePct}%",
+        text = stringResource(
+            R.string.batt_truth_diag,
+            t.batteryChemistry,
+            t.batteryResistanceMohm.roundToInt(),
+            t.batterySagMv.roundToInt(),
+            t.truthConfidencePct
+        ),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
     val calText = when {
-        t.calChargeDone && t.calDischargeDone ->
-            "Calibrated: full charge ${t.fullChargeMv.roundToInt()} mV" +
-                (if (t.fullChargeMah > 0f) ", ${t.fullChargeMah.roundToInt()} mAh charged" else "") + ", discharge curve learned"
-        t.calRunning == "charge" -> "Calibrating: keep charging to 100% until it stops taking power"
-        t.calRunning == "discharge" -> "Calibrating: keep discharging, do not plug in"
-        t.calChargeDone -> "Charge calibrated (${t.fullChargeMv.roundToInt()} mV). Next: one unplugged discharge from 95% to empty"
-        t.calDischargeDone -> "Discharge calibrated. Next: one undisturbed charge to 100%"
-        else -> "Not calibrated: one undisturbed charge to 100% and one unplugged discharge from 95% to empty teaches the battery type"
+        t.calChargeDone && t.calDischargeDone -> {
+            val mahSuffix = if (t.fullChargeMah > 0f) {
+                stringResource(R.string.batt_truth_cal_charged_mah, t.fullChargeMah.roundToInt())
+            } else ""
+            stringResource(R.string.batt_truth_cal_both, t.fullChargeMv.roundToInt(), mahSuffix)
+        }
+        t.calRunning == "charge" -> stringResource(R.string.batt_truth_cal_running_chg)
+        t.calRunning == "discharge" -> stringResource(R.string.batt_truth_cal_running_disch)
+        t.calChargeDone -> stringResource(R.string.batt_truth_cal_chg_done, t.fullChargeMv.roundToInt())
+        t.calDischargeDone -> stringResource(R.string.batt_truth_cal_disch_done)
+        else -> stringResource(R.string.batt_truth_cal_none)
     }
     Text(
         text = calText,

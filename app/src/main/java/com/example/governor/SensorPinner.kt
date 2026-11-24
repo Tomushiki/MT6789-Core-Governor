@@ -25,6 +25,8 @@ import android.os.HandlerThread
 import android.os.Process
 import android.os.SystemClock
 import android.util.SparseIntArray
+import androidx.annotation.StringRes
+import com.example.R
 import com.example.model.LogLevel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,12 +55,12 @@ class SensorPinner(
     private val logger: (LogLevel, String, String) -> Unit
 ) : SensorEventListener {
 
-    enum class Rate(val key: String, val periodUs: Int, val label: String) {
-        MAX("max", 0, "Max"),
-        FAST("fast", 5_000, "Fast (200 Hz)"),
-        MEDIUM("medium", 10_000, "Medium (100 Hz)"),
-        SLOW("slow", 20_000, "Slow (50 Hz)"),
-        VERY_SLOW("very_slow", 60_000, "Very slow (~16 Hz)");
+    enum class Rate(val key: String, val periodUs: Int, val label: String, @StringRes val labelRes: Int) {
+        MAX("max", 0, "Max", R.string.nifty_rate_max),
+        FAST("fast", 5_000, "Fast (200 Hz)", R.string.nifty_rate_fast),
+        MEDIUM("medium", 10_000, "Medium (100 Hz)", R.string.nifty_rate_medium),
+        SLOW("slow", 20_000, "Slow (50 Hz)", R.string.nifty_rate_slow),
+        VERY_SLOW("very_slow", 60_000, "Very slow (~16 Hz)", R.string.nifty_rate_very_slow);
 
         companion object {
             fun fromKey(key: String?): Rate = values().firstOrNull { it.key == key } ?: MAX
@@ -77,7 +79,8 @@ class SensorPinner(
         val label: String,
         val name: String,
         /** Fastest rate the hardware reports (Hz), 0 when the sensor does not report one. */
-        val maxHz: Int
+        val maxHz: Int,
+        @StringRes val labelRes: Int = 0
     )
 
     data class State(
@@ -240,10 +243,16 @@ class SensorPinner(
 
     private fun discoverSensors(): List<SensorInfo> {
         val sm = sensorManager ?: return emptyList()
-        return CANDIDATES.mapNotNull { (type, label) ->
-            val s = sm.getDefaultSensor(type) ?: return@mapNotNull null
+        return CANDIDATES.mapNotNull { candidate ->
+            val s = sm.getDefaultSensor(candidate.type) ?: return@mapNotNull null
             val maxHz = if (s.minDelay > 0) 1_000_000 / s.minDelay else 0
-            SensorInfo(type = type, label = label, name = s.name, maxHz = maxHz)
+            SensorInfo(
+                type = candidate.type,
+                label = candidate.label,
+                name = s.name,
+                maxHz = maxHz,
+                labelRes = candidate.labelRes
+            )
         }
     }
 
@@ -278,15 +287,17 @@ class SensorPinner(
         const val KEY_TYPES = "types"
         const val KEY_PAUSE_OFF = "pause_screen_off"
 
-        val CANDIDATES = listOf(
-            Sensor.TYPE_GYROSCOPE to "Gyroscope",
-            Sensor.TYPE_ACCELEROMETER to "Accelerometer",
-            Sensor.TYPE_GAME_ROTATION_VECTOR to "Game rotation vector",
-            Sensor.TYPE_ROTATION_VECTOR to "Rotation vector",
-            Sensor.TYPE_GYROSCOPE_UNCALIBRATED to "Gyroscope (uncalibrated)",
-            Sensor.TYPE_LINEAR_ACCELERATION to "Linear acceleration",
-            Sensor.TYPE_GRAVITY to "Gravity",
-            Sensor.TYPE_MAGNETIC_FIELD to "Magnetometer"
+        private data class Candidate(val type: Int, val label: String, @StringRes val labelRes: Int)
+
+        private val CANDIDATES = listOf(
+            Candidate(Sensor.TYPE_GYROSCOPE, "Gyroscope", R.string.sensor_gyro),
+            Candidate(Sensor.TYPE_ACCELEROMETER, "Accelerometer", R.string.sensor_accel),
+            Candidate(Sensor.TYPE_GAME_ROTATION_VECTOR, "Game rotation vector", R.string.sensor_game_rot),
+            Candidate(Sensor.TYPE_ROTATION_VECTOR, "Rotation vector", R.string.sensor_rot),
+            Candidate(Sensor.TYPE_GYROSCOPE_UNCALIBRATED, "Gyroscope (uncalibrated)", R.string.sensor_gyro_uncal),
+            Candidate(Sensor.TYPE_LINEAR_ACCELERATION, "Linear acceleration", R.string.sensor_linear_accel),
+            Candidate(Sensor.TYPE_GRAVITY, "Gravity", R.string.sensor_gravity),
+            Candidate(Sensor.TYPE_MAGNETIC_FIELD, "Magnetometer", R.string.sensor_mag)
         )
     }
 }

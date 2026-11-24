@@ -47,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -61,10 +62,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.governor.SysfsParsers
 import com.example.model.GpuLiveState
 import com.example.model.HardwareSpec
@@ -183,7 +189,7 @@ fun OppTableScreen(
         }
     }
 
-    val rows = remember(gpuSpec.oppTable) {
+    val rows = remember(gpuSpec.oppTable, context) {
         gpuSpec.oppTable.mapIndexed { pos, opp ->
             OppRowModel(
                 key = "${pos}_${opp.oppIndex}_${opp.freqKhz}",
@@ -192,7 +198,11 @@ fun OppTableScreen(
                 freqKhz = opp.freqKhz,
                 posLabel = "#${pos.toString().padStart(2, '0')}",
                 freqLabel = "${opp.freqKhz / 1000} MHz  (${opp.freqKhz} kHz)",
-                detailLabel = "Real OPP Index: [${opp.oppIndex}]  •  Volt: ${SysfsParsers.formatVoltMv(opp.voltRaw)}"
+                detailLabel = context.getString(
+                    R.string.opp_real_detail,
+                    opp.oppIndex,
+                    SysfsParsers.formatVoltMv(opp.voltRaw)
+                )
             )
         }
     }
@@ -225,16 +235,18 @@ fun OppTableScreen(
 
                     OutlinedButton(
                         onClick = {
-                            val raw = rawStatusState.value.rawGpufreqStatus.ifBlank { "(empty)" }
+                            val raw = rawStatusState.value.rawGpufreqStatus.ifBlank {
+                                context.getString(R.string.opp_empty_clip)
+                            }
                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             cm.setPrimaryClip(ClipData.newPlainText("gpufreq_status", raw))
-                            Toast.makeText(context, "Copied gpufreq_status", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.monitor_copied_gpufreq), Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.testTag("copy_gpufreq_status_opp_screen")
                     ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy raw status", modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.monitor_copy_raw_cd), modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Copy")
+                        Text(stringResource(R.string.common_copy))
                     }
                 }
 
@@ -243,15 +255,15 @@ fun OppTableScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
                 SettingSwitchRow(
-                    title = "Pause live updates",
-                    explanation = "Freezes the live highlight and raw status card until turned off or refreshed.",
+                    title = stringResource(R.string.opp_pause_title),
+                    explanation = stringResource(R.string.opp_pause_desc),
                     checked = paused,
                     onCheckedChange = { paused = it },
                     testTag = "pause_opp_live_updates_switch"
                 )
                 SettingSwitchRow(
-                    title = "Always pause on open",
-                    explanation = "Starts this screen paused every time you open the app, so you do not have to switch it on each time. The Refresh button still takes a fresh reading.",
+                    title = stringResource(R.string.opp_always_pause_title),
+                    explanation = stringResource(R.string.opp_always_pause_desc),
                     checked = alwaysPause,
                     onCheckedChange = { on ->
                         alwaysPause = on
@@ -272,20 +284,28 @@ fun OppTableScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
+                        val entriesText = pluralStringResource(
+                            R.plurals.plural_opp_entries,
+                            gpuSpec.oppTable.size,
+                            gpuSpec.oppTable.size
+                        )
                         Text(
-                            text = "GPU OPP TABLE (${gpuSpec.oppTable.size} ENTRIES)",
+                            text = stringResource(R.string.opp_table_header, entriesText),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Source: ${gpuSpec.oppTableSourcePath ?: "Not discovered"}",
+                            text = stringResource(
+                                R.string.opp_source,
+                                gpuSpec.oppTableSourcePath ?: stringResource(R.string.opp_not_discovered)
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Order: ${gpuSpec.detectedOrderNote}",
+                            text = stringResource(R.string.opp_order, gpuSpec.detectedOrderNote),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -298,7 +318,7 @@ fun OppTableScreen(
                         onClick = handleRefresh,
                         modifier = Modifier.testTag("refresh_opp_table_button")
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh OPP table")
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.opp_refresh_cd))
                     }
                 }
             }
@@ -322,13 +342,13 @@ fun OppTableScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "No GPU OPP entries parsed yet. Ensure root is granted and refresh.",
+                                text = stringResource(R.string.opp_empty),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             Button(onClick = handleRefresh) {
-                                Text("Probe OPP Table")
+                                Text(stringResource(R.string.opp_probe_btn))
                             }
                         }
                     }
@@ -356,24 +376,26 @@ private fun RawStatusHeader(
     modifier: Modifier = Modifier
 ) {
     val rawStatus = rawStatusState.value
-    Column(modifier = modifier) {
-        Text(
-            text = "LIVE /proc/gpufreqv2/gpufreq_status",
-            style = MaterialTheme.typography.labelMedium,
-            color = accentColor
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        val oppLabel = if (rawStatus.currentOppIndex >= 0) "OPP ${rawStatus.currentOppIndex}" else "OPP --"
-        val freqLabel = if (rawStatus.currentFreqKhz > 0L) {
-            "${rawStatus.currentFreqKhz / 1000} MHz (${rawStatus.currentFreqKhz} kHz)"
-        } else {
-            "-- MHz"
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Column(modifier = modifier) {
+            Text(
+                text = stringResource(R.string.opp_raw_header),
+                style = MaterialTheme.typography.labelMedium,
+                color = accentColor
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            val oppLabel = if (rawStatus.currentOppIndex >= 0) "OPP ${rawStatus.currentOppIndex}" else "OPP --"
+            val freqLabel = if (rawStatus.currentFreqKhz > 0L) {
+                "${rawStatus.currentFreqKhz / 1000} MHz (${rawStatus.currentFreqKhz} kHz)"
+            } else {
+                "-- MHz"
+            }
+            Text(
+                text = stringResource(R.string.opp_parsed, oppLabel, freqLabel),
+                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize),
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
-        Text(
-            text = "Parsed: $oppLabel • $freqLabel",
-            style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize),
-            color = MaterialTheme.colorScheme.onSurface
-        )
     }
 }
 
@@ -382,19 +404,19 @@ private fun RawStatusTextBox(
     rawStatusState: State<RawStatusSnapshot>
 ) {
     val rawText = rawStatusState.value.rawGpufreqStatus
-    Text(
-        text = rawText.ifBlank {
-            "Tap Refresh or start CoreGovernor to inspect live /proc/gpufreqv2/gpufreq_status output."
-        },
-        style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .padding(10.dp)
-            .testTag("raw_gpufreq_status_text")
-    )
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Text(
+            text = rawText.ifBlank { stringResource(R.string.opp_empty_raw) },
+            style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                .padding(10.dp)
+                .testTag("raw_gpufreq_status_text")
+        )
+    }
 }
 
 @Composable
@@ -403,8 +425,12 @@ private fun GedLoadSourceText(
     fallbackCandidates: List<String>
 ) {
     val source = loadSourceState.value
+    val noneText = stringResource(R.string.common_none)
     Text(
-        text = "GED Load: ${source.ifBlank { fallbackCandidates.joinToString().ifBlank { "none" } }}",
+        text = stringResource(
+            R.string.opp_ged_load,
+            source.ifBlank { fallbackCandidates.joinToString().ifBlank { noneText } }
+        ),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         maxLines = 1,
@@ -445,57 +471,59 @@ private fun OppRowItem(
     }
 
     EcuCard(accentBorder = border) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = row.posLabel,
-                    style = MonoMetricStyle.copy(
-                        fontSize = MaterialTheme.typography.labelMedium.fontSize,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     Text(
-                        text = row.freqLabel,
-                        style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = row.detailLabel,
-                        style = MaterialTheme.typography.labelSmall,
+                        text = row.posLabel,
+                        style = MonoMetricStyle.copy(
+                            fontSize = MaterialTheme.typography.labelMedium.fontSize,
+                            fontWeight = FontWeight.Bold
+                        ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Column {
+                        Text(
+                            text = row.freqLabel,
+                            style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = row.detailLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-            }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (isCurrent) {
-                    StatusPill(
-                        label = "LIVE",
-                        color = ext.gpuAccent,
-                        containerColor = ext.warningContainer
-                    )
-                }
-                if (isTarget) {
-                    StatusPill(
-                        label = "PINNED",
-                        color = MaterialTheme.colorScheme.primary,
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    )
-                } else if (isCappedOut) {
-                    StatusPill(
-                        label = "CAPPED",
-                        color = ext.throttle,
-                        containerColor = ext.throttleContainer
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (isCurrent) {
+                        StatusPill(
+                            label = stringResource(R.string.opp_pill_live),
+                            color = ext.gpuAccent,
+                            containerColor = ext.warningContainer
+                        )
+                    }
+                    if (isTarget) {
+                        StatusPill(
+                            label = stringResource(R.string.opp_pill_pinned),
+                            color = MaterialTheme.colorScheme.primary,
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    } else if (isCappedOut) {
+                        StatusPill(
+                            label = stringResource(R.string.opp_pill_capped),
+                            color = ext.throttle,
+                            containerColor = ext.throttleContainer
+                        )
+                    }
                 }
             }
         }

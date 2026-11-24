@@ -33,7 +33,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.governor.OffPeriod
 import com.example.governor.ScreenOffSnapshot
 import com.example.governor.WakeStat
@@ -50,9 +53,9 @@ private fun dur(ms: Long): String {
 
 private fun pph(v: Float): String = if (v < 0f) "-" else "%.2f %%/h".format(Locale.US, v)
 
-private fun periodLine(p: OffPeriod, fmt: SimpleDateFormat): String =
+private fun periodLine(p: OffPeriod, fmt: SimpleDateFormat, sleepSuffix: String): String =
     "${fmt.format(Date(p.startMs))}  ${dur(p.durMs)}  -${"%.1f".format(Locale.US, p.pctDrop)}% (${pph(p.pctPerHour)})" +
-        (if (p.avgW > 0f) "  ${"%.2f".format(Locale.US, p.avgW)} W" else "") + "  sleep ${p.deepSleepPct}%"
+        (if (p.avgW > 0f) "  ${"%.2f".format(Locale.US, p.avgW)} W" else "") + sleepSuffix
 
 @Composable
 fun ScreenOffCard(
@@ -67,10 +70,18 @@ fun ScreenOffCard(
     if (confirm) {
         AlertDialog(
             onDismissRequest = { confirm = false },
-            title = { Text("Reset screen-off data?") },
-            text = { Text("Deletes all recorded screen-off periods and daily totals.") },
-            confirmButton = { TextButton(onClick = { confirm = false; onReset() }) { Text("Reset") } },
-            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } }
+            title = { Text(stringResource(R.string.screen_off_reset_title)) },
+            text = { Text(stringResource(R.string.screen_off_reset_body)) },
+            confirmButton = {
+                TextButton(onClick = { confirm = false; onReset() }) {
+                    Text(stringResource(R.string.common_reset))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirm = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
         )
     }
     EcuCard {
@@ -81,9 +92,9 @@ fun ScreenOffCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                    Text("Screen-off power analysis", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.screen_off_title), style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "Measures battery drain, deep sleep and what keeps the phone awake while the screen is off (3 min or longer, not charging). Needs the service running.",
+                        stringResource(R.string.screen_off_desc),
                         style = MaterialTheme.typography.labelSmall, color = sub
                     )
                 }
@@ -91,52 +102,83 @@ fun ScreenOffCard(
             }
             if (!snap.hasData) {
                 Text(
-                    if (config.screenOffAnalysisEnabled) "No data yet. Leave the screen off for a few minutes (unplugged) and check back."
-                    else "Off.",
+                    if (config.screenOffAnalysisEnabled) {
+                        stringResource(R.string.screen_off_no_data)
+                    } else {
+                        stringResource(R.string.screen_off_disabled)
+                    },
                     style = MaterialTheme.typography.bodySmall, color = sub
                 )
             } else {
                 val rate = snap.offPctPerHWeek
                 val verdict = when {
-                    rate < 0f -> "Not enough data"
-                    rate < 0.5f -> "Excellent standby"
-                    rate < 1.0f -> "Good standby"
-                    rate < 2.0f -> "Higher than normal"
-                    else -> "Very high drain - something is keeping the phone awake"
+                    rate < 0f -> stringResource(R.string.screen_off_verdict_none)
+                    rate < 0.5f -> stringResource(R.string.screen_off_verdict_excellent)
+                    rate < 1.0f -> stringResource(R.string.screen_off_verdict_good)
+                    rate < 2.0f -> stringResource(R.string.screen_off_verdict_high)
+                    else -> stringResource(R.string.screen_off_verdict_very_high)
                 }
                 Text(verdict, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    "Last 7 days: ${pph(rate)} screen off (${"%.1f".format(Locale.US, snap.offHoursWeek)} h)" +
-                        (if (snap.offPctPerHToday >= 0f) "   Today: ${pph(snap.offPctPerHToday)}" else "") +
-                        "\nScreen on: ${pph(snap.onPctPerHWeek)}" +
-                        (if (snap.offMahPerHWeek >= 0f) "\nOff drain: ${"%.1f".format(Locale.US, snap.offMahPerHWeek)} mAh/h" else "") +
-                        (if (snap.offAvgWWeek > 0f) "   avg ${"%.3f".format(Locale.US, snap.offAvgWWeek)} W" else "") +
-                        (if (snap.deepSleepPctWeek >= 0) "\nDeep sleep: ${snap.deepSleepPctWeek}% of off time" else "") +
-                        (if (snap.standbyHoursToEmpty > 0f) "\nStandby estimate: ~${"%.0f".format(Locale.US, snap.standbyHoursToEmpty)} h from full to empty" else ""),
-                    style = MaterialTheme.typography.bodySmall
-                )
+                val summaryText = buildString {
+                    append(stringResource(R.string.screen_off_summary_line1, pph(rate), "%.1f".format(Locale.US, snap.offHoursWeek)))
+                    if (snap.offPctPerHToday >= 0f) {
+                        append(stringResource(R.string.screen_off_summary_today, pph(snap.offPctPerHToday)))
+                    }
+                    append('\n')
+                    append(stringResource(R.string.screen_off_summary_on, pph(snap.onPctPerHWeek)))
+                    if (snap.offMahPerHWeek >= 0f) {
+                        append('\n')
+                        append(stringResource(R.string.screen_off_summary_off_drain, "%.1f".format(Locale.US, snap.offMahPerHWeek)))
+                    }
+                    if (snap.offAvgWWeek > 0f) {
+                        append(stringResource(R.string.screen_off_summary_avg_w, "%.3f".format(Locale.US, snap.offAvgWWeek)))
+                    }
+                    if (snap.deepSleepPctWeek >= 0) {
+                        append('\n')
+                        append(stringResource(R.string.screen_off_summary_deep_sleep, snap.deepSleepPctWeek))
+                    }
+                    if (snap.standbyHoursToEmpty > 0f) {
+                        append('\n')
+                        append(stringResource(R.string.screen_off_summary_standby, "%.0f".format(Locale.US, snap.standbyHoursToEmpty)))
+                    }
+                }
+                Text(summaryText, style = MaterialTheme.typography.bodySmall)
                 if (snap.deepSleepPctWeek in 0..69) {
                     Text(
-                        "Deep sleep is low: the CPU is being woken or held awake for a large part of the off time. Check the wake sources below.",
+                        stringResource(R.string.screen_off_low_sleep_warn),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error
                     )
                 }
                 snap.worst?.let {
-                    Text("Worst recent: ${periodLine(it, fmt)}", style = MaterialTheme.typography.labelSmall, color = sub)
+                    val line = periodLine(it, fmt, stringResource(R.string.screen_off_sleep_pct, it.deepSleepPct))
+                    Text(
+                        stringResource(R.string.screen_off_worst_recent, line),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = sub
+                    )
                 }
                 if (snap.topKernel.isNotEmpty()) {
-                    Text("Kernel wake sources (time active while off)", style = MaterialTheme.typography.labelMedium)
-                    snap.topKernel.forEach { k -> WakeLine("${k.name}", "${k.ms / 1000}s, ${k.count} wakeups") }
+                    Text(stringResource(R.string.screen_off_kernel_wakes), style = MaterialTheme.typography.labelMedium)
+                    snap.topKernel.forEach { k ->
+                        val wakeups = pluralStringResource(R.plurals.plural_wakeups, k.count, k.count)
+                        WakeLine(k.name, stringResource(R.string.screen_off_kernel_wake_detail, (k.ms / 1000).toInt(), wakeups))
+                    }
                 }
                 if (snap.topApps.isNotEmpty()) {
-                    Text("Apps holding wakelocks while off (${snap.appChecks} checks)", style = MaterialTheme.typography.labelMedium)
-                    snap.topApps.forEach { a -> WakeLine(a.name, "held in ${a.count}") }
+                    val checks = pluralStringResource(R.plurals.plural_checks, snap.appChecks, snap.appChecks)
+                    Text(stringResource(R.string.screen_off_app_wakes, checks), style = MaterialTheme.typography.labelMedium)
+                    snap.topApps.forEach { a ->
+                        WakeLine(a.name, stringResource(R.string.screen_off_app_wake_held, a.count))
+                    }
                 } else if (snap.appChecks > 0) {
-                    Text("No app wakelocks seen while the screen was off.", style = MaterialTheme.typography.labelSmall, color = sub)
+                    Text(stringResource(R.string.screen_off_no_app_wakes), style = MaterialTheme.typography.labelSmall, color = sub)
                 }
-                Text("Recent screen-off periods", style = MaterialTheme.typography.labelMedium)
-                snap.recent.forEach { p -> Text(periodLine(p, fmt), style = MaterialTheme.typography.labelSmall, color = sub) }
-                OutlinedButton(onClick = { confirm = true }) { Text("Reset data") }
+                Text(stringResource(R.string.screen_off_recent_periods), style = MaterialTheme.typography.labelMedium)
+                snap.recent.forEach { p ->
+                    val line = periodLine(p, fmt, stringResource(R.string.screen_off_sleep_pct, p.deepSleepPct))
+                    Text(line, style = MaterialTheme.typography.labelSmall, color = sub)
+                }
+                OutlinedButton(onClick = { confirm = true }) { Text(stringResource(R.string.screen_off_reset_data)) }
             }
         }
     }

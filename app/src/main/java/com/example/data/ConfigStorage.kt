@@ -422,14 +422,31 @@ class ConfigStorage(private val context: Context) {
                     powerThrottle = base.powerThrottle.copy(limitWatts = 7.0f, sustainMs = 2500L, stepPct = 2.5f)
                 )
             )
-        )
+        ) + deviceBuiltInPresets(hw, base)
     }
+
+    /**
+     * Device-specific built-ins, listed only on matching hardware. Their [PresetItem.config] is not used
+     * for loading: the engine applies them as a patch on the current config (see GovernorEngine.loadPreset).
+     */
+    private fun deviceBuiltInPresets(hw: HardwareSpec, base: GovernorConfig): List<PresetItem> =
+        if (com.example.governor.D8300UserPreset.matches(hw)) {
+            listOf(
+                PresetItem(
+                    id = com.example.governor.D8300UserPreset.ID,
+                    name = com.example.governor.D8300UserPreset.NAME,
+                    builtIn = true,
+                    config = base
+                )
+            )
+        } else emptyList()
 
     private fun configToJson(c: GovernorConfig): JSONObject {
         return JSONObject().apply {
             put("pollIntervalMs", c.pollIntervalMs)
             put("adaptivePollingEnabled", c.adaptivePollingEnabled)
             put("startOnBoot", c.startOnBoot)
+            put("protectFromKillEnabled", c.protectFromKillEnabled)
             put("cpuLoadUsesBusiestCore", c.cpuLoadUsesBusiestCore)
             put("screenOffSavingEnabled", c.screenOffSavingEnabled)
             put("screenOffDelaySec", c.screenOffDelaySec)
@@ -515,6 +532,7 @@ class ConfigStorage(private val context: Context) {
                 put("batteryConditionEnabled", c.afterburn.batteryConditionEnabled)
                 put("batteryThresholdPct", c.afterburn.batteryThresholdPct)
                 put("voltageSagEnabled", c.afterburn.voltageSagEnabled)
+                put("toast", c.afterburn.toastEnabled)
             })
             val boostArr = JSONArray()
             c.boostPackages.sorted().forEach { boostArr.put(it) }
@@ -575,6 +593,7 @@ class ConfigStorage(private val context: Context) {
             pollIntervalMs = obj.optLong("pollIntervalMs", default.pollIntervalMs).coerceIn(50L, 1000L),
             adaptivePollingEnabled = obj.optBoolean("adaptivePollingEnabled", default.adaptivePollingEnabled),
             startOnBoot = obj.optBoolean("startOnBoot", default.startOnBoot),
+            protectFromKillEnabled = obj.optBoolean("protectFromKillEnabled", default.protectFromKillEnabled),
             cpuLoadUsesBusiestCore = obj.optBoolean("cpuLoadUsesBusiestCore", default.cpuLoadUsesBusiestCore),
             screenOffSavingEnabled = obj.optBoolean("screenOffSavingEnabled", default.screenOffSavingEnabled),
             screenOffDelaySec = obj.optInt("screenOffDelaySec", default.screenOffDelaySec).coerceIn(0, 60),
@@ -661,7 +680,8 @@ class ConfigStorage(private val context: Context) {
                 thermalMarginC = ibObj.optDouble("thermalMarginC", 5.0).toFloat().coerceIn(3f, 8f),
                 batteryConditionEnabled = ibObj.optBoolean("batteryConditionEnabled", true),
                 batteryThresholdPct = ibObj.optInt("batteryThresholdPct", 40).coerceIn(10, 90),
-                voltageSagEnabled = ibObj.optBoolean("voltageSagEnabled", true)
+                voltageSagEnabled = ibObj.optBoolean("voltageSagEnabled", true),
+                toastEnabled = ibObj.optBoolean("toast", true)
             ) else default.afterburn,
             boostPackages = boostPkgs
         )

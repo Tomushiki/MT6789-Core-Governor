@@ -22,6 +22,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -70,6 +71,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
@@ -81,6 +83,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
@@ -89,6 +92,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.governor.SensorPinner
 import com.example.model.FreqRange
 import com.example.model.GovernorConfig
@@ -119,16 +123,16 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-private enum class TuningCategory(val label: String) {
-    ALL("All"),
-    RANGES("Ranges"),
-    CONTROL("Control"),
-    SCREEN_OFF("Screen-off"),
-    OVERLAY("Overlay"),
-    NIFTY("Nifty"),
-    THERMAL("Thermal"),
-    POWER("Power"),
-    PRESETS("Presets & HW")
+private enum class TuningCategory(@StringRes val labelRes: Int) {
+    ALL(R.string.tuning_cat_all),
+    RANGES(R.string.tuning_cat_ranges),
+    CONTROL(R.string.tuning_cat_control),
+    SCREEN_OFF(R.string.tuning_cat_screen_off),
+    OVERLAY(R.string.tuning_cat_overlay),
+    NIFTY(R.string.tuning_cat_nifty),
+    THERMAL(R.string.tuning_cat_thermal),
+    POWER(R.string.tuning_cat_power),
+    PRESETS(R.string.tuning_cat_presets)
 }
 
 /** Slow-changing telemetry facts the Tuning screen needs (a change here is rare, unlike a live tick). */
@@ -213,7 +217,8 @@ fun TuningScreen(
         thermalMarginC: Float?,
         batteryConditionEnabled: Boolean?,
         batteryThresholdPct: Int?,
-        voltageSagEnabled: Boolean?
+        voltageSagEnabled: Boolean?,
+        toastEnabled: Boolean?
     ) -> Unit,
     onSavePreset: (String) -> Unit,
     onLoadPreset: (PresetItem) -> Unit,
@@ -228,6 +233,9 @@ fun TuningScreen(
         toggleType: Int?,
         pauseWhenScreenOff: Boolean?
     ) -> Unit,
+    protectionStatus: com.example.governor.ProtectionStatus = com.example.governor.ProtectionStatus(),
+    onSetProtectFromKill: (Boolean) -> Unit = {},
+    onReverifyProtection: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -253,10 +261,15 @@ fun TuningScreen(
             )
         }
     )
-    var selectedCategory by remember { mutableStateOf(TuningCategory.ALL) }
-    var editingMode by remember { mutableStateOf(GovernorMode.NORMAL) }
+    var selectedCategory by rememberSaveable { mutableStateOf(TuningCategory.ALL) }
+    var editingMode by rememberSaveable { mutableStateOf(GovernorMode.NORMAL) }
     var presetNameInput by remember { mutableStateOf("") }
-    var fineOverlayControl by remember { mutableStateOf(false) }
+    var fineOverlayControl by rememberSaveable { mutableStateOf(false) }
+
+    val editingModeLabel = stringResource(
+        if (editingMode == GovernorMode.NORMAL) R.string.mode_normal else R.string.mode_game
+    )
+    val editingModeLower = editingModeLabel.lowercase(Locale.getDefault())
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -265,7 +278,9 @@ fun TuningScreen(
             val ok = onExportJson(uri)
             Toast.makeText(
                 context,
-                if (ok) "Exported presets & config JSON" else "Export failed",
+                context.getString(
+                    if (ok) R.string.tuning_toast_exported else R.string.tuning_toast_export_failed
+                ),
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -278,7 +293,9 @@ fun TuningScreen(
             val ok = onImportJson(uri)
             Toast.makeText(
                 context,
-                if (ok) "Imported JSON configuration" else "Invalid JSON file",
+                context.getString(
+                    if (ok) R.string.tuning_toast_imported else R.string.tuning_toast_import_failed
+                ),
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -297,7 +314,7 @@ fun TuningScreen(
                 FilterChip(
                     selected = selectedCategory == cat,
                     onClick = { selectedCategory = cat },
-                    label = { Text(cat.label) },
+                    label = { Text(stringResource(cat.labelRes)) },
                     modifier = Modifier.testTag("tuning_cat_${cat.name.lowercase()}")
                 )
             }
@@ -314,7 +331,7 @@ fun TuningScreen(
                     val activeProfile = if (editingMode == GovernorMode.NORMAL) config.normalMode else config.gameMode
                     EcuCard {
                         Text(
-                            text = "FREQUENCY RANGES BY MODE",
+                            text = stringResource(R.string.tuning_ranges_header),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -328,7 +345,12 @@ fun TuningScreen(
                                     selected = editingMode == mode,
                                     onClick = { editingMode = mode },
                                     label = {
-                                        Text(if (mode == GovernorMode.NORMAL) "Normal Apps" else "Games Mode")
+                                        Text(
+                                            stringResource(
+                                                if (mode == GovernorMode.NORMAL) R.string.tuning_mode_normal_apps
+                                                else R.string.tuning_mode_games
+                                            )
+                                        )
                                     },
                                     modifier = Modifier
                                         .weight(1f)
@@ -337,11 +359,10 @@ fun TuningScreen(
                             }
                         }
                         Text(
-                            text = if (editingMode == GovernorMode.NORMAL) {
-                                "Normal mode uses moderate max clocks for cool daily usage."
-                            } else {
-                                "Game mode keeps clocks pinned closer to your chosen ceiling until throttling starts."
-                            },
+                            text = stringResource(
+                                if (editingMode == GovernorMode.NORMAL) R.string.tuning_ranges_normal_desc
+                                else R.string.tuning_ranges_game_desc
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -349,7 +370,7 @@ fun TuningScreen(
                         if (hardwareSpec.cpuPolicies.isEmpty()) {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Grant root access and tap Discover Hardware to configure per-cluster frequencies.",
+                                text = stringResource(R.string.tuning_ranges_no_policies),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error
                             )
@@ -361,32 +382,32 @@ fun TuningScreen(
                                         ?: FreqRange(freqs.first(), freqs.last())
                                     Spacer(modifier = Modifier.height(14.dp))
                                     Text(
-                                        text = "Policy ${policy.policyId} • ${policy.name}",
+                                        text = stringResource(R.string.monitor_policy_header, policy.policyId, policy.name),
                                         style = MaterialTheme.typography.titleSmall,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     DiscreteFreqSlider(
-                                        title = "Minimum Frequency",
+                                        title = stringResource(R.string.tuning_min_freq),
                                         freqsKhz = freqs,
                                         selectedKhz = range.minKhz,
                                         onSelectKhz = { newMin ->
                                             val clampedMax = range.maxKhz.coerceAtLeast(newMin)
                                             onUpdateClusterRange(editingMode, policy.policyId, FreqRange(newMin, clampedMax))
                                         },
-                                        explanation = "Lowest clock this cluster is allowed to drop to in ${editingMode.name.lowercase()} mode.",
+                                        explanation = stringResource(R.string.tuning_min_freq_desc, editingModeLower),
                                         testTag = "p${policy.policyId}_min_slider"
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     DiscreteFreqSlider(
-                                        title = "Maximum Frequency",
+                                        title = stringResource(R.string.tuning_max_freq),
                                         freqsKhz = freqs,
                                         selectedKhz = range.maxKhz,
                                         onSelectKhz = { newMax ->
                                             val clampedMin = range.minKhz.coerceAtMost(newMax)
                                             onUpdateClusterRange(editingMode, policy.policyId, FreqRange(clampedMin, newMax))
                                         },
-                                        explanation = "Highest clock allowed before thermal/power caps in ${editingMode.name.lowercase()} mode.",
+                                        explanation = stringResource(R.string.tuning_max_freq_desc, editingModeLower),
                                         testTag = "p${policy.policyId}_max_slider"
                                     )
                                 }
@@ -398,30 +419,30 @@ fun TuningScreen(
                             val gpuRange = activeProfile.gpuRangeKhz ?: FreqRange(gpuFreqs.first(), gpuFreqs.last())
                             Spacer(modifier = Modifier.height(14.dp))
                             Text(
-                                text = "Mali GPU Range (${gpuFreqs.size} OPPs)",
+                                text = stringResource(R.string.tuning_gpu_range_title, gpuFreqs.size),
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.secondary
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             DiscreteFreqSlider(
-                                title = "GPU Minimum Frequency",
+                                title = stringResource(R.string.tuning_gpu_min_freq),
                                 freqsKhz = gpuFreqs,
                                 selectedKhz = gpuRange.minKhz,
                                 onSelectKhz = { newMin ->
                                     onUpdateGpuRange(editingMode, FreqRange(newMin, gpuRange.maxKhz.coerceAtLeast(newMin)))
                                 },
-                                explanation = "Lowest GPU OPP position allowed in ${editingMode.name.lowercase()} mode.",
+                                explanation = stringResource(R.string.tuning_gpu_min_desc, editingModeLower),
                                 testTag = "gpu_min_slider"
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             DiscreteFreqSlider(
-                                title = "GPU Maximum Frequency",
+                                title = stringResource(R.string.tuning_gpu_max_freq),
                                 freqsKhz = gpuFreqs,
                                 selectedKhz = gpuRange.maxKhz,
                                 onSelectKhz = { newMax ->
                                     onUpdateGpuRange(editingMode, FreqRange(gpuRange.minKhz.coerceAtMost(newMax), newMax))
                                 },
-                                explanation = "Highest GPU OPP position pinned via /proc/gpufreqv2/fix_target_opp_index.",
+                                explanation = stringResource(R.string.tuning_gpu_max_desc),
                                 testTag = "gpu_max_slider"
                             )
                         }
@@ -433,18 +454,19 @@ fun TuningScreen(
             if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.CONTROL) {
                 item {
                     val activeProfile = if (editingMode == GovernorMode.NORMAL) config.normalMode else config.gameMode
+                    val modeCaps = editingModeLabel.uppercase(Locale.getDefault())
                     EcuCard {
                         Text(
-                            text = "CONTROL LOOP & RESPONSE (${editingMode.name})",
+                            text = stringResource(R.string.tuning_control_header, modeCaps),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingSliderRow(
-                            title = "Poll Interval",
-                            valueText = "${config.pollIntervalMs} ms",
-                            explanation = "How often the loop reads /proc/stat, GPU load, thermals, and updates clocks (100–250 ms recommended).",
+                            title = stringResource(R.string.tuning_poll_interval),
+                            valueText = stringResource(R.string.tuning_poll_interval_val, config.pollIntervalMs.toInt()),
+                            explanation = stringResource(R.string.tuning_poll_interval_desc),
                             value = config.pollIntervalMs.toFloat(),
                             valueRange = 80f..350f,
                             onValueChange = { onUpdatePollInterval(it.roundToInt().toLong()) },
@@ -454,8 +476,8 @@ fun TuningScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingSwitchRow(
-                            title = "Adaptive polling",
-                            explanation = "When the phone is idle and calm for a couple of seconds, the loop checks a little less often (up to about 350 ms) to save battery and CPU. It goes back to your Poll Interval the instant you touch the screen, open a game or app, load rises, or throttling starts. Turn off to always poll at the Poll Interval.",
+                            title = stringResource(R.string.tuning_adaptive_poll),
+                            explanation = stringResource(R.string.tuning_adaptive_poll_desc),
                             checked = config.adaptivePollingEnabled,
                             onCheckedChange = onUpdateAdaptivePolling,
                             testTag = "adaptive_polling_switch"
@@ -464,9 +486,9 @@ fun TuningScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingSliderRow(
-                            title = "Safety Floor Cap",
+                            title = stringResource(R.string.tuning_safety_floor),
                             valueText = "${config.safetyFloorPct.roundToInt()}%",
-                            explanation = "Hard minimum ceiling percentage so thermal or power throttling can never stall the phone.",
+                            explanation = stringResource(R.string.tuning_safety_floor_desc),
                             value = config.safetyFloorPct,
                             valueRange = 10f..70f,
                             onValueChange = { onUpdateSafetyFloor(it.roundToInt().toFloat()) },
@@ -476,9 +498,9 @@ fun TuningScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingSliderRow(
-                            title = "CPU Load Headroom (${editingMode.name})",
+                            title = stringResource(R.string.tuning_cpu_headroom, editingModeLabel),
                             valueText = "+${activeProfile.headroomPct.roundToInt()}%",
-                            explanation = "Adds extra load margin before grading CPU frequencies to avoid sluggishness on sudden demand.",
+                            explanation = stringResource(R.string.tuning_cpu_headroom_desc),
                             value = activeProfile.headroomPct,
                             valueRange = 0f..40f,
                             onValueChange = {
@@ -490,9 +512,9 @@ fun TuningScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingSliderRow(
-                            title = "CPU Ramp-Up Speed (${editingMode.name})",
+                            title = stringResource(R.string.tuning_cpu_ramp_up, editingModeLabel),
                             valueText = "${(activeProfile.rampUpSpeed * 100).roundToInt()}%",
-                            explanation = "Higher values jump CPU clocks upward fast when load spikes so frames never stutter.",
+                            explanation = stringResource(R.string.tuning_cpu_ramp_up_desc),
                             value = activeProfile.rampUpSpeed,
                             valueRange = 0.2f..1.0f,
                             onValueChange = {
@@ -504,9 +526,9 @@ fun TuningScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingSliderRow(
-                            title = "CPU Ramp-Down Speed (${editingMode.name})",
+                            title = stringResource(R.string.tuning_cpu_ramp_down, editingModeLabel),
                             valueText = "${(activeProfile.rampDownSpeed * 100).roundToInt()}%",
-                            explanation = "Lower values hold higher CPU clocks briefly after load drops; keep very low in Games mode.",
+                            explanation = stringResource(R.string.tuning_cpu_ramp_down_desc),
                             value = activeProfile.rampDownSpeed,
                             valueRange = 0.02f..0.60f,
                             onValueChange = {
@@ -518,9 +540,9 @@ fun TuningScreen(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         SettingSliderRow(
-                            title = "GPU Load Headroom (${editingMode.name})",
+                            title = stringResource(R.string.tuning_gpu_headroom, editingModeLabel),
                             valueText = "+${activeProfile.gpuHeadroomPct.roundToInt()}%",
-                            explanation = "Raises effective GED GPU utilization before picking a position in the sorted OPP table.",
+                            explanation = stringResource(R.string.tuning_gpu_headroom_desc),
                             value = activeProfile.gpuHeadroomPct,
                             valueRange = 0f..40f,
                             onValueChange = {
@@ -532,9 +554,9 @@ fun TuningScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingSliderRow(
-                            title = "GPU Ramp-Up Speed (${editingMode.name})",
+                            title = stringResource(R.string.tuning_gpu_ramp_up, editingModeLabel),
                             valueText = "${(activeProfile.gpuRampUpSpeed * 100).roundToInt()}%",
-                            explanation = "Controls how aggressively GPU OPP index climbs on shader/render load spikes.",
+                            explanation = stringResource(R.string.tuning_gpu_ramp_up_desc),
                             value = activeProfile.gpuRampUpSpeed,
                             valueRange = 0.2f..1.0f,
                             onValueChange = {
@@ -546,9 +568,9 @@ fun TuningScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingSliderRow(
-                            title = "GPU Ramp-Down Speed (${editingMode.name})",
+                            title = stringResource(R.string.tuning_gpu_ramp_down, editingModeLabel),
                             valueText = "${(activeProfile.gpuRampDownSpeed * 100).roundToInt()}%",
-                            explanation = "Controls how slowly GPU OPP index steps down after GPU load drops.",
+                            explanation = stringResource(R.string.tuning_gpu_ramp_down_desc),
                             value = activeProfile.gpuRampDownSpeed,
                             valueRange = 0.02f..0.60f,
                             onValueChange = {
@@ -560,8 +582,8 @@ fun TuningScreen(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         SettingSwitchRow(
-                            title = "Normal Mode Launch Burst",
-                            explanation = "Briefly boosts to top allowed clock on app switch or sudden load spike, then settles back.",
+                            title = stringResource(R.string.tuning_launch_burst),
+                            explanation = stringResource(R.string.tuning_launch_burst_desc),
                             checked = config.normalMode.launchBurstEnabled,
                             onCheckedChange = {
                                 onUpdateModeScalingParams(GovernorMode.NORMAL, null, null, null, null, null, null, it, null, null)
@@ -572,9 +594,9 @@ fun TuningScreen(
                         if (config.normalMode.launchBurstEnabled) {
                             Spacer(modifier = Modifier.height(10.dp))
                             SettingSliderRow(
-                                title = "Launch Burst Duration",
-                                valueText = "${config.normalMode.launchBurstDurationMs} ms",
-                                explanation = "Length of the launch burst window (up to 2000 ms) before settling to normal scaling.",
+                                title = stringResource(R.string.tuning_launch_burst_dur),
+                                valueText = stringResource(R.string.tuning_poll_interval_val, config.normalMode.launchBurstDurationMs.toInt()),
+                                explanation = stringResource(R.string.tuning_launch_burst_dur_desc),
                                 value = config.normalMode.launchBurstDurationMs.toFloat(),
                                 valueRange = 200f..2500f,
                                 onValueChange = {
@@ -584,9 +606,9 @@ fun TuningScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             SettingSliderRow(
-                                title = "Load Spike Burst Trigger",
+                                title = stringResource(R.string.tuning_launch_spike),
                                 valueText = "+${config.normalMode.launchSpikeThresholdPct.roundToInt()}%",
-                                explanation = "Single-poll CPU load jump that triggers a burst even within the same app.",
+                                explanation = stringResource(R.string.tuning_launch_spike_desc),
                                 value = config.normalMode.launchSpikeThresholdPct,
                                 valueRange = 15f..75f,
                                 onValueChange = {
@@ -598,8 +620,8 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
                         SettingSwitchRow(
-                            title = "CPU Load = Busiest Core",
-                            explanation = "Grades each cluster by its busiest core instead of the cluster average, so one pegged core can reach the top clock. Turn off for the old averaged behavior.",
+                            title = stringResource(R.string.tuning_busiest_core),
+                            explanation = stringResource(R.string.tuning_busiest_core_desc),
                             checked = config.cpuLoadUsesBusiestCore,
                             onCheckedChange = onUpdateCpuLoadUsesBusiestCore,
                             testTag = "cpu_load_busiest_switch"
@@ -607,19 +629,19 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
                         SettingSwitchRow(
-                            title = "Start Automatically on Boot",
-                            explanation = "Launches CoreGovernor foreground service automatically after Android finishes booting.",
+                            title = stringResource(R.string.tuning_start_on_boot),
+                            explanation = stringResource(R.string.tuning_start_on_boot_desc),
                             checked = config.startOnBoot,
                             onCheckedChange = onUpdateStartOnBoot,
                             testTag = "boot_start_switch"
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
-                        val bootContext = androidx.compose.ui.platform.LocalContext.current
+                        val bootContext = LocalContext.current
                         var restoreLastState by remember { mutableStateOf(BootState.restoreEnabled(bootContext)) }
                         SettingSwitchRow(
-                            title = "Restore last state after reboot",
-                            explanation = "If the governor was running when the phone restarted, it starts again by itself as soon as Android finishes booting, even with Start Automatically off. Pressing Stop turns this off until you start it again.",
+                            title = stringResource(R.string.tuning_restore_last_state),
+                            explanation = stringResource(R.string.tuning_restore_last_state_desc),
                             checked = restoreLastState,
                             onCheckedChange = {
                                 restoreLastState = it
@@ -630,7 +652,7 @@ fun TuningScreen(
                         val guardAt = remember { BootState.guardTrippedAt(bootContext) }
                         if (guardAt > 0L) {
                             Text(
-                                text = "Boot guard skipped the last automatic start because the governor kept stopping right after boot. Start it by hand; this note clears after a stable run.",
+                                text = stringResource(R.string.tuning_boot_guard_note),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -639,8 +661,16 @@ fun TuningScreen(
                 }
             }
 
-            // 2a-ter. Background keep-alive (battery optimization)
+            // 2a-ter. Background keep-alive (battery optimization + root protection)
             if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.CONTROL) {
+                item {
+                    ProtectionCard(
+                        enabled = config.protectFromKillEnabled,
+                        status = protectionStatus,
+                        onToggle = onSetProtectFromKill,
+                        onReverify = onReverifyProtection
+                    )
+                }
                 item { BatteryOptimizationCard() }
             }
 
@@ -649,7 +679,7 @@ fun TuningScreen(
                 item {
                     EcuCard {
                         Text(
-                            text = "Memory (RAM)",
+                            text = stringResource(R.string.tuning_ram_header),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -657,14 +687,14 @@ fun TuningScreen(
 
                         if (!tuningInfo.ddrSupported) {
                             Text(
-                                text = "Not supported on this device.",
+                                text = stringResource(R.string.tuning_ram_unsupported),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         } else {
                             SettingSwitchRow(
-                                title = "Keep RAM at max frequency",
-                                explanation = "Pins the memory clock to its highest step. Can reduce stutter, but uses more battery and runs warmer. Released when the screen is off.",
+                                title = stringResource(R.string.tuning_ram_pin_max),
+                                explanation = stringResource(R.string.tuning_ram_pin_max_desc),
                                 checked = config.ramPinMax,
                                 onCheckedChange = { onUpdateRamPin(it, null) },
                                 testTag = "ram_pin_max_switch"
@@ -672,8 +702,8 @@ fun TuningScreen(
 
                             Spacer(modifier = Modifier.height(10.dp))
                             SettingSwitchRow(
-                                title = "Only in Game mode",
-                                explanation = "Pin only while a game is in the foreground.",
+                                title = stringResource(R.string.tuning_ram_game_only),
+                                explanation = stringResource(R.string.tuning_ram_game_only_desc),
                                 checked = config.ramPinGameOnly,
                                 onCheckedChange = { onUpdateRamPin(null, it) },
                                 enabled = config.ramPinMax,
@@ -689,15 +719,15 @@ fun TuningScreen(
                 item {
                     EcuCard {
                         Text(
-                            text = "SCREEN-OFF POWER SAVING",
+                            text = stringResource(R.string.tuning_screen_off_header),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingSwitchRow(
-                            title = "Screen-off power saving",
-                            explanation = "Pins all CPU and GPU clocks to minimum while the screen is off. Stops all frequency changes during sleep.",
+                            title = stringResource(R.string.tuning_screen_off_enable),
+                            explanation = stringResource(R.string.tuning_screen_off_enable_desc),
                             checked = config.screenOffSavingEnabled,
                             onCheckedChange = { onUpdateScreenOffSaving(it, null, null, null) },
                             testTag = "screen_off_saving_switch"
@@ -705,9 +735,9 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingSliderRow(
-                            title = "Delay before activating",
-                            valueText = "${config.screenOffDelaySec} s",
-                            explanation = "Wait time after the screen turns off before pinning clocks to minimum.",
+                            title = stringResource(R.string.tuning_screen_off_delay),
+                            valueText = stringResource(R.string.tuning_screen_off_delay_val, config.screenOffDelaySec),
+                            explanation = stringResource(R.string.tuning_screen_off_delay_desc),
                             value = config.screenOffDelaySec.toFloat(),
                             valueRange = 0f..60f,
                             steps = 59,
@@ -720,8 +750,8 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingSwitchRow(
-                            title = "Keep normal while music is playing",
-                            explanation = "Skips sleep saving while active audio playback is detected.",
+                            title = stringResource(R.string.tuning_screen_off_music),
+                            explanation = stringResource(R.string.tuning_screen_off_music_desc),
                             checked = config.screenOffExemptMusic,
                             onCheckedChange = { onUpdateScreenOffSaving(null, null, it, null) },
                             enabled = config.screenOffSavingEnabled,
@@ -730,8 +760,8 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingSwitchRow(
-                            title = "Keep normal while charging",
-                            explanation = "Skips sleep saving while the device is plugged into a charger.",
+                            title = stringResource(R.string.tuning_screen_off_charging),
+                            explanation = stringResource(R.string.tuning_screen_off_charging_desc),
                             checked = config.screenOffExemptCharging,
                             onCheckedChange = { onUpdateScreenOffSaving(null, null, null, it) },
                             enabled = config.screenOffSavingEnabled,
@@ -746,15 +776,15 @@ fun TuningScreen(
                 item {
                     EcuCard {
                         Text(
-                            text = "OVERLAY",
+                            text = stringResource(R.string.tuning_overlay_header),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingSwitchRow(
-                            title = "Enable overlay",
-                            explanation = "Displays a floating CPU, GPU, thermal, and power monitor over other apps.",
+                            title = stringResource(R.string.tuning_overlay_enable),
+                            explanation = stringResource(R.string.tuning_overlay_enable_desc),
                             checked = config.overlayEnabled,
                             onCheckedChange = { onUpdateOverlay(it, null, null, null, null, null, null, false) },
                             testTag = "overlay_enabled_switch"
@@ -762,8 +792,8 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingSwitchRow(
-                            title = "Click-through",
-                            explanation = "Lets touches pass through the overlay. Use the notification action to unlock.",
+                            title = stringResource(R.string.tuning_overlay_click_through),
+                            explanation = stringResource(R.string.tuning_overlay_click_through_desc),
                             checked = config.overlayClickThrough,
                             onCheckedChange = { onUpdateOverlay(null, it, null, null, null, null, null, false) },
                             enabled = config.overlayEnabled,
@@ -772,8 +802,8 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingSwitchRow(
-                            title = "Show only in Game mode",
-                            explanation = "Shows the overlay only when Game mode is active.",
+                            title = stringResource(R.string.tuning_overlay_game_only),
+                            explanation = stringResource(R.string.tuning_overlay_game_only_desc),
                             checked = config.overlayGameOnly,
                             onCheckedChange = { onUpdateOverlay(null, null, it, null, null, null, null, false) },
                             enabled = config.overlayEnabled,
@@ -782,9 +812,9 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingSliderRow(
-                            title = "Overall opacity",
+                            title = stringResource(R.string.tuning_overlay_opacity),
                             valueText = "${config.overlayOpacityPct}%",
-                            explanation = "Fades the whole overlay, text included, from 30% to 100%.",
+                            explanation = stringResource(R.string.tuning_overlay_opacity_desc),
                             value = config.overlayOpacityPct.toFloat(),
                             valueRange = 30f..100f,
                             steps = 69,
@@ -797,9 +827,9 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         SettingSliderRow(
-                            title = "Background opacity",
+                            title = stringResource(R.string.tuning_overlay_bg_opacity),
                             valueText = "${config.overlayBgOpacityPct}%",
-                            explanation = "Fades only the dark background behind the numbers, from 0% (fully see-through) to 100%. The text stays fully readable.",
+                            explanation = stringResource(R.string.tuning_overlay_bg_opacity_desc),
                             value = config.overlayBgOpacityPct.toFloat(),
                             valueRange = 0f..100f,
                             steps = 99,
@@ -814,6 +844,9 @@ fun TuningScreen(
                         val density = LocalDensity.current.density
                         val windowManager = remember(context) {
                             context.applicationContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                        }
+                        val overlayStrings = remember(configuration, context) {
+                            OverlaySizing.OverlayStrings.fromContext(context)
                         }
                         val (screenW, screenH) = remember(
                             configuration.orientation,
@@ -834,21 +867,29 @@ fun TuningScreen(
                                 else -> OverlaySizing.DEFAULT_DETAILED_ROW_COUNT
                             }
                         }
-                        val compactMaxScalePct = remember(screenW, screenH, density) {
-                            val (natW, natH) = OverlaySizing.measureNaturalSizeAtScaleOne(density, OverlayStyle.COMPACT)
+                        val compactMaxScalePct = remember(screenW, screenH, density, overlayStrings) {
+                            val (natW, natH) = OverlaySizing.measureNaturalSizeAtScaleOne(
+                                density,
+                                OverlayStyle.COMPACT,
+                                strings = overlayStrings
+                            )
                             OverlaySizing.maxScalePct(screenW, screenH, OverlayStyle.COMPACT, natW, natH)
                         }
                         val expandedStyle = if (config.overlayDetailed) OverlayStyle.DETAILED else OverlayStyle.EXPANDED
-                        val expandedMaxScalePct = remember(screenW, screenH, density, expandedStyle, detailedRowCount) {
+                        val expandedMaxScalePct = remember(screenW, screenH, density, expandedStyle, detailedRowCount, overlayStrings) {
                             val (natW, natH) = OverlaySizing.measureNaturalSizeAtScaleOne(
                                 density,
                                 expandedStyle,
-                                detailedRowCount
+                                detailedRowCount,
+                                strings = overlayStrings
                             )
                             OverlaySizing.maxScalePct(screenW, screenH, expandedStyle, natW, natH)
                         }
                         val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-                        val scaleOrientLabel = if (isLandscape) "landscape" else "portrait"
+                        val scaleOrientLabel = stringResource(
+                            if (isLandscape) R.string.tuning_overlay_orient_landscape
+                            else R.string.tuning_overlay_orient_portrait
+                        )
                         val compactDisplayPct = config.overlayCompactScaleFor(isLandscape).coerceIn(
                             OverlaySizing.MIN_SCALE_PCT,
                             compactMaxScalePct
@@ -867,16 +908,15 @@ fun TuningScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Size & position",
+                                    text = stringResource(R.string.tuning_overlay_size_pos),
                                     style = MaterialTheme.typography.titleSmall,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = headerAlpha)
                                 )
                                 Text(
-                                    text = if (fineOverlayControl) {
-                                        "Fine: sliders zoomed to \u00b110 pts around current value."
-                                    } else {
-                                        "Enable Fine to zoom sliders, or use \u2212 / + to step."
-                                    },
+                                    text = stringResource(
+                                        if (fineOverlayControl) R.string.tuning_overlay_fine_on
+                                        else R.string.tuning_overlay_fine_off
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = headerAlpha)
                                 )
@@ -886,16 +926,20 @@ fun TuningScreen(
                                 selected = fineOverlayControl,
                                 onClick = { fineOverlayControl = !fineOverlayControl },
                                 enabled = config.overlayEnabled,
-                                label = { Text("Fine") },
+                                label = { Text(stringResource(R.string.tuning_overlay_fine_chip)) },
                                 modifier = Modifier.testTag("overlay_fine_chip")
                             )
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
                         OverlayFineSliderRow(
-                            title = "Compact size ($scaleOrientLabel)",
+                            title = stringResource(R.string.tuning_overlay_compact_size, scaleOrientLabel),
                             valueText = "${compactDisplayPct}%",
-                            explanation = "Scales the compact overlay pill (${OverlaySizing.MIN_SCALE_PCT}%–${compactMaxScalePct}% on this screen).",
+                            explanation = stringResource(
+                                R.string.tuning_overlay_compact_size_desc,
+                                OverlaySizing.MIN_SCALE_PCT,
+                                compactMaxScalePct
+                            ),
                             value = compactDisplayPct,
                             fullMin = OverlaySizing.MIN_SCALE_PCT,
                             fullMax = compactMaxScalePct,
@@ -911,9 +955,13 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         OverlayFineSliderRow(
-                            title = "Expanded size ($scaleOrientLabel)",
+                            title = stringResource(R.string.tuning_overlay_expanded_size, scaleOrientLabel),
                             valueText = "${expandedDisplayPct}%",
-                            explanation = "Scales the expanded overlay card (${OverlaySizing.MIN_SCALE_PCT}%–${expandedMaxScalePct}% on this screen).",
+                            explanation = stringResource(
+                                R.string.tuning_overlay_expanded_size_desc,
+                                OverlaySizing.MIN_SCALE_PCT,
+                                expandedMaxScalePct
+                            ),
                             value = expandedDisplayPct,
                             fullMin = OverlaySizing.MIN_SCALE_PCT,
                             fullMax = expandedMaxScalePct,
@@ -927,20 +975,22 @@ fun TuningScreen(
                             testTag = "overlay_expanded_scale_slider"
                         )
 
-                        val posStyle = (when {
-                            config.overlayDetailed -> "detailed"
-                            config.overlayExpanded -> "expanded"
-                            else -> "compact"
-                        }) + if (isLandscape) ", landscape" else ", portrait"
+                        val posStyleName = stringResource(
+                            when {
+                                config.overlayDetailed -> R.string.tuning_overlay_style_detailed
+                                config.overlayExpanded -> R.string.tuning_overlay_style_expanded
+                                else -> R.string.tuning_overlay_style_compact
+                            }
+                        )
                         val (posXPm, posYPm) = config.overlayPosPm(isLandscape)
                         val clampedXPm = posXPm.coerceIn(0, 1000)
                         val clampedYPm = posYPm.coerceIn(0, 1000)
 
                         Spacer(modifier = Modifier.height(10.dp))
                         OverlayFineSliderRow(
-                            title = "Horizontal position ($posStyle)",
+                            title = stringResource(R.string.tuning_overlay_pos_x, posStyleName, scaleOrientLabel),
                             valueText = "${String.format(Locale.US, "%.1f", clampedXPm / 10f)}%",
-                            explanation = "Positions the overlay horizontally along available screen width.",
+                            explanation = stringResource(R.string.tuning_overlay_pos_x_desc),
                             value = clampedXPm,
                             fullMin = 0,
                             fullMax = 1000,
@@ -956,9 +1006,9 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         OverlayFineSliderRow(
-                            title = "Vertical position ($posStyle)",
+                            title = stringResource(R.string.tuning_overlay_pos_y, posStyleName, scaleOrientLabel),
                             valueText = "${String.format(Locale.US, "%.1f", clampedYPm / 10f)}%",
-                            explanation = "Positions the overlay vertically along available screen height.",
+                            explanation = stringResource(R.string.tuning_overlay_pos_y_desc),
                             value = clampedYPm,
                             fullMin = 0,
                             fullMax = 1000,
@@ -980,7 +1030,7 @@ fun TuningScreen(
                                 .fillMaxWidth()
                                 .testTag("overlay_reset_position_button")
                         ) {
-                            Text("Reset position")
+                            Text(stringResource(R.string.tuning_overlay_reset_pos))
                         }
                     }
                 }
@@ -1033,7 +1083,7 @@ fun TuningScreen(
                 item {
                     EcuCard {
                         Text(
-                            text = "PRESETS & JSON BACKUP",
+                            text = stringResource(R.string.tuning_presets_header),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -1048,7 +1098,7 @@ fun TuningScreen(
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("preset_name_input"),
-                                placeholder = { Text("New preset name...") },
+                                placeholder = { Text(stringResource(R.string.tuning_preset_hint)) },
                                 singleLine = true
                             )
                             Spacer(modifier = Modifier.width(8.dp))
@@ -1061,7 +1111,7 @@ fun TuningScreen(
                                 },
                                 modifier = Modifier.testTag("save_preset_button")
                             ) {
-                                Icon(Icons.Default.Save, contentDescription = "Save preset")
+                                Icon(Icons.Default.Save, contentDescription = stringResource(R.string.tuning_save_preset_cd))
                             }
                         }
 
@@ -1077,7 +1127,10 @@ fun TuningScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(text = preset.name, style = MaterialTheme.typography.titleSmall)
                                     Text(
-                                        text = if (preset.builtIn) "Built-in profile" else "User preset",
+                                        text = stringResource(
+                                            if (preset.builtIn) R.string.tuning_preset_builtin
+                                            else R.string.tuning_preset_user
+                                        ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1087,11 +1140,11 @@ fun TuningScreen(
                                         onClick = { onLoadPreset(preset) },
                                         modifier = Modifier.testTag("load_preset_${preset.id}")
                                     ) {
-                                        Text("Load")
+                                        Text(stringResource(R.string.common_load))
                                     }
                                     if (!preset.builtIn) {
                                         IconButton(onClick = { onDeletePreset(preset) }) {
-                                            Icon(Icons.Default.Delete, contentDescription = "Delete preset")
+                                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.tuning_delete_preset_cd))
                                         }
                                     }
                                 }
@@ -1111,7 +1164,7 @@ fun TuningScreen(
                             ) {
                                 Icon(Icons.Default.Upload, contentDescription = null)
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Export JSON")
+                                Text(stringResource(R.string.tuning_export_json))
                             }
                             OutlinedButton(
                                 onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) },
@@ -1121,36 +1174,52 @@ fun TuningScreen(
                             ) {
                                 Icon(Icons.Default.Download, contentDescription = null)
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Import JSON")
+                                Text(stringResource(R.string.tuning_import_json))
                             }
                         }
                     }
                 }
 
                 item {
+                    val noneText = stringResource(R.string.common_none)
                     EcuCard {
                         Text(
-                            text = "DISCOVERED HARDWARE SUMMARY",
+                            text = stringResource(R.string.tuning_hw_header),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "CPU Policies: ${hardwareSpec.cpuPolicies.size} | GPU OPPs: ${hardwareSpec.gpu.oppTable.size} | Thermal Sensors: ${hardwareSpec.thermalSensors.size}",
+                            text = stringResource(
+                                R.string.tuning_hw_counts,
+                                hardwareSpec.cpuPolicies.size,
+                                hardwareSpec.gpu.oppTable.size,
+                                hardwareSpec.thermalSensors.size
+                            ),
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            text = "OPP Table: ${hardwareSpec.gpu.oppTableSourcePath ?: "none"} (${hardwareSpec.gpu.detectedOrderNote})",
+                            text = stringResource(
+                                R.string.tuning_hw_opp,
+                                hardwareSpec.gpu.oppTableSourcePath ?: noneText,
+                                hardwareSpec.gpu.detectedOrderNote
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "GED Load Nodes: ${hardwareSpec.gpu.gedLoadCandidatePaths.joinToString().ifBlank { "none" }}",
+                            text = stringResource(
+                                R.string.tuning_hw_ged,
+                                hardwareSpec.gpu.gedLoadCandidatePaths.joinToString().ifBlank { noneText }
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "Battery Nodes: ${hardwareSpec.batteryPower.currentPath ?: "none"}",
+                            text = stringResource(
+                                R.string.tuning_hw_battery,
+                                hardwareSpec.batteryPower.currentPath ?: noneText
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1161,7 +1230,7 @@ fun TuningScreen(
                                 .fillMaxWidth()
                                 .testTag("tuning_rediscover_button")
                         ) {
-                            Text("Re-Probe Hardware Nodes")
+                            Text(stringResource(R.string.tuning_reprobe_hw))
                         }
                     }
                 }
@@ -1285,7 +1354,7 @@ private fun OverlayFineSliderRow(
             ) {
                 NudgeButton(
                     symbol = "\u2212",
-                    contentDescription = "Decrease $title",
+                    contentDescription = stringResource(R.string.common_decrease, title),
                     enabled = enabled && clampedValue > fullMin,
                     onPressStart = {
                         isNudgingRef[0] = true
@@ -1300,7 +1369,7 @@ private fun OverlayFineSliderRow(
                 )
                 NudgeButton(
                     symbol = "+",
-                    contentDescription = "Increase $title",
+                    contentDescription = stringResource(R.string.common_increase, title),
                     enabled = enabled && clampedValue < safeMax,
                     onPressStart = {
                         isNudgingRef[0] = true

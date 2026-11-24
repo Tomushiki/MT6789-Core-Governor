@@ -16,8 +16,14 @@
 package com.example
 
 import android.app.Application
+import android.content.Context
+import com.example.data.LocaleHelper
 import com.example.governor.GovernorEngine
 
 class CoreGovernorApp : Application() {
     val engine: GovernorEngine by lazy { GovernorEngine(this) }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.wrap(newBase))
+    }
 }

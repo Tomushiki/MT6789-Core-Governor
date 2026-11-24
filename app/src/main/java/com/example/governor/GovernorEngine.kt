@@ -49,8 +49,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -81,6 +84,11 @@ class GovernorEngine(context: Context) {
 
     /** Sensor pinning (Nifty features). Own settings; runs only while the governor is running. */
     val sensorPinner = SensorPinner(appContext) { level, tag, msg -> log(level, tag, msg) }
+
+    /** Root keep-alive protections + watchdog manager (Fix 4). */
+    val processProtection = ProcessProtectionManager(appContext, rootShell) { level, tag, msg ->
+        log(level, tag, msg)
+    }
 
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var controlJob: Job? = null
@@ -162,6 +170,9 @@ class GovernorEngine(context: Context) {
 
     private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())
     val logs: StateFlow<List<LogEntry>> = _logs.asStateFlow()
+
+    private val _afterburnEvents = MutableSharedFlow<com.example.service.AfterburnTransitionEvent>(extraBufferCapacity = 8)
+    val afterburnEvents: SharedFlow<com.example.service.AfterburnTransitionEvent> = _afterburnEvents.asSharedFlow()
 
     private val logIdSeq = AtomicLong(1L)
 
@@ -1036,6 +1047,18 @@ class GovernorEngine(context: Context) {
             sagMv = batteryTruth.sagMv
         )
         val boostLevel = afterburnDecision.level
+        if (afterburnDecision.state != prevBoostState) {
+            _afterburnEvents.tryEmit(
+                com.example.service.AfterburnTransitionEvent(
+                    packageName = fgPkg,
+                    prevState = prevBoostState,
+                    newState = afterburnDecision.state,
+                    strength = cfg.afterburn.strength,
+                    toastEnabled = cfg.afterburn.toastEnabled,
+                    timestampMs = nowMs
+                )
+            )
+        }
         if (afterburnDecision.state != prevBoostState &&
             afterburnDecision.state != AfterburnState.IDLE && prevBoostState != AfterburnState.IDLE
         ) {
@@ -2252,6 +2275,35 @@ class GovernorEngine(context: Context) {
         }
     }
 
+    fun setProtectFromKill(enabled: Boolean) {
+        updateConfig { it.copy(protectFromKillEnabled = enabled) }
+        if (!enabled) {
+            processProtection.clearStopFlagSynchronously()
+        }
+        val running = _telemetry.value.isRunning
+        engineScope.launch(Dispatchers.IO) {
+            processProtection.applyAndVerify(enabled = enabled, watchServiceAlive = enabled && running)
+        }
+    }
+
+    fun reverifyProtection() {
+        val cfg = _config.value
+        val running = _telemetry.value.isRunning
+        engineScope.launch(Dispatchers.IO) {
+            processProtection.applyAndVerify(
+                enabled = cfg.protectFromKillEnabled,
+                watchServiceAlive = cfg.protectFromKillEnabled && running
+            )
+        }
+    }
+
+    fun stopProtectionWatchdogAsync() {
+        processProtection.clearStopFlagSynchronously()
+        engineScope.launch(Dispatchers.IO) {
+            processProtection.stopWatchdog()
+        }
+    }
+
     fun saveNamedPreset(name: String) {
         val cleanName = name.trim()
         if (cleanName.isBlank()) return
@@ -2268,6 +2320,19 @@ class GovernorEngine(context: Context) {
     }
 
     fun loadPreset(preset: PresetItem) {
+        if (preset.id == D8300UserPreset.ID) {
+            // Device preset: patch the CURRENT config (caps, temperature throttle, sensor) and keep all other settings.
+            val patched = D8300UserPreset.apply(_config.value, _hardwareSpec.value)
+            if (patched == null) {
+                log(LogLevel.WARN, "Presets", "Preset '${preset.name}' is not for this device.")
+                return
+            }
+            val populatedPatched = storage.populateDefaultsForHardware(patched, _hardwareSpec.value)
+            _config.value = populatedPatched
+            storage.saveConfig(populatedPatched)
+            log(LogLevel.INFO, "Presets", "Applied preset '${preset.name}' (caps and temperature throttle only).")
+            return
+        }
         val populated = storage.populateDefaultsForHardware(preset.config, _hardwareSpec.value)
         _config.value = populated
         storage.saveConfig(populated)

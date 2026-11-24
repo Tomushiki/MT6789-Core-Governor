@@ -34,6 +34,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import com.example.R
+import com.example.data.LocaleHelper
 import com.example.governor.GovernorEngine
 import com.example.model.BatteryState
 import com.example.model.GovernorConfig
@@ -69,6 +71,36 @@ object OverlaySizing {
     const val MIN_SCALE_PCT = 25
     const val MAX_SCALE_PCT = 200
     const val DEFAULT_DETAILED_ROW_COUNT = 13
+
+    data class OverlayStrings(
+        val tempLabel: String = "TEMP",
+        val powerLabel: String = "POWER",
+        val pwrShortLabel: String = "PWR",
+        val chgLabel: String = "CHG",
+        val plugLabel: String = "PLUG 0.0",
+        val wattsLabel: String = "watts",
+        val fullLabel: String = "full",
+        val ofHzFormat: String = "of %1\$dHz",
+        val naLabel: String = "n/a"
+    ) {
+        fun formatOfHz(hz: Int): String = String.format(Locale.US, ofHzFormat, hz)
+
+        companion object {
+            fun fromContext(context: Context): OverlayStrings {
+                return OverlayStrings(
+                    tempLabel = context.getString(R.string.overlay_temp),
+                    powerLabel = context.getString(R.string.overlay_power),
+                    pwrShortLabel = context.getString(R.string.overlay_pwr_short),
+                    chgLabel = context.getString(R.string.overlay_chg),
+                    plugLabel = context.getString(R.string.overlay_plug),
+                    wattsLabel = context.getString(R.string.overlay_watts),
+                    fullLabel = context.getString(R.string.overlay_full),
+                    ofHzFormat = context.getString(R.string.overlay_of_hz),
+                    naLabel = context.getString(R.string.common_na)
+                )
+            }
+        }
+    }
 
     private val measureLock = Any()
     private val compactLabelPaint by lazy {
@@ -108,7 +140,8 @@ object OverlaySizing {
         density: Float,
         style: OverlayStyle,
         detailedRowCount: Int = DEFAULT_DETAILED_ROW_COUNT,
-        extraRightColWidthAt1: Float = 0f
+        extraRightColWidthAt1: Float = 0f,
+        strings: OverlayStrings = OverlayStrings()
     ): Pair<Float, Float> {
         val d = density.coerceAtLeast(0.5f)
         synchronized(measureLock) {
@@ -130,7 +163,7 @@ object OverlaySizing {
                         compactTextPaint.measureText("-10.00W"),
                         compactTextPaint.measureText("\u221210.00W"),
                         compactTextPaint.measureText("\u26A1+10.00W"),
-                        compactTextPaint.measureText("PLUG 0.0")
+                        compactTextPaint.measureText(strings.plugLabel)
                     )
                     val fm = compactTextPaint.fontMetrics
                     val textH = fm.descent - fm.ascent
@@ -150,9 +183,11 @@ object OverlaySizing {
                     val widestLabel = maxOf(
                         ringLabelPaint.measureText("CPU"),
                         ringLabelPaint.measureText("GPU"),
-                        ringLabelPaint.measureText("TEMP"),
+                        ringLabelPaint.measureText(strings.tempLabel),
                         ringLabelPaint.measureText("FPS"),
-                        ringLabelPaint.measureText("POWER")
+                        ringLabelPaint.measureText(strings.powerLabel),
+                        ringLabelPaint.measureText(strings.chgLabel),
+                        ringLabelPaint.measureText(strings.plugLabel)
                     )
                     val cellWidth = maxOf(ringSize, widestLabel)
                     val labelFm = ringLabelPaint.fontMetrics
@@ -176,10 +211,10 @@ object OverlaySizing {
                         detailedBoldPaint.measureText("#0~5  2000MHz"),
                         detailedTextPaint.measureText("100%  2000M"),
                         detailedTextPaint.measureText("FPS  120.0"),
-                        detailedTextPaint.measureText("PWR  -10.00W"),
-                        detailedTextPaint.measureText("PWR  \u221210.00W"),
-                        detailedTextPaint.measureText("PWR  \u26A1+10.00W CHG"),
-                        detailedTextPaint.measureText("PWR  PLUG 0.0")
+                        detailedTextPaint.measureText("${strings.pwrShortLabel}  -10.00W"),
+                        detailedTextPaint.measureText("${strings.pwrShortLabel}  \u221210.00W"),
+                        detailedTextPaint.measureText("${strings.pwrShortLabel}  \u26A1+10.00W ${strings.chgLabel}"),
+                        detailedTextPaint.measureText("${strings.pwrShortLabel}  ${strings.plugLabel}")
                     )
                     val rightW = maxOf(refRightW, extraRightColWidthAt1)
                     val subFm = ringSubPaint.fontMetrics
@@ -249,6 +284,15 @@ class OverlayController(
     private var isDragging = false
     private var lastAppliedXPm: Int = -1
     private var lastAppliedYPm: Int = -1
+    private var overlayStrings: OverlaySizing.OverlayStrings =
+        OverlaySizing.OverlayStrings.fromContext(LocaleHelper.wrap(appContext))
+
+    fun refreshLocale() {
+        overlayStrings = OverlaySizing.OverlayStrings.fromContext(LocaleHelper.wrap(appContext))
+        val view = overlayView ?: return
+        view.setStrings(overlayStrings)
+        repositionForCurrentScreen()
+    }
 
     // Re-applies the saved position for the new orientation after a rotation.
     private val rotationCallbacks = object : ComponentCallbacks {
@@ -368,7 +412,7 @@ class OverlayController(
         val targetAlpha = cfg.overlayOpacityPct.coerceIn(30, 100) / 100f
 
         if (existingView == null || existingParams == null) {
-            val view = OverlayPillView(appContext)
+            val view = OverlayPillView(appContext, overlayStrings)
             view.setExpanded(cfg.overlayExpanded && !cfg.overlayDetailed)
             view.setDetailed(cfg.overlayDetailed)
             view.setScales(
@@ -394,7 +438,8 @@ class OverlayController(
                 targetFlags,
                 PixelFormat.TRANSLUCENT
             ).apply {
-                gravity = Gravity.TOP or Gravity.START
+                @Suppress("RtlHardcoded")
+                gravity = Gravity.TOP or Gravity.LEFT
                 // Let the overlay reach the status bar / notch area in both orientations.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
@@ -615,12 +660,23 @@ class OverlayController(
             prev.clusters != next.clusters
     }
 
-    private inner class OverlayPillView(context: Context) : View(context) {
+    private inner class OverlayPillView(
+        context: Context,
+        private var strings: OverlaySizing.OverlayStrings
+    ) : View(context) {
 
         private val baseDensity = resources.displayMetrics.density
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
         private var data = DisplayData()
+
+        fun setStrings(next: OverlaySizing.OverlayStrings) {
+            if (strings != next) {
+                strings = next
+                requestLayout()
+                invalidate()
+            }
+        }
         private var expanded = false
         private var detailed = false
         private var clickThrough = false
@@ -815,9 +871,11 @@ class OverlayController(
             val widestLabel = maxOf(
                 ringLabelPaint.measureText("CPU"),
                 ringLabelPaint.measureText("GPU"),
-                ringLabelPaint.measureText("TEMP"),
+                ringLabelPaint.measureText(strings.tempLabel),
                 ringLabelPaint.measureText("FPS"),
-                ringLabelPaint.measureText("POWER")
+                ringLabelPaint.measureText(strings.powerLabel),
+                ringLabelPaint.measureText(strings.chgLabel),
+                ringLabelPaint.measureText(strings.plugLabel)
             )
             return maxOf(ringSize, widestLabel)
         }
@@ -837,12 +895,12 @@ class OverlayController(
             val fpsVal = if (dData.fps < 0f) "--" else String.format(Locale.US, "%.1f", dData.fps)
             regularRows.add("FPS  $fpsVal")
             val pwrVal = when (dData.batteryState) {
-                BatteryState.CHARGING -> "\u26A1+${String.format(Locale.US, "%.2f", dData.chargeWatts)}W CHG"
-                BatteryState.FULL_PLUGGED -> "PLUG 0.0"
+                BatteryState.CHARGING -> "\u26A1+${String.format(Locale.US, "%.2f", dData.chargeWatts)}W ${strings.chgLabel}"
+                BatteryState.FULL_PLUGGED -> strings.plugLabel
                 BatteryState.DISCHARGING -> "${formatSignedWatts(if (dData.watts > 0.005f) -dData.watts else 0f)}W"
                 BatteryState.UNKNOWN -> "--W"
             }
-            regularRows.add("PWR  $pwrVal")
+            regularRows.add("${strings.pwrShortLabel}  $pwrVal")
             return regularRows to boldRows
         }
 
@@ -853,10 +911,10 @@ class OverlayController(
                 detailedBoldPaint.measureText("#0~5  2000MHz"),
                 detailedTextPaint.measureText("100%  2000M"),
                 detailedTextPaint.measureText("FPS  120.0"),
-                detailedTextPaint.measureText("PWR  -10.00W"),
-                detailedTextPaint.measureText("PWR  \u221210.00W"),
-                detailedTextPaint.measureText("PWR  \u26A1+10.00W CHG"),
-                detailedTextPaint.measureText("PWR  PLUG 0.0")
+                detailedTextPaint.measureText("${strings.pwrShortLabel}  -10.00W"),
+                detailedTextPaint.measureText("${strings.pwrShortLabel}  \u221210.00W"),
+                detailedTextPaint.measureText("${strings.pwrShortLabel}  \u26A1+10.00W ${strings.chgLabel}"),
+                detailedTextPaint.measureText("${strings.pwrShortLabel}  ${strings.plugLabel}")
             )
             for (r in regularRows) {
                 maxW = maxOf(maxW, detailedTextPaint.measureText(r))
@@ -896,7 +954,8 @@ class OverlayController(
                 density = baseDensity,
                 style = style,
                 detailedRowCount = detailedRowCount(data),
-                extraRightColWidthAt1 = extraRightWAt1
+                extraRightColWidthAt1 = extraRightWAt1,
+                strings = strings
             )
             val maxPct = OverlaySizing.maxScalePct(screenW, screenH, style, natWAt1, natHAt1)
             val effectivePct = minOf(requestedScalePct(), maxPct)
@@ -952,7 +1011,7 @@ class OverlayController(
                     compactTextPaint.measureText("-10.00W"),
                     compactTextPaint.measureText("\u221210.00W"),
                     compactTextPaint.measureText("\u26A1+10.00W"),
-                    compactTextPaint.measureText("PLUG 0.0")
+                    compactTextPaint.measureText(strings.plugLabel)
                 )
 
                 val contentW = cpuItemW + itemGap + gpuItemW + itemGap + fpsItemW + itemGap + tempItemW + itemGap + powerItemW
@@ -1005,7 +1064,7 @@ class OverlayController(
             val tempVal = "${data.tempDeg}°"
             val (powerVal, powerColor) = when (data.batteryState) {
                 BatteryState.CHARGING -> "\u26A1+${String.format(Locale.US, "%.2f", data.chargeWatts)}W" to greenColor
-                BatteryState.FULL_PLUGGED -> "PLUG 0.0" to greenColor
+                BatteryState.FULL_PLUGGED -> strings.plugLabel to greenColor
                 BatteryState.DISCHARGING -> "${formatSignedWatts(if (data.watts > 0.005f) -data.watts else 0f)}W" to blueColor
                 BatteryState.UNKNOWN -> "--W" to textSecondaryColor
             }
@@ -1150,7 +1209,7 @@ class OverlayController(
                 fraction = (data.tempC - 30f) / 50f,
                 ringColor = tempColor(data.tempC),
                 centerText = "${data.tempDeg}°",
-                label = "TEMP",
+                label = strings.tempLabel,
                 subText = "\u00b0C"
             )
             drawRingCell(
@@ -1159,7 +1218,7 @@ class OverlayController(
                 ringColor = fpsColor(data.fps, data.refreshHz),
                 centerText = if (data.fps < 0f) "--" else data.fps.roundToInt().toString(),
                 label = "FPS",
-                subText = "of ${data.refreshHz}Hz"
+                subText = strings.formatOfHz(data.refreshHz)
             )
             when (data.batteryState) {
                 BatteryState.CHARGING -> drawRingCell(
@@ -1167,8 +1226,8 @@ class OverlayController(
                     fraction = data.chargeWatts / 15f,
                     ringColor = greenColor,
                     centerText = "\u26A1+${String.format(Locale.US, "%.1f", data.chargeWatts)}",
-                    label = "CHG",
-                    subText = "watts",
+                    label = strings.chgLabel,
+                    subText = strings.wattsLabel,
                     centerColor = greenColor,
                     labelColor = greenColor
                 )
@@ -1177,8 +1236,8 @@ class OverlayController(
                     fraction = 1f,
                     ringColor = greenColor,
                     centerText = "0.0",
-                    label = "PLUG 0.0",
-                    subText = "full",
+                    label = strings.plugLabel,
+                    subText = strings.fullLabel,
                     centerColor = greenColor,
                     labelColor = greenColor
                 )
@@ -1187,16 +1246,16 @@ class OverlayController(
                     fraction = abs(data.watts) / 10f,
                     ringColor = blueColor,
                     centerText = formatSignedWatts(if (data.watts > 0.005f) -data.watts else 0f),
-                    label = "POWER",
-                    subText = "watts"
+                    label = strings.powerLabel,
+                    subText = strings.wattsLabel
                 )
                 BatteryState.UNKNOWN -> drawRingCell(
                     index = 4,
                     fraction = 0f,
                     ringColor = textSecondaryColor,
                     centerText = "--",
-                    label = "POWER",
-                    subText = "n/a",
+                    label = strings.powerLabel,
+                    subText = strings.naLabel,
                     centerColor = textSecondaryColor
                 )
             }
@@ -1295,7 +1354,7 @@ class OverlayController(
                 fraction = (data.tempC - 30f) / 50f,
                 ringColor = tempColor(data.tempC),
                 centerText = "${data.tempDeg}°",
-                subText = "TEMP \u00b0C"
+                subText = "${strings.tempLabel} \u00b0C"
             )
 
             val rightLeft = hPad + leftColW + colGap
@@ -1340,12 +1399,12 @@ class OverlayController(
             val fpsStr = if (data.fps < 0f) "--" else String.format(Locale.US, "%.1f", data.fps)
             drawLabelValueRow("FPS  ", fpsStr, fpsColor(data.fps, data.refreshHz))
             val (pwrStr, pwrColor) = when (data.batteryState) {
-                BatteryState.CHARGING -> "\u26A1+${String.format(Locale.US, "%.2f", data.chargeWatts)}W CHG" to greenColor
-                BatteryState.FULL_PLUGGED -> "PLUG 0.0" to greenColor
+                BatteryState.CHARGING -> "\u26A1+${String.format(Locale.US, "%.2f", data.chargeWatts)}W ${strings.chgLabel}" to greenColor
+                BatteryState.FULL_PLUGGED -> strings.plugLabel to greenColor
                 BatteryState.DISCHARGING -> "${formatSignedWatts(if (data.watts > 0.005f) -data.watts else 0f)}W" to whiteColor
                 BatteryState.UNKNOWN -> "--W" to grayColor
             }
-            drawLabelValueRow("PWR  ", pwrStr, pwrColor)
+            drawLabelValueRow("${strings.pwrShortLabel}  ", pwrStr, pwrColor)
         }
 
         private fun fpsColor(fps: Float, refreshHz: Int): Int = when {

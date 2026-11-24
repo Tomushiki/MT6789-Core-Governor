@@ -21,6 +21,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
+import androidx.annotation.StringRes
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -28,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
+import com.example.R
 import java.io.File
 import java.io.InputStream
 import kotlin.concurrent.thread
@@ -36,7 +38,12 @@ import kotlin.concurrent.thread
  * Purely visual user choices: border color and a custom background image.
  * Nothing here touches the governor; it only feeds the theme.
  */
-enum class ThemeMode(val label: String) { SYSTEM("System"), DARK("Dark"), LIGHT("Light"), AMOLED("AMOLED") }
+enum class ThemeMode(val label: String, @StringRes val labelRes: Int) {
+    SYSTEM("System", R.string.theme_system),
+    DARK("Dark", R.string.theme_dark),
+    LIGHT("Light", R.string.theme_light),
+    AMOLED("AMOLED", R.string.theme_amoled)
+}
 
 object Appearance {
     private const val PREFS = "coregovernor_ui"

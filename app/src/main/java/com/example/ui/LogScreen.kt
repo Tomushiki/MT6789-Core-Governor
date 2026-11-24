@@ -42,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,8 +50,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.model.LogEntry
 import com.example.model.LogLevel
 import com.example.ui.components.EcuCard
@@ -91,13 +96,13 @@ fun LogScreen(
                 FilterChip(
                     selected = !errorsOnly,
                     onClick = { errorsOnly = false },
-                    label = { Text("All (${logs.size})") },
+                    label = { Text(stringResource(R.string.log_filter_all, logs.size)) },
                     modifier = Modifier.testTag("log_filter_all")
                 )
                 FilterChip(
                     selected = errorsOnly,
                     onClick = { errorsOnly = true },
-                    label = { Text("Warn/Err") },
+                    label = { Text(stringResource(R.string.log_filter_errors)) },
                     modifier = Modifier.testTag("log_filter_errors")
                 )
             }
@@ -107,7 +112,7 @@ fun LogScreen(
                     onClick = onClearLogs,
                     modifier = Modifier.testTag("log_clear_button")
                 ) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = "Clear logs")
+                    Icon(Icons.Default.DeleteOutline, contentDescription = stringResource(R.string.log_clear_cd))
                 }
                 Button(
                     onClick = {
@@ -116,13 +121,21 @@ fun LogScreen(
                         }
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cm.setPrimaryClip(ClipData.newPlainText("CoreGovernor Log", text))
-                        Toast.makeText(context, "Copied ${visibleLogs.size} log lines", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            context.resources.getQuantityString(
+                                R.plurals.plural_log_copied,
+                                visibleLogs.size,
+                                visibleLogs.size
+                            ),
+                            Toast.LENGTH_SHORT
+                        ).show()
                     },
                     modifier = Modifier.testTag("log_copy_button")
                 ) {
                     Icon(Icons.Default.ContentCopy, contentDescription = null)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Copy")
+                    Text(stringResource(R.string.common_copy))
                 }
             }
         }
@@ -132,7 +145,7 @@ fun LogScreen(
         if (visibleLogs.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "No log entries yet.",
+                    text = stringResource(R.string.log_empty),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -150,27 +163,29 @@ fun LogScreen(
                         LogLevel.INFO -> MaterialTheme.colorScheme.primary
                     }
                     EcuCard(accentBorder = if (entry.level == LogLevel.ERROR) ext.throttle else null) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "[${entry.level}] ${entry.tag}",
+                                    style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                                    color = levelColor
+                                )
+                                Text(
+                                    text = dateFmt.format(Date(entry.timestampMs)),
+                                    style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "[${entry.level}] ${entry.tag}",
-                                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
-                                color = levelColor
-                            )
-                            Text(
-                                text = dateFmt.format(Date(entry.timestampMs)),
-                                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = entry.message,
+                                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodySmall.fontSize),
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = entry.message,
-                            style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodySmall.fontSize),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
                     }
                 }
             }

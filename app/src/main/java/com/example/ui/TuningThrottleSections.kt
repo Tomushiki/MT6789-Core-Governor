@@ -38,7 +38,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.model.BatteryState
 import com.example.model.GovernorConfig
 import com.example.model.HardwareSpec
@@ -82,15 +85,15 @@ fun ThermalThrottleSection(
 
     EcuCard(accentBorder = if (telemetry.tempThrottleActive) ext.throttle else null) {
         Text(
-            text = "TEMPERATURE THROTTLING",
+            text = stringResource(R.string.thermal_header),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary
         )
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSwitchRow(
-            title = "Enable Temperature Throttling",
-            explanation = "Gradually lowers CPU and GPU max frequency caps as the chosen thermal sensor heats up.",
+            title = stringResource(R.string.thermal_enable),
+            explanation = stringResource(R.string.thermal_enable_desc),
             checked = t.enabled,
             onCheckedChange = { onUpdateTempThrottle(it, null, null, null, null, null, null, null, null, null) },
             testTag = "temp_throttle_switch"
@@ -100,13 +103,13 @@ fun ThermalThrottleSection(
 
         // Sensor Selector
         Text(
-            text = "Driving Temperature Sensor",
+            text = stringResource(R.string.thermal_sensor_title),
             style = MaterialTheme.typography.titleSmall
         )
         Spacer(modifier = Modifier.height(4.dp))
         val selectedLabel = hardwareSpec.thermalSensors.firstOrNull { it.path == config.selectedTempSensorPath }?.label
             ?: hardwareSpec.thermalSensors.firstOrNull()?.label
-            ?: "No sensors discovered yet"
+            ?: stringResource(R.string.thermal_no_sensors)
         Box {
             OutlinedButton(
                 onClick = { sensorMenuExpanded = true },
@@ -115,7 +118,7 @@ fun ThermalThrottleSection(
                     .testTag("temp_sensor_dropdown")
             ) {
                 Text(
-                    text = "$selectedLabel (${"%.1f".format(telemetry.temperatureC)} °C)",
+                    text = "$selectedLabel (${"%.1f".format(Locale.US, telemetry.temperatureC)} °C)",
                     maxLines = 1
                 )
             }
@@ -126,7 +129,13 @@ fun ThermalThrottleSection(
                 hardwareSpec.thermalSensors.forEach { sensor ->
                     DropdownMenuItem(
                         text = {
-                            Text("${sensor.label} • ${"%.1f".format(sensor.initialTempC)}°C")
+                            Text(
+                                stringResource(
+                                    R.string.thermal_sensor_item,
+                                    sensor.label,
+                                    "%.1f".format(Locale.US, sensor.initialTempC)
+                                )
+                            )
                         },
                         onClick = {
                             onSelectTempSensor(sensor.path)
@@ -138,7 +147,7 @@ fun ThermalThrottleSection(
         }
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "Selects whether battery, SoC, or CPU thermal zone drives the thermal curve.",
+            text = stringResource(R.string.thermal_sensor_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -146,9 +155,9 @@ fun ThermalThrottleSection(
         Spacer(modifier = Modifier.height(14.dp))
 
         SettingSliderRow(
-            title = "Throttle Start Temperature",
+            title = stringResource(R.string.thermal_start_temp),
             valueText = "${t.startTempC.roundToInt()} °C",
-            explanation = "Temperature where cap reduction begins smoothly from 100%.",
+            explanation = stringResource(R.string.thermal_start_temp_desc),
             value = t.startTempC,
             valueRange = 30f..65f,
             onValueChange = { onUpdateTempThrottle(null, it.roundToInt().toFloat(), null, null, null, null, null, null, null, null) },
@@ -158,9 +167,9 @@ fun ThermalThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSliderRow(
-            title = "Full-Strength Temperature",
+            title = stringResource(R.string.thermal_full_temp),
             valueText = "${t.fullTempC.roundToInt()} °C",
-            explanation = "Temperature where thermal throttling reaches its full configured reduction.",
+            explanation = stringResource(R.string.thermal_full_temp_desc),
             value = t.fullTempC,
             valueRange = (t.startTempC + 2f)..85f,
             onValueChange = { onUpdateTempThrottle(null, null, it.roundToInt().toFloat(), null, null, null, null, null, null, null) },
@@ -170,9 +179,9 @@ fun ThermalThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSliderRow(
-            title = "CPU Max Reduction",
+            title = stringResource(R.string.thermal_cpu_red),
             valueText = "-${t.cpuMaxReductionPct.roundToInt()}%",
-            explanation = "Maximum percentage cut applied to CPU clusters at full-strength temperature.",
+            explanation = stringResource(R.string.thermal_cpu_red_desc),
             value = t.cpuMaxReductionPct,
             valueRange = 5f..85f,
             onValueChange = { onUpdateTempThrottle(null, null, null, it.roundToInt().toFloat(), null, null, null, null, null, null) },
@@ -182,9 +191,9 @@ fun ThermalThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSliderRow(
-            title = "GPU Max Reduction",
+            title = stringResource(R.string.thermal_gpu_red),
             valueText = "-${t.gpuMaxReductionPct.roundToInt()}%",
-            explanation = "Maximum percentage cut applied to Mali GPU frequency range at full-strength temperature.",
+            explanation = stringResource(R.string.thermal_gpu_red_desc),
             value = t.gpuMaxReductionPct,
             valueRange = 5f..85f,
             onValueChange = { onUpdateTempThrottle(null, null, null, null, it.roundToInt().toFloat(), null, null, null, null, null) },
@@ -194,7 +203,7 @@ fun ThermalThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         Text(
-            text = "Throttle Curve Shape",
+            text = stringResource(R.string.thermal_curve_title),
             style = MaterialTheme.typography.titleSmall
         )
         Row(
@@ -202,10 +211,15 @@ fun ThermalThrottleSection(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             ThrottleCurveShape.entries.forEach { shape ->
+                val shapeRes = when (shape) {
+                    ThrottleCurveShape.LINEAR -> R.string.thermal_curve_linear
+                    ThrottleCurveShape.GENTLE -> R.string.thermal_curve_gentle
+                    ThrottleCurveShape.AGGRESSIVE -> R.string.thermal_curve_aggressive
+                }
                 FilterChip(
                     selected = t.curveShape == shape,
                     onClick = { onUpdateTempThrottle(null, null, null, null, null, shape, null, null, null, null) },
-                    label = { Text(shape.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                    label = { Text(stringResource(shapeRes), maxLines = 1) },
                     modifier = Modifier
                         .weight(1f)
                         .testTag("curve_${shape.name.lowercase()}")
@@ -213,7 +227,7 @@ fun ThermalThrottleSection(
             }
         }
         Text(
-            text = "Gentle delays heavy cuts until hot; Aggressive trims clocks early near start temp.",
+            text = stringResource(R.string.thermal_curve_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -221,9 +235,9 @@ fun ThermalThrottleSection(
         Spacer(modifier = Modifier.height(12.dp))
 
         SettingSliderRow(
-            title = "Thermal Reaction Speed",
+            title = stringResource(R.string.thermal_reaction_speed),
             valueText = "${(t.reactionSpeed * 100).roundToInt()}%",
-            explanation = "Controls how quickly the thermal cap adapts to temperature changes.",
+            explanation = stringResource(R.string.thermal_reaction_desc),
             value = t.reactionSpeed,
             valueRange = 0.05f..1.0f,
             onValueChange = { onUpdateTempThrottle(null, null, null, null, null, null, it, null, null, null) },
@@ -233,9 +247,9 @@ fun ThermalThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSliderRow(
-            title = "Recovery Hysteresis",
-            valueText = "${"%.1f".format(t.hysteresisC)} °C",
-            explanation = "Temperature must cool down by this margin before the thermal cap relaxes.",
+            title = stringResource(R.string.thermal_hysteresis),
+            valueText = "${"%.1f".format(Locale.US, t.hysteresisC)} °C",
+            explanation = stringResource(R.string.thermal_hysteresis_desc),
             value = t.hysteresisC,
             valueRange = 0.5f..6.0f,
             onValueChange = { onUpdateTempThrottle(null, null, null, null, null, null, null, it, null, null) },
@@ -245,8 +259,8 @@ fun ThermalThrottleSection(
         Spacer(modifier = Modifier.height(12.dp))
 
         SettingSwitchRow(
-            title = "Charging-aware thermal",
-            explanation = "Lowers throttle start temp slightly while charging or plugged in to account for charger heat.",
+            title = stringResource(R.string.thermal_chg_aware),
+            explanation = stringResource(R.string.thermal_chg_aware_desc),
             checked = t.chargingAware,
             onCheckedChange = { onUpdateTempThrottle(null, null, null, null, null, null, null, null, it, null) },
             testTag = "temp_charging_aware_switch"
@@ -257,12 +271,12 @@ fun ThermalThrottleSection(
         val chgOffset = t.chargingStartOffsetC.coerceIn(0f, 5f)
         val effectiveChgStart = (t.startTempC - chgOffset).coerceAtLeast(20f)
         SettingSliderRow(
-            title = "Charging start offset",
+            title = stringResource(R.string.thermal_chg_offset),
             valueText = "-${String.format(Locale.US, "%.1f", chgOffset)} °C",
             explanation = if (t.chargingAware) {
-                "Starts thermal throttling at ${"%.1f".format(Locale.US, effectiveChgStart)} °C when charging/plugged."
+                stringResource(R.string.thermal_chg_offset_on, "%.1f".format(Locale.US, effectiveChgStart))
             } else {
-                "Enable charging-aware thermal above to offset start temperature when plugged in."
+                stringResource(R.string.thermal_chg_offset_off)
             },
             value = chgOffset,
             valueRange = 0f..5f,
@@ -304,15 +318,18 @@ fun PowerThrottleSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "POWER THROTTLING (GENTLE)",
+                text = stringResource(R.string.power_header),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.secondary
             )
             val livePwrLabel = when (telemetry.batteryState) {
                 BatteryState.CHARGING -> "\u26A1+${"%.2f".format(Locale.US, telemetry.chargeWatts)} W"
-                BatteryState.FULL_PLUGGED -> "PLUG 0.0 W"
-                BatteryState.DISCHARGING -> "Live: ${"%.2f".format(Locale.US, telemetry.watts)} W"
-                BatteryState.UNKNOWN -> "Live: -- W"
+                BatteryState.FULL_PLUGGED -> stringResource(R.string.monitor_plug_val)
+                BatteryState.DISCHARGING -> stringResource(
+                    R.string.power_live_disch,
+                    "%.2f".format(Locale.US, telemetry.watts)
+                )
+                BatteryState.UNKNOWN -> stringResource(R.string.power_live_unknown)
             }
             Text(
                 text = livePwrLabel,
@@ -323,8 +340,8 @@ fun PowerThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSwitchRow(
-            title = "Enable Power Throttling",
-            explanation = "Gently steps down clock caps when sustained wattage stays above your budget to prevent heat buildup.",
+            title = stringResource(R.string.power_enable),
+            explanation = stringResource(R.string.power_enable_desc),
             checked = p.enabled,
             onCheckedChange = { onUpdatePowerThrottle(it, null, null, null, null, null, null, null, null) },
             testTag = "power_throttle_switch"
@@ -333,8 +350,8 @@ fun PowerThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSwitchRow(
-            title = "Smart split by component",
-            explanation = "When power is over the limit, throttle the heavier consumer (CPU or GPU, and the busiest CPU cluster) more.",
+            title = stringResource(R.string.power_comp_aware),
+            explanation = stringResource(R.string.power_comp_aware_desc),
             checked = p.componentAware,
             onCheckedChange = { onUpdatePowerThrottle(null, null, null, null, null, null, null, null, it) },
             testTag = "power_component_aware_switch"
@@ -343,9 +360,9 @@ fun PowerThrottleSection(
         Spacer(modifier = Modifier.height(12.dp))
 
         SettingSliderRow(
-            title = "Power Budget Limit",
-            valueText = "${"%.1f".format(p.limitWatts)} W",
-            explanation = "Average device wattage threshold above which the sustain timer begins counting.",
+            title = stringResource(R.string.power_limit),
+            valueText = "${"%.1f".format(Locale.US, p.limitWatts)} W",
+            explanation = stringResource(R.string.power_limit_desc),
             value = p.limitWatts,
             valueRange = 2.0f..15.0f,
             onValueChange = { onUpdatePowerThrottle(null, it, null, null, null, null, null, null, null) },
@@ -355,9 +372,9 @@ fun PowerThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSliderRow(
-            title = "Sustain Time Above Limit",
-            valueText = "${"%.1f".format(p.sustainMs / 1000f)} s",
-            explanation = "How long draw must stay above the watt limit before reducing the cap by one step.",
+            title = stringResource(R.string.power_sustain),
+            valueText = stringResource(R.string.power_sustain_val, "%.1f".format(Locale.US, p.sustainMs / 1000f)),
+            explanation = stringResource(R.string.power_sustain_desc),
             value = p.sustainMs.toFloat(),
             valueRange = 500f..6000f,
             onValueChange = { onUpdatePowerThrottle(null, null, it.roundToLong(), null, null, null, null, null, null) },
@@ -367,9 +384,9 @@ fun PowerThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSliderRow(
-            title = "Throttle Step Size",
-            valueText = "-${"%.1f".format(p.stepPct)}%",
-            explanation = "Small percentage cut applied per step while power remains over budget.",
+            title = stringResource(R.string.power_step),
+            valueText = "-${"%.1f".format(Locale.US, p.stepPct)}%",
+            explanation = stringResource(R.string.power_step_desc),
             value = p.stepPct,
             valueRange = 1.0f..10.0f,
             onValueChange = { onUpdatePowerThrottle(null, null, null, it, null, null, null, null, null) },
@@ -379,9 +396,9 @@ fun PowerThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSliderRow(
-            title = "Slow Release Step",
-            valueText = "+${"%.1f".format(p.releaseStepPct)}%",
-            explanation = "Gradual cap recovery per cycle once wattage drops safely below the budget.",
+            title = stringResource(R.string.power_release),
+            valueText = "+${"%.1f".format(Locale.US, p.releaseStepPct)}%",
+            explanation = stringResource(R.string.power_release_desc),
             value = p.releaseStepPct,
             valueRange = 0.3f..5.0f,
             onValueChange = { onUpdatePowerThrottle(null, null, null, null, it, null, null, null, null) },
@@ -391,9 +408,9 @@ fun PowerThrottleSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSliderRow(
-            title = "Wattage Averaging Window",
-            valueText = "${p.averagingSamples} samples",
-            explanation = "Smooths brief battery current spikes over N poll cycles before comparing against limit.",
+            title = stringResource(R.string.power_window),
+            valueText = pluralStringResource(R.plurals.plural_samples, p.averagingSamples, p.averagingSamples),
+            explanation = stringResource(R.string.power_window_desc),
             value = p.averagingSamples.toFloat(),
             valueRange = 2f..30f,
             steps = 27,
@@ -404,11 +421,15 @@ fun PowerThrottleSection(
         Spacer(modifier = Modifier.height(12.dp))
 
         Text(
-            text = "Current & Voltage Calibration",
+            text = stringResource(R.string.power_cal_title),
             style = MaterialTheme.typography.titleSmall
         )
         Text(
-            text = "Raw sensor: ${telemetry.rawCurrentMa.toInt()} mA @ ${(telemetry.rawVoltageMv / 1000f).let { "%.3f".format(it) }} V",
+            text = stringResource(
+                R.string.power_cal_raw,
+                telemetry.rawCurrentMa.toInt(),
+                "%.3f".format(Locale.US, telemetry.rawVoltageMv / 1000f)
+            ),
             style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -418,16 +439,16 @@ fun PowerThrottleSection(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             PowerUnitScale.entries.forEach { scale ->
-                val label = when (scale) {
-                    PowerUnitScale.AUTO -> "Auto"
-                    PowerUnitScale.UA_UV -> "µA/µV"
-                    PowerUnitScale.MA_MV -> "mA/mV"
-                    PowerUnitScale.UA_MV -> "µA/mV"
+                val labelRes = when (scale) {
+                    PowerUnitScale.AUTO -> R.string.common_auto
+                    PowerUnitScale.UA_UV -> R.string.power_scale_ua_uv
+                    PowerUnitScale.MA_MV -> R.string.power_scale_ma_mv
+                    PowerUnitScale.UA_MV -> R.string.power_scale_ua_mv
                 }
                 FilterChip(
                     selected = p.unitScale == scale,
                     onClick = { onUpdatePowerThrottle(null, null, null, null, null, null, scale, null, null) },
-                    label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                    label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelSmall, maxLines = 1) },
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -438,22 +459,22 @@ fun PowerThrottleSection(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             PowerPolarity.entries.forEach { pol ->
-                val label = when (pol) {
-                    PowerPolarity.AUTO_ABS -> "|I| Abs"
-                    PowerPolarity.DISCHARGE_NEGATIVE -> "Disch -"
-                    PowerPolarity.DISCHARGE_POSITIVE -> "Disch +"
-                    PowerPolarity.INVERT_SIGN -> "Invert"
+                val labelRes = when (pol) {
+                    PowerPolarity.AUTO_ABS -> R.string.power_pol_abs
+                    PowerPolarity.DISCHARGE_NEGATIVE -> R.string.power_pol_neg
+                    PowerPolarity.DISCHARGE_POSITIVE -> R.string.power_pol_pos
+                    PowerPolarity.INVERT_SIGN -> R.string.power_pol_invert
                 }
                 FilterChip(
                     selected = p.polarity == pol,
                     onClick = { onUpdatePowerThrottle(null, null, null, null, null, null, null, pol, null) },
-                    label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                    label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelSmall, maxLines = 1) },
                     modifier = Modifier.weight(1f)
                 )
             }
         }
         Text(
-            text = "Match your kernel's sysfs unit scale and discharge sign convention so live watts read accurately.",
+            text = stringResource(R.string.power_cal_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

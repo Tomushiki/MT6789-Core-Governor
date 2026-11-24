@@ -15,6 +15,7 @@
 
 package com.example.ui
 
+import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,6 +34,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -49,11 +57,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.example.R
+import com.example.data.LocaleHelper
+import com.example.service.GovernorService
 import com.example.ui.components.SettingSwitchRow
 import com.example.ui.theme.ThemeMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.ui.components.EcuCard
 import com.example.ui.components.SettingSliderRow
@@ -151,13 +164,13 @@ private fun ModeChip(label: String, selected: Boolean, modifier: Modifier, onCli
 
 @Composable
 private fun SectionRow(title: String, resetEnabled: Boolean, onReset: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(36.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-        TextButton(onClick = onReset, enabled = resetEnabled) { Text("Default") }
+        TextButton(onClick = onReset, enabled = resetEnabled) { Text(stringResource(R.string.common_default)) }
     }
 }
 
-/** Visual options only: theme, accent, border color, corner radius, transparency, liquid glass, background image. */
+/** Visual options only: language, theme, accent, border color, corner radius, transparency, liquid glass, background image. */
 @Composable
 fun AppearanceCard() {
     val ctx = LocalContext.current
@@ -168,28 +181,94 @@ fun AppearanceCard() {
     val accent = Appearance.accent
     var showHue by remember { mutableStateOf(false) }
     var hue by remember { mutableStateOf(190f) }
+    var langExpanded by remember { mutableStateOf(false) }
+    val currentTag = remember(ctx) { LocaleHelper.getSelectedTag(ctx) }
+    val sysDefaultLabel = stringResource(R.string.language_system_default)
+    val currentLangOption = LocaleHelper.SUPPORTED.firstOrNull { it.tag == currentTag } ?: LocaleHelper.SUPPORTED.first()
+    val currentLangLabel = if (currentLangOption.tag.isEmpty()) sysDefaultLabel else currentLangOption.nativeName
 
     EcuCard {
-        Text("Appearance", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        Text(
+            text = stringResource(R.string.appearance_header),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
         Spacer(Modifier.height(10.dp))
 
-        Text("Theme", style = MaterialTheme.typography.titleSmall)
+        Text(stringResource(R.string.language_title), style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(6.dp))
+        Box {
+            OutlinedButton(
+                onClick = { langExpanded = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("language_selector_button")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = currentLangLabel, maxLines = 1)
+                    Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null)
+                }
+            }
+            DropdownMenu(
+                expanded = langExpanded,
+                onDismissRequest = { langExpanded = false }
+            ) {
+                LocaleHelper.SUPPORTED.forEach { opt ->
+                    val optLabel = if (opt.tag.isEmpty()) sysDefaultLabel else opt.nativeName
+                    DropdownMenuItem(
+                        text = { Text(optLabel) },
+                        trailingIcon = {
+                            if (opt.tag == currentTag) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = null)
+                            }
+                        },
+                        onClick = {
+                            langExpanded = false
+                            if (opt.tag != currentTag) {
+                                LocaleHelper.setSelectedTag(ctx, opt.tag)
+                                GovernorService.refreshLocale(ctx)
+                                (ctx as? Activity)?.recreate()
+                            }
+                        }
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = stringResource(R.string.language_explanation),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(Modifier.height(12.dp))
+        Text(stringResource(R.string.appearance_theme), style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             ThemeMode.values().forEach { m ->
-                ModeChip(m.label, Appearance.themeMode == m, Modifier.weight(1f)) { Appearance.setThemeMode(m) }
+                ModeChip(stringResource(m.labelRes), Appearance.themeMode == m, Modifier.weight(1f)) {
+                    Appearance.setThemeMode(m)
+                }
             }
         }
 
         Spacer(Modifier.height(10.dp))
-        SectionRow("Accent color", accent != null) { Appearance.setAccent(null) }
+        SectionRow(stringResource(R.string.appearance_accent_color), accent != null) { Appearance.setAccent(null) }
         SwatchRow(AccentSwatches, accent) { Appearance.setAccent(it) }
 
         Spacer(Modifier.height(10.dp))
-        SectionRow("Border color", border != null) { showHue = false; Appearance.setBorder(null) }
+        SectionRow(stringResource(R.string.appearance_border_color), border != null) {
+            showHue = false
+            Appearance.setBorder(null)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             SwatchRow(BorderSwatches, border) { showHue = false; Appearance.setBorder(it) }
-            TextButton(onClick = { showHue = !showHue }) { Text("Custom") }
+            TextButton(onClick = { showHue = !showHue }) { Text(stringResource(R.string.common_custom)) }
         }
         if (showHue) {
             Slider(
@@ -204,47 +283,47 @@ fun AppearanceCard() {
 
         Spacer(Modifier.height(10.dp))
         SettingSliderRow(
-            title = "Corner radius",
-            valueText = "${Appearance.cornerRadius.toInt()} dp",
-            explanation = "0 gives sharp corners, higher gives rounder cards.",
+            title = stringResource(R.string.appearance_corner_radius),
+            valueText = stringResource(R.string.appearance_corner_radius_val, Appearance.cornerRadius.toInt()),
+            explanation = stringResource(R.string.appearance_corner_radius_desc),
             value = Appearance.cornerRadius,
             valueRange = 0f..28f,
             onValueChange = { Appearance.setCornerRadius(it) }
         )
         Spacer(Modifier.height(6.dp))
         SettingSliderRow(
-            title = "Card transparency",
+            title = stringResource(R.string.appearance_transparency),
             valueText = "${(Appearance.transparency * 100).toInt()}%",
-            explanation = "Makes cards see-through. Best with a background image.",
+            explanation = stringResource(R.string.appearance_transparency_desc),
             value = Appearance.transparency,
             valueRange = 0f..0.7f,
             onValueChange = { Appearance.setTransparency(it) }
         )
         Spacer(Modifier.height(6.dp))
         SettingSwitchRow(
-            title = "Liquid glass",
-            explanation = "Frosted glass cards with a soft sheen and light edge. Blurs the background picture on Android 12+.",
+            title = stringResource(R.string.appearance_liquid_glass),
+            explanation = stringResource(R.string.appearance_liquid_glass_desc),
             checked = Appearance.liquidGlass,
             onCheckedChange = { Appearance.setLiquidGlass(it) }
         )
 
         Spacer(Modifier.height(14.dp))
-        Text("Background image", style = MaterialTheme.typography.titleSmall)
+        Text(stringResource(R.string.appearance_bg_image), style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(onClick = {
                 picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-            }) { Text("Choose image") }
+            }) { Text(stringResource(R.string.appearance_choose_image)) }
             TextButton(onClick = { Appearance.clearBackground() }, enabled = Appearance.background != null) {
-                Text("Remove")
+                Text(stringResource(R.string.common_remove))
             }
         }
         if (Appearance.background != null) {
             Spacer(Modifier.height(6.dp))
             SettingSliderRow(
-                title = "Background dimming",
+                title = stringResource(R.string.appearance_bg_dimming),
                 valueText = "${(Appearance.dim * 100).toInt()}%",
-                explanation = "Higher keeps text easier to read over the picture.",
+                explanation = stringResource(R.string.appearance_bg_dimming_desc),
                 value = Appearance.dim,
                 valueRange = 0.3f..0.95f,
                 onValueChange = { Appearance.setDim(it) }
@@ -252,6 +331,8 @@ fun AppearanceCard() {
         }
 
         Spacer(Modifier.height(8.dp))
-        TextButton(onClick = { showHue = false; Appearance.resetAll() }) { Text("Reset appearance") }
+        TextButton(onClick = { showHue = false; Appearance.resetAll() }) {
+            Text(stringResource(R.string.appearance_reset_all))
+        }
     }
 }

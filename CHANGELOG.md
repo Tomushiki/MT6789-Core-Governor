@@ -2,6 +2,18 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [3.5.0] - 2026-11-24
+
+### Added
+- **Protect from being killed (root).** New switch in Tuning > Control, on by default. It exempts CoreGovernor from Doze and app standby, keeps its process (and the FPS daemon) at a protected `oom_score_adj` and re-checks it about every 30 seconds, and on Android 12+ turns off the phantom process killer. Your original phantom-process settings are saved and restored when you switch it off. A tiny root watchdog restarts the service if the app is killed while the governor is meant to be running, and stops when you stop the governor on purpose. A status line shows what was applied and verified, and each step is logged.
+- **Afterburn toast.** A small, non-touchable pill over the game shows "AFTERBURN ACTIVE", the app name and the boost level when Afterburn starts boosting (once per boost session, at least 20 seconds apart). Needs the overlay permission; switch it off with "Afterburn toast" in the Afterburn section.
+- **Languages.** English, Bahasa Indonesia, Spanish, Portuguese (Brazil), Russian, Turkish, Hindi, Arabic, French and Vietnamese, with a Language selector in the Appearance card. It applies immediately and is remembered. Missing text falls back to English.
+- **Built-in preset for Dimensity 8300 class phones** (CPU policies 0, 4 and 7). It sets the daily and game CPU/GPU maximums and a temperature throttle that starts at 60 C. It changes only those values, keeps all your other settings, and only appears on matching phones.
+
+### Changed
+- **Update checker.** Now reads the latest releases (not just the newest stable one), picks the highest version, and has an "Include pre-releases" switch (off by default). It remembers GitHub's answer so repeated checks do not use up the rate limit, retries once, and shows clear messages for offline, rate limited (with the time to try again), no release found, up to date and update available. The update card shows release notes, a Download button and Dismiss for that version.
+- Version 3.5.0 (versionCode 49).
+
 ## [3.2.0] - 2026-11-24
 
 ### Changed

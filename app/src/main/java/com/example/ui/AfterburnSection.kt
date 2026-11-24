@@ -28,8 +28,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.R
 import com.example.model.BoostStrength
 import com.example.model.GovernorConfig
 import com.example.model.AfterburnState
@@ -55,7 +58,8 @@ fun AfterburnSection(
         thermalMarginC: Float?,
         batteryConditionEnabled: Boolean?,
         batteryThresholdPct: Int?,
-        voltageSagEnabled: Boolean?
+        voltageSagEnabled: Boolean?,
+        toastEnabled: Boolean?
     ) -> Unit
 ) {
     val telemetry by telemetryFlow.collectAsStateWithLifecycle()
@@ -68,9 +72,9 @@ fun AfterburnSection(
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     val liveLabel = if (!b.enabled) {
-        "OFF"
+        stringResource(R.string.common_off)
     } else {
-        val s = telemetry.afterburnState.label.uppercase(Locale.US)
+        val s = stringResource(telemetry.afterburnState.labelRes).uppercase()
         if (telemetry.afterburnLevelPct > 0) "$s ${telemetry.afterburnLevelPct}%" else s
     }
 
@@ -81,7 +85,7 @@ fun AfterburnSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "AFTERBURN",
+                text = stringResource(R.string.afterburn_header),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.secondary
             )
@@ -94,17 +98,17 @@ fun AfterburnSection(
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSwitchRow(
-            title = "Enable Afterburn",
-            explanation = "While a selected app (Apps tab > Afterburn list) is in front and the conditions below are met, the power-throttle cap is temporarily bypassed. Thermal throttling always stays in charge.",
+            title = stringResource(R.string.afterburn_enable_title),
+            explanation = stringResource(R.string.afterburn_enable_desc),
             checked = b.enabled,
-            onCheckedChange = { onUpdateAfterburn(it, null, null, null, null, null, null) },
+            onCheckedChange = { onUpdateAfterburn(it, null, null, null, null, null, null, null) },
             testTag = "afterburn_switch"
         )
 
         Spacer(modifier = Modifier.height(10.dp))
 
         Text(
-            text = "Boost strength",
+            text = stringResource(R.string.afterburn_boost_strength),
             style = MaterialTheme.typography.titleSmall
         )
         Spacer(modifier = Modifier.height(4.dp))
@@ -112,8 +116,8 @@ fun AfterburnSection(
             BoostStrength.values().forEach { st ->
                 FilterChip(
                     selected = b.strength == st,
-                    onClick = { onUpdateAfterburn(null, st, null, null, null, null, null) },
-                    label = { Text(st.label) },
+                    onClick = { onUpdateAfterburn(null, st, null, null, null, null, null, null) },
+                    label = { Text(stringResource(st.labelRes)) },
                     enabled = b.enabled,
                     modifier = Modifier.testTag("afterburn_strength_${st.name}")
                 )
@@ -123,58 +127,90 @@ fun AfterburnSection(
         Spacer(modifier = Modifier.height(12.dp))
 
         SettingSwitchRow(
-            title = "Thermal condition",
-            explanation = "Only boost when the temperature is at least this many degrees below your thermal throttle start (${"%.0f".format(Locale.US, config.tempThrottle.startTempC)} C). More headroom means a stronger boost.",
+            title = stringResource(R.string.afterburn_thermal_title),
+            explanation = stringResource(
+                R.string.afterburn_thermal_desc,
+                "%.0f".format(Locale.US, config.tempThrottle.startTempC)
+            ),
             checked = b.thermalConditionEnabled,
-            onCheckedChange = { onUpdateAfterburn(null, null, it, null, null, null, null) },
+            onCheckedChange = { onUpdateAfterburn(null, null, it, null, null, null, null, null) },
             testTag = "afterburn_thermal_switch"
         )
         SettingSliderRow(
-            title = "Required temperature margin",
-            valueText = "${"%.0f".format(Locale.US, b.thermalMarginC)} C below throttle",
-            explanation = "3 to 8 C. When the battery is low this margin is raised by 2 C, so the two conditions decide together.",
+            title = stringResource(R.string.afterburn_margin_title),
+            valueText = stringResource(
+                R.string.afterburn_margin_val,
+                "%.0f".format(Locale.US, b.thermalMarginC)
+            ),
+            explanation = stringResource(R.string.afterburn_margin_desc),
             value = b.thermalMarginC,
             valueRange = 3f..8f,
             steps = 4,
             enabled = b.enabled && b.thermalConditionEnabled,
-            onValueChange = { onUpdateAfterburn(null, null, null, it.roundToInt().toFloat(), null, null, null) },
+            onValueChange = { onUpdateAfterburn(null, null, null, it.roundToInt().toFloat(), null, null, null, null) },
             testTag = "afterburn_margin_slider"
         )
 
         Spacer(modifier = Modifier.height(12.dp))
 
         SettingSwitchRow(
-            title = "Battery condition",
-            explanation = "Boost less when the battery is below the threshold (discharging). Close to empty there is no boost. Charging ignores this condition.",
+            title = stringResource(R.string.afterburn_battery_title),
+            explanation = stringResource(R.string.afterburn_battery_desc),
             checked = b.batteryConditionEnabled,
-            onCheckedChange = { onUpdateAfterburn(null, null, null, null, it, null, null) },
+            onCheckedChange = { onUpdateAfterburn(null, null, null, null, it, null, null, null) },
             testTag = "afterburn_battery_switch"
         )
         SettingSliderRow(
-            title = "Low battery threshold",
+            title = stringResource(R.string.afterburn_battery_threshold_title),
             valueText = "${b.batteryThresholdPct}%",
-            explanation = "Below this level the boost is reduced.",
+            explanation = stringResource(R.string.afterburn_battery_threshold_desc),
             value = b.batteryThresholdPct.toFloat(),
             valueRange = 10f..90f,
             steps = 15,
             enabled = b.enabled && b.batteryConditionEnabled,
-            onValueChange = { onUpdateAfterburn(null, null, null, null, null, ((it / 5f).roundToInt() * 5), null) },
+            onValueChange = { onUpdateAfterburn(null, null, null, null, null, ((it / 5f).roundToInt() * 5), null, null) },
             testTag = "afterburn_battery_slider"
         )
 
         Spacer(modifier = Modifier.height(12.dp))
 
         SettingSwitchRow(
-            title = "Voltage sag awareness",
-            explanation = "Boost less when the battery voltage drops a lot under load (learned from the battery's own behaviour). Protects a weak or cold cell. Stops the boost at about 400 mV of sag.",
+            title = stringResource(R.string.afterburn_sag_title),
+            explanation = stringResource(R.string.afterburn_sag_desc),
             checked = b.voltageSagEnabled,
-            onCheckedChange = { onUpdateAfterburn(null, null, null, null, null, null, it) },
+            onCheckedChange = { onUpdateAfterburn(null, null, null, null, null, null, it, null) },
             testTag = "afterburn_sag_switch"
         )
 
+        Spacer(modifier = Modifier.height(12.dp))
+
+        SettingSwitchRow(
+            title = stringResource(R.string.afterburn_toast_setting_title),
+            explanation = stringResource(R.string.afterburn_toast_setting_desc),
+            checked = b.toastEnabled,
+            onCheckedChange = { onUpdateAfterburn(null, null, null, null, null, null, null, it) },
+            enabled = b.enabled,
+            testTag = "afterburn_toast_switch"
+        )
+
         Spacer(modifier = Modifier.height(8.dp))
+        val appsActivePrefix = pluralStringResource(
+            R.plurals.plural_apps_active,
+            config.boostPackages.size,
+            config.boostPackages.size
+        )
+        val battStr = if (telemetry.batteryPct >= 0) "${telemetry.batteryPct}%" else stringResource(R.string.common_na)
+        val realSuffix = if (telemetry.truePct >= 0f) {
+            " " + stringResource(R.string.afterburn_footer_real, telemetry.truePct.roundToInt())
+        } else ""
         Text(
-            text = "Active on ${config.boostPackages.size} app(s). Now: ${"%.1f".format(Locale.US, telemetry.temperatureC)} C, battery ${if (telemetry.batteryPct >= 0) "${telemetry.batteryPct}%" else "n/a"}${if (telemetry.truePct >= 0f) " (real ~${telemetry.truePct.roundToInt()}%)" else ""}, sag ${telemetry.batterySagMv.roundToInt()} mV.",
+            text = appsActivePrefix + stringResource(
+                R.string.afterburn_footer,
+                "%.1f".format(Locale.US, telemetry.temperatureC),
+                battStr,
+                realSuffix,
+                telemetry.batterySagMv.roundToInt()
+            ),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

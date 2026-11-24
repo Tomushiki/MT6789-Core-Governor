@@ -47,13 +47,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.model.InstalledAppInfo
 import com.example.ui.components.EcuCard
 import com.example.ui.components.StatusPill
@@ -76,10 +79,10 @@ fun AppsScreen(
 ) {
     val context = LocalContext.current
     val ext = LocalExtendedColors.current
-    var query by remember { mutableStateOf("") }
-    var showOnlyGames by remember { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var showOnlyGames by rememberSaveable { mutableStateOf(false) }
     // v3.0.0: false = Games list (Normal/Game mode), true = Afterburn list
-    var boostMode by remember { mutableStateOf(false) }
+    var boostMode by rememberSaveable { mutableStateOf(false) }
     val selectedPackages = if (boostMode) boostPackages else gamePackages
     val onToggleSelected: (String) -> Unit = if (boostMode) onToggleBoostPackage else onToggleGamePackage
     val selectColor = if (boostMode) ext.optimal else ext.warning
@@ -116,15 +119,17 @@ fun AppsScreen(
             ) {
                 Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                     Text(
-                        text = if (usageStatsGranted) "UsageStats Detection Active" else "UsageStats Optional (Root Fallback Active)",
+                        text = stringResource(
+                            if (usageStatsGranted) R.string.apps_usage_active
+                            else R.string.apps_usage_optional
+                        ),
                         style = MaterialTheme.typography.titleSmall
                     )
                     Text(
-                        text = if (usageStatsGranted) {
-                            "Fast foreground app events switch between Normal and Game modes."
-                        } else {
-                            "Grant Usage Access for instant app-switch detection, or rely on root dumpsys window fallback."
-                        },
+                        text = stringResource(
+                            if (usageStatsGranted) R.string.apps_usage_active_desc
+                            else R.string.apps_usage_optional_desc
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -137,7 +142,7 @@ fun AppsScreen(
                         },
                         modifier = Modifier.testTag("grant_usage_stats_button")
                     ) {
-                        Text("Grant")
+                        Text(stringResource(R.string.apps_grant_btn))
                     }
                 }
             }
@@ -149,22 +154,20 @@ fun AppsScreen(
             FilterChip(
                 selected = !boostMode,
                 onClick = { boostMode = false },
-                label = { Text("Games list (${gamePackages.size})") },
+                label = { Text(stringResource(R.string.apps_list_games, gamePackages.size)) },
                 modifier = Modifier.testTag("mode_games_chip")
             )
             FilterChip(
                 selected = boostMode,
                 onClick = { boostMode = true },
-                label = { Text("Afterburn (${boostPackages.size})") },
+                label = { Text(stringResource(R.string.apps_list_afterburn, boostPackages.size)) },
                 modifier = Modifier.testTag("mode_afterburn_chip")
             )
         }
         Text(
-            text = if (boostMode) {
-                "Tick the apps and games Afterburn may work on. Set it up in Tuning > Power."
-            } else {
-                "Tick the games that switch the governor into Game mode."
-            },
+            text = stringResource(
+                if (boostMode) R.string.apps_hint_afterburn else R.string.apps_hint_games
+            ),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp)
@@ -178,8 +181,8 @@ fun AppsScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("apps_search_input"),
-            placeholder = { Text("Search installed apps or package name...") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+            placeholder = { Text(stringResource(R.string.apps_search_hint)) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = stringResource(R.string.apps_search_cd)) },
             singleLine = true,
             shape = RoundedCornerShape(12.dp)
         )
@@ -195,18 +198,23 @@ fun AppsScreen(
                 FilterChip(
                     selected = !showOnlyGames,
                     onClick = { showOnlyGames = false },
-                    label = { Text("All (${installedApps.size})") },
+                    label = { Text(stringResource(R.string.apps_filter_all, installedApps.size)) },
                     modifier = Modifier.testTag("filter_all_apps_chip")
                 )
                 FilterChip(
                     selected = showOnlyGames,
                     onClick = { showOnlyGames = true },
-                    label = { Text(if (boostMode) "Selected (${boostPackages.size})" else "Games (${gamePackages.size})") },
+                    label = {
+                        Text(
+                            if (boostMode) stringResource(R.string.apps_filter_selected, boostPackages.size)
+                            else stringResource(R.string.apps_filter_games, gamePackages.size)
+                        )
+                    },
                     modifier = Modifier.testTag("filter_games_only_chip")
                 )
             }
             StatusPill(
-                label = "${selectedPackages.size} SELECTED",
+                label = stringResource(R.string.apps_selected_pill, selectedPackages.size),
                 color = selectColor,
                 containerColor = selectContainer
             )
@@ -228,7 +236,7 @@ fun AppsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "No matching apps found",
+                        text = stringResource(R.string.apps_empty),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

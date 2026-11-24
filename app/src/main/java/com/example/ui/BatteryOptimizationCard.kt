@@ -35,8 +35,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.CoreGovernorApp
+import com.example.R
 import com.example.governor.BatteryOptimization
 import com.example.ui.components.EcuCard
 import com.example.ui.components.StatusPill
@@ -58,7 +60,7 @@ fun BatteryOptimizationCard(modifier: Modifier = Modifier) {
 
     var exempt by remember { mutableStateOf(BatteryOptimization.isIgnoring(context)) }
     var busy by remember { mutableStateOf(false) }
-    var note by remember { mutableStateOf<String?>(null) }
+    var noteRes by remember { mutableStateOf<Int?>(null) }
 
     // Re-check while this card is on screen, so the status updates after the user returns from
     // Android's prompt. It is one cheap system call every 1.5 s and stops when the card leaves the screen.
@@ -76,23 +78,19 @@ fun BatteryOptimizationCard(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Background keep-alive",
+                text = stringResource(R.string.batt_opt_header),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary
             )
             StatusPill(
-                label = if (exempt) "UNRESTRICTED" else "MAY BE STOPPED",
+                label = stringResource(if (exempt) R.string.batt_opt_unrestricted else R.string.batt_opt_restricted),
                 color = if (exempt) ext.optimal else ext.warning,
                 containerColor = if (exempt) ext.optimalContainer else ext.warningContainer
             )
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = if (exempt) {
-                "Android battery optimization is off for CoreGovernor, so the system should not stop the governor in the background."
-            } else {
-                "Android may stop the governor when the phone idles. Turn battery optimization off for CoreGovernor so it can stay alive in the background."
-            },
+            text = stringResource(if (exempt) R.string.batt_opt_desc_ok else R.string.batt_opt_desc_warn),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -102,15 +100,15 @@ fun BatteryOptimizationCard(modifier: Modifier = Modifier) {
                 onClick = {
                     if (busy) return@Button
                     busy = true
-                    note = null
+                    noteRes = null
                     scope.launch {
                         val ok = BatteryOptimization.exemptWithRoot(context, engine.rootShell)
                         busy = false
                         if (ok) {
                             exempt = true
-                            note = "Done. Battery optimization is now off for CoreGovernor."
+                            noteRes = R.string.batt_opt_done_root
                         } else {
-                            note = "The root method did not work, so Android's own prompt is opening. Choose Allow."
+                            noteRes = R.string.batt_opt_fallback_prompt
                             BatteryOptimization.openSystemPrompt(context)
                         }
                     }
@@ -120,7 +118,7 @@ fun BatteryOptimizationCard(modifier: Modifier = Modifier) {
                     .fillMaxWidth()
                     .testTag("battery_optimization_button")
             ) {
-                Text(if (busy) "Working…" else "Allow background activity")
+                Text(stringResource(if (busy) R.string.batt_opt_working else R.string.batt_opt_allow_btn))
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
@@ -130,19 +128,19 @@ fun BatteryOptimizationCard(modifier: Modifier = Modifier) {
                 .fillMaxWidth()
                 .testTag("app_battery_settings_button")
         ) {
-            Text("Open app settings")
+            Text(stringResource(R.string.batt_opt_open_settings))
         }
-        note?.let {
+        noteRes?.let { res ->
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = it,
+                text = stringResource(res),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "Some phone brands also have their own Autostart or Background settings. If the governor still stops, check them in Open app settings.",
+            text = stringResource(R.string.batt_opt_oem_note),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

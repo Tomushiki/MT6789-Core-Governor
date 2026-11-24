@@ -33,8 +33,10 @@ import androidx.core.content.ContextCompat
 import com.example.CoreGovernorApp
 import com.example.MainActivity
 import com.example.R
+import com.example.data.LocaleHelper
 import com.example.governor.GovernorEngine
 import com.example.model.BatteryState
+import com.example.model.GovernorMode
 import com.example.model.TelemetryState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,17 +46,27 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class GovernorService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var telemetryJob: Job? = null
     private var overlayNotifyJob: Job? = null
+    private var protectionJob: Job? = null
+    private var afterburnToastJob: Job? = null
     private lateinit var engine: GovernorEngine
     private lateinit var overlayController: OverlayController
+    private lateinit var afterburnToastController: AfterburnToastController
     private var screenReceiverRegistered = false
     private var lastNotificationKey: String? = null
+    private var localizedCtx: Context = this
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.wrap(newBase))
+    }
 
     private val notificationManager: NotificationManager by lazy {
         getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -109,6 +121,8 @@ class GovernorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunningFlag = true
+        localizedCtx = LocaleHelper.wrap(this)
         engine = (application as CoreGovernorApp).engine
         ensureNotificationChannel()
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -117,6 +131,16 @@ class GovernorService : Service() {
         overlayController = OverlayController(this, engine, serviceScope)
         overlayController.setScreenInteractive(interactive)
         overlayController.start()
+        afterburnToastController = AfterburnToastController(
+            this,
+            serviceScope,
+            contextWrapper = { LocaleHelper.wrap(it) }
+        )
+        afterburnToastJob = serviceScope.launch {
+            engine.afterburnEvents.collect { evt ->
+                afterburnToastController.onEvent(evt)
+            }
+        }
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -133,6 +157,9 @@ class GovernorService : Service() {
                 // An explicit stop: do not bring the governor back after the next reboot.
                 BootState.setRunning(this, false)
                 stableJob?.cancel()
+                protectionJob?.cancel()
+                protectionJob = null
+                engine.stopProtectionWatchdogAsync()
                 BootState.clearGuard(this)
                 engine.stopAndRestore()
                 stopForegroundCompat()
@@ -148,6 +175,14 @@ class GovernorService : Service() {
                 notifyIfChanged(engine.telemetry.value)
                 return START_STICKY
             }
+            ACTION_REFRESH_LOCALE -> {
+                localizedCtx = LocaleHelper.wrap(this)
+                ensureNotificationChannel()
+                lastNotificationKey = null
+                notifyIfChanged(engine.telemetry.value)
+                overlayController.refreshLocale()
+                return START_STICKY
+            }
             else -> {
                 // Remember that it should be running, so it is restored after a reboot.
                 BootState.setRunning(this, true)
@@ -161,7 +196,26 @@ class GovernorService : Service() {
                 startForegroundCompat(buildNotification(engine.telemetry.value))
                 engine.startGovernor()
                 observeTelemetry()
+                startProtectionLoop()
                 return START_STICKY
+            }
+        }
+    }
+
+    private fun startProtectionLoop() {
+        if (protectionJob?.isActive == true) return
+        if (engine.config.value.protectFromKillEnabled) {
+            engine.processProtection.touchStopFlag()
+        }
+        protectionJob = serviceScope.launch(Dispatchers.IO) {
+            val initialEnabled = engine.config.value.protectFromKillEnabled
+            engine.processProtection.applyAndVerify(
+                enabled = initialEnabled,
+                watchServiceAlive = initialEnabled
+            )
+            while (isActive) {
+                kotlinx.coroutines.delay(30_000L)
+                engine.processProtection.periodicMaintain(engine.config.value.protectFromKillEnabled)
             }
         }
     }
@@ -215,12 +269,19 @@ class GovernorService : Service() {
 
     private fun buildNotificationContent(state: TelemetryState): NotificationContent {
         val statusTitle = if (state.isRunning) {
+            val modeLabel = localizedCtx.getString(
+                if (state.activeMode == GovernorMode.GAME) R.string.mode_game else R.string.mode_normal
+            )
             val capText = if (state.effectiveCpuCapPct < 99.5f || state.effectiveGpuCapPct < 99.5f) {
-                " • Cap ${state.effectiveCpuCapPct.toInt()}%/${state.effectiveGpuCapPct.toInt()}%"
+                localizedCtx.getString(
+                    R.string.notif_cap_suffix,
+                    state.effectiveCpuCapPct.toInt(),
+                    state.effectiveGpuCapPct.toInt()
+                )
             } else ""
-            "CoreGovernor [${state.activeMode.name}]$capText"
+            localizedCtx.getString(R.string.notif_title_running, modeLabel, capText)
         } else {
-            "CoreGovernor Initializing..."
+            localizedCtx.getString(R.string.notif_title_initializing)
         }
 
         val clustersSummary = state.clusters.joinToString(" | ") { c ->
@@ -228,12 +289,24 @@ class GovernorService : Service() {
         }
         val gpuText = if (state.gpu.available) "GPU:${state.gpu.targetFreqKhz / 1000}M" else ""
         val powerText = when (state.batteryState) {
-            BatteryState.CHARGING -> "\u26A1+${"%.2f".format(state.chargeWatts)}W chg"
-            BatteryState.FULL_PLUGGED -> "PLUG 0.0"
-            BatteryState.DISCHARGING -> "${"%.2f".format(state.watts)}W"
-            BatteryState.UNKNOWN -> "--W"
+            BatteryState.CHARGING -> localizedCtx.getString(
+                R.string.notif_power_charging,
+                String.format(Locale.US, "%.2f", state.chargeWatts)
+            )
+            BatteryState.FULL_PLUGGED -> localizedCtx.getString(R.string.notif_power_plugged)
+            BatteryState.DISCHARGING -> localizedCtx.getString(
+                R.string.notif_power_discharging,
+                String.format(Locale.US, "%.2f", state.watts)
+            )
+            BatteryState.UNKNOWN -> localizedCtx.getString(R.string.notif_power_unknown)
         }
-        val telemetryLine = "${"%.1f".format(state.temperatureC)}°C • $powerText • $clustersSummary $gpuText".trim()
+        val telemetryLine = localizedCtx.getString(
+            R.string.notif_telemetry_line,
+            String.format(Locale.US, "%.1f", state.temperatureC),
+            powerText,
+            clustersSummary,
+            gpuText
+        ).trim()
         val cfg = engine.config.value
         val showUnlock = cfg.overlayEnabled && cfg.overlayClickThrough
         val key = "$statusTitle\u0000$telemetryLine\u0000$showUnlock"
@@ -255,11 +328,11 @@ class GovernorService : Service() {
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setContentIntent(openIntent)
-            .addAction(0, getString(R.string.action_toggle_mode), modeIntent)
-            .addAction(0, getString(R.string.action_stop_governor), stopIntent)
+            .addAction(0, localizedCtx.getString(R.string.action_toggle_mode), modeIntent)
+            .addAction(0, localizedCtx.getString(R.string.action_stop_governor), stopIntent)
 
         if (content.showUnlock) {
-            builder.addAction(0, "Unlock overlay", unlockIntent)
+            builder.addAction(0, localizedCtx.getString(R.string.action_unlock_overlay), unlockIntent)
         }
         return builder.build()
     }
@@ -275,10 +348,10 @@ class GovernorService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                getString(R.string.notification_channel_name),
+                localizedCtx.getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = getString(R.string.notification_channel_desc)
+                description = localizedCtx.getString(R.string.notification_channel_desc)
                 setShowBadge(false)
             }
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -287,6 +360,7 @@ class GovernorService : Service() {
     }
 
     override fun onDestroy() {
+        isRunningFlag = false
         if (screenReceiverRegistered) {
             try {
                 unregisterReceiver(screenReceiver)
@@ -295,6 +369,7 @@ class GovernorService : Service() {
             screenReceiverRegistered = false
         }
         overlayController.stop()
+        afterburnToastController.dismissNow()
         engine.stopAndRestore()
         engine.storage.flush()
         engine.powerModel.flush()
@@ -302,6 +377,8 @@ class GovernorService : Service() {
         engine.batteryEstimator.flush()
         engine.rating.flush()
         stableJob?.cancel()
+        protectionJob?.cancel()
+        afterburnToastJob?.cancel()
         overlayNotifyJob?.cancel()
         telemetryJob?.cancel()
         serviceScope.cancel()
@@ -317,7 +394,11 @@ class GovernorService : Service() {
         const val ACTION_STOP = "com.example.action.STOP_GOVERNOR"
         const val ACTION_CYCLE_MODE = "com.example.action.CYCLE_MODE"
         const val ACTION_UNLOCK_OVERLAY = "com.example.action.UNLOCK_OVERLAY"
+        const val ACTION_REFRESH_LOCALE = "com.example.action.REFRESH_LOCALE"
         const val EXTRA_FROM_BOOT = "com.example.extra.FROM_BOOT"
+
+        @Volatile
+        private var isRunningFlag: Boolean = false
 
         fun start(context: Context, fromBoot: Boolean = false) {
             val intent = Intent(context, GovernorService::class.java).apply {
@@ -334,6 +415,15 @@ class GovernorService : Service() {
         fun stop(context: Context) {
             val intent = Intent(context, GovernorService::class.java).apply { action = ACTION_STOP }
             context.startService(intent)
+        }
+
+        fun refreshLocale(context: Context) {
+            if (!isRunningFlag) return
+            val intent = Intent(context, GovernorService::class.java).apply { action = ACTION_REFRESH_LOCALE }
+            try {
+                context.startService(intent)
+            } catch (_: Throwable) {
+            }
         }
     }
 }

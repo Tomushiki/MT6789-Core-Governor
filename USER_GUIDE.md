@@ -143,6 +143,14 @@ CoreGovernor estimates your battery's real usable capacity and passively learns 
 
 If the governor does not stay running for a minute after an automatic start at boot, 3 times in a row, the next automatic start is skipped once, and Tuning > Control shows a short note. Start it by hand from the Monitor screen. A stable run clears the note.
 
+## 7i. Staying alive, Afterburn toast, languages and updates (3.5.0)
+
+- **Protect from being killed (root).** Tuning > Control. On by default. Keeps CoreGovernor and its root helper from being killed by the system and restarts the service if it dies while the governor is meant to be running. The status line shows what is applied (for example oom_score_adj, whitelisted, standby, phantom killer, watchdog). Switching it off restores the system settings it changed. If your phone still kills the app, also allow background activity in the app's system settings.
+- **Afterburn toast.** A short pill at the top of the screen when Afterburn starts boosting a selected app. It never takes touches. Needs the overlay permission. Switch: Tuning > Afterburn > Afterburn toast.
+- **Language.** System tab > Appearance > Language. Changes apply at once.
+- **Updates.** Turn on "Include pre-releases" if you want test versions. If GitHub says you are rate limited, the message tells you when to try again.
+- **Dimensity 8300 preset.** In Tuning > Presets, only on matching phones. It changes the CPU/GPU maximums and the temperature throttle and leaves everything else as it is.
+
 ## 8. Suggested starting points
 
 Daily use: start from the Balanced preset. Leave temperature and power throttling on. Keep Normal mode maximums below the top step if the phone gets warm.

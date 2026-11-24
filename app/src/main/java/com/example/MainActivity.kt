@@ -16,10 +16,12 @@
 package com.example
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.annotation.StringRes
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -77,13 +79,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.LocaleHelper
 import com.example.governor.UpdateState
+import com.example.model.GovernorMode
 import com.example.ui.AdaptiveRefreshCard
 import com.example.ui.AppDemandCard
 import com.example.ui.AppsScreen
@@ -101,21 +106,25 @@ import com.example.ui.theme.CoreGovernorTheme
 import com.example.ui.theme.LocalExtendedColors
 
 enum class NavTab(
-    val label: String,
+    @StringRes val labelRes: Int,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector
 ) {
-    MONITOR("Monitor", Icons.Filled.Speed, Icons.Outlined.Speed),
-    METRICS("Metrics", Icons.Filled.Insights, Icons.Outlined.Insights),
-    ENERGY("Energy", Icons.Filled.Bolt, Icons.Outlined.Bolt),
-    TUNING("Tuning", Icons.Filled.Tune, Icons.Outlined.Tune),
-    OPPS("OPPs", Icons.Filled.TableChart, Icons.Outlined.TableChart),
-    SYSTEM("System", Icons.Filled.Memory, Icons.Outlined.Memory),
-    APPS("Apps", Icons.Filled.Apps, Icons.Outlined.Apps),
-    LOG("Log", Icons.Filled.ListAlt, Icons.Outlined.ListAlt)
+    MONITOR(R.string.nav_monitor, Icons.Filled.Speed, Icons.Outlined.Speed),
+    METRICS(R.string.nav_metrics, Icons.Filled.Insights, Icons.Outlined.Insights),
+    ENERGY(R.string.nav_energy, Icons.Filled.Bolt, Icons.Outlined.Bolt),
+    TUNING(R.string.nav_tuning, Icons.Filled.Tune, Icons.Outlined.Tune),
+    OPPS(R.string.nav_opps, Icons.Filled.TableChart, Icons.Outlined.TableChart),
+    SYSTEM(R.string.nav_system, Icons.Filled.Memory, Icons.Outlined.Memory),
+    APPS(R.string.nav_apps, Icons.Filled.Apps, Icons.Outlined.Apps),
+    LOG(R.string.nav_log, Icons.Filled.ListAlt, Icons.Outlined.ListAlt)
 }
 
 class MainActivity : ComponentActivity() {
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -162,7 +171,10 @@ fun CoreGovernorRootScreen(
     val selectedSession by vm.selectedSession.collectAsStateWithLifecycle()
     val selectedSamples by vm.selectedSamples.collectAsStateWithLifecycle()
     val updateState by vm.updateState.collectAsStateWithLifecycle()
-    var updateDismissed by rememberSaveable { mutableStateOf(false) }
+    val includePrereleases by vm.includePrereleases.collectAsStateWithLifecycle()
+    val dismissedUpdateVersion by vm.dismissedUpdateVersion.collectAsStateWithLifecycle()
+    val protectionStatus by vm.protectionStatus.collectAsStateWithLifecycle()
+    var showUpdatePanel by rememberSaveable { mutableStateOf(false) }
 
     val smartControls by vm.appControls.collectAsStateWithLifecycle()
     var currentTab by rememberSaveable { mutableStateOf(NavTab.MONITOR) }
@@ -238,28 +250,41 @@ fun CoreGovernorRootScreen(
                     ) {
                         Column {
                             Text(
-                                text = "CoreGovernor",
+                                text = stringResource(R.string.app_name),
                                 style = MaterialTheme.typography.headlineSmall
                             )
+                            val versionSummary = when (val u = updateState) {
+                                is UpdateState.Checking -> stringResource(R.string.update_status_checking, vm.currentVersion)
+                                is UpdateState.UpToDate -> stringResource(R.string.update_status_up_to_date, vm.currentVersion)
+                                is UpdateState.Available -> stringResource(R.string.update_status_available, vm.currentVersion, u.latest)
+                                is UpdateState.Failed.RateLimited -> stringResource(
+                                    R.string.update_status_rate_limited,
+                                    vm.currentVersion,
+                                    com.example.governor.UpdateChecker.formatRetryTime(u.retryAtMs)
+                                )
+                                is UpdateState.Failed.Offline -> stringResource(R.string.update_status_offline, vm.currentVersion)
+                                is UpdateState.Failed.NoRelease -> stringResource(R.string.update_status_no_release, vm.currentVersion)
+                                is UpdateState.Failed.Http -> stringResource(R.string.update_status_http, vm.currentVersion, u.code)
+                                is UpdateState.Failed -> stringResource(R.string.update_status_failed, vm.currentVersion)
+                                else -> stringResource(R.string.update_status_idle, vm.currentVersion)
+                            }
                             Text(
-                                text = when (val u = updateState) {
-                                    is UpdateState.Checking -> "v${vm.currentVersion} • checking for updates…"
-                                    is UpdateState.UpToDate -> "v${vm.currentVersion} • up to date"
-                                    is UpdateState.Available -> "v${vm.currentVersion} • update ${u.latest} available"
-                                    is UpdateState.Failed -> "v${vm.currentVersion} • update check failed (tap to retry)"
-                                    else -> "v${vm.currentVersion} • tap to check for updates"
-                                },
+                                text = versionSummary,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier
-                                    .clickable { vm.checkForUpdate(); updateDismissed = false }
+                                    .clickable {
+                                        showUpdatePanel = true
+                                        vm.checkForUpdate()
+                                    }
                                     .testTag("version_line")
                             )
                         }
+                        val isGame = activeMode == GovernorMode.GAME
                         StatusPill(
-                            label = activeMode.name,
-                            color = if (activeMode.name == "GAME") ext.warning else MaterialTheme.colorScheme.primary,
-                            containerColor = if (activeMode.name == "GAME") ext.warningContainer else MaterialTheme.colorScheme.primaryContainer
+                            label = stringResource(if (isGame) R.string.mode_game else R.string.mode_normal),
+                            color = if (isGame) ext.warning else MaterialTheme.colorScheme.primary,
+                            containerColor = if (isGame) ext.warningContainer else MaterialTheme.colorScheme.primaryContainer
                         )
                     }
                 }
@@ -272,6 +297,7 @@ fun CoreGovernorRootScreen(
             ) {
                 NavTab.entries.forEach { tab ->
                     val selected = currentTab == tab
+                    val tabLabel = stringResource(tab.labelRes)
                     NavigationBarItem(
                         selected = selected,
                         onClick = {
@@ -281,10 +307,10 @@ fun CoreGovernorRootScreen(
                         icon = {
                             Icon(
                                 imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
-                                contentDescription = tab.label
+                                contentDescription = tabLabel
                             )
                         },
-                        label = { Text(tab.label, maxLines = 1, softWrap = false) },
+                        label = { Text(tabLabel, maxLines = 1, softWrap = false) },
                         alwaysShowLabel = false,
                         colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.primary,
@@ -300,32 +326,155 @@ fun CoreGovernorRootScreen(
         }
     ) { innerPadding ->
         Column(Modifier.padding(innerPadding)) {
-        (updateState as? UpdateState.Available)?.let { u ->
-            if (!updateDismissed) {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    )
-                ) {
-                    Column(Modifier.padding(12.dp)) {
+        val availUpdate = updateState as? UpdateState.Available
+        val showAvailCard = availUpdate != null && (showUpdatePanel || dismissedUpdateVersion != availUpdate.latest)
+        if (showAvailCard || showUpdatePanel) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .testTag("update_card"),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    when (val u = updateState) {
+                        is UpdateState.Available -> {
+                            val titleText = if (u.isPrerelease) {
+                                stringResource(R.string.update_card_prerelease, u.latest)
+                            } else {
+                                stringResource(R.string.update_card_available, u.latest)
+                            }
+                            Text(
+                                text = titleText,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                text = stringResource(R.string.update_card_installed, u.current),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            if (u.notes.isNotBlank()) {
+                                Text(
+                                    text = u.notes,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(top = 6.dp)
+                                )
+                            }
+                        }
+                        is UpdateState.Checking -> {
+                            Text(
+                                text = stringResource(R.string.update_card_checking),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        is UpdateState.UpToDate -> {
+                            Text(
+                                text = stringResource(R.string.update_card_up_to_date, u.current),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        is UpdateState.Failed.RateLimited -> {
+                            Text(
+                                text = stringResource(
+                                    R.string.update_card_rate_limited,
+                                    com.example.governor.UpdateChecker.formatRetryTime(u.retryAtMs)
+                                ),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        is UpdateState.Failed.Offline -> {
+                            Text(
+                                text = stringResource(R.string.update_card_offline),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        is UpdateState.Failed.NoRelease -> {
+                            Text(
+                                text = stringResource(R.string.update_card_no_release),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        is UpdateState.Failed.Http -> {
+                            Text(
+                                text = stringResource(R.string.update_card_http, u.code),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        is UpdateState.Failed -> {
+                            Text(
+                                text = u.reason,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        UpdateState.Idle -> {
+                            Text(
+                                text = stringResource(R.string.update_card_title),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            "Update available: v${u.latest}",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            "You have v${u.current}.",
+                            text = stringResource(R.string.update_include_prereleases),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(onClick = { vm.openUrl(u.pageUrl) }) { Text("Release notes") }
-                            TextButton(onClick = { updateDismissed = true }) { Text("Later") }
-                            Button(onClick = { vm.openUrl(u.downloadUrl) }) { Text("Download") }
+                        androidx.compose.material3.Switch(
+                            checked = includePrereleases,
+                            onCheckedChange = vm::setIncludePrereleases,
+                            modifier = Modifier.testTag("include_prereleases_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        val avail = updateState as? UpdateState.Available
+                        if (avail != null) {
+                            if (avail.pageUrl.isNotBlank()) {
+                                TextButton(onClick = { vm.openUrl(avail.pageUrl) }) {
+                                    Text(stringResource(R.string.update_btn_notes))
+                                }
+                            }
+                            TextButton(
+                                onClick = {
+                                    vm.dismissUpdate(avail.latest)
+                                    showUpdatePanel = false
+                                },
+                                modifier = Modifier.testTag("update_dismiss_button")
+                            ) { Text(stringResource(R.string.common_dismiss)) }
+                            Button(
+                                onClick = { vm.openUrl(avail.downloadUrl) },
+                                modifier = Modifier.testTag("update_download_button")
+                            ) { Text(stringResource(R.string.update_btn_download)) }
+                        } else {
+                            TextButton(
+                                onClick = { showUpdatePanel = false },
+                                modifier = Modifier.testTag("update_dismiss_button")
+                            ) { Text(stringResource(R.string.common_dismiss)) }
+                            if (updateState !is UpdateState.Checking) {
+                                TextButton(onClick = { vm.checkForUpdate() }) {
+                                    Text(stringResource(R.string.common_retry))
+                                }
+                            }
                         }
                     }
                 }
@@ -441,6 +590,9 @@ fun CoreGovernorRootScreen(
                 onRediscoverHardware = vm::rediscoverHardware,
                 sensorPin = sensorPin,
                 onUpdateSensorPin = vm::updateSensorPin,
+                protectionStatus = protectionStatus,
+                onSetProtectFromKill = vm::setProtectFromKill,
+                onReverifyProtection = vm::reverifyProtection,
                 modifier = Modifier
             )
             NavTab.OPPS -> OppTableScreen(

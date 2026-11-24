@@ -47,6 +47,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,10 +64,15 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.governor.MetricSample
 import com.example.governor.MetricSummary
 import com.example.governor.MetricsMath
@@ -94,7 +100,7 @@ private data class ChartSeries(
 )
 
 private fun fmt(v: Float, decimals: Int = 1): String =
-    if (v.isNaN() || v.isInfinite()) "–" else String.format(Locale.ROOT, "%.${decimals}f", v)
+    if (v.isNaN() || v.isInfinite()) "–" else String.format(Locale.US, "%.${decimals}f", v)
 
 private fun fmtDuration(ms: Long): String {
     val total = (ms / 1000L).coerceAtLeast(0L)
@@ -131,7 +137,11 @@ fun PerformanceScreen(
         val target = csvTarget
         if (uri != null && target != null) {
             onExportCsv(target, uri)
-            android.widget.Toast.makeText(exportContext, "Saving CSV", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(
+                exportContext,
+                exportContext.getString(R.string.metrics_saving_csv),
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
         }
     }
     val ext = LocalExtendedColors.current
@@ -173,10 +183,10 @@ fun PerformanceScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Performance Metrics", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.metrics_title), style = MaterialTheme.typography.titleMedium)
                     if (recording) {
                         StatusPill(
-                            label = "REC GAME",
+                            label = stringResource(R.string.metrics_rec_game),
                             color = ext.warning,
                             containerColor = ext.warningContainer
                         )
@@ -192,13 +202,17 @@ fun PerformanceScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "Saved session • ${formatDate(selectedSession.startMs)} • ${fmtDuration(selectedSession.summary.durationMs)}",
+                        text = stringResource(
+                            R.string.metrics_saved_session_meta,
+                            formatDate(selectedSession.startMs),
+                            fmtDuration(selectedSession.summary.durationMs)
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedButton(onClick = { scrub = null; onSelectSession(null) }) {
-                        Text("Back to live")
+                        Text(stringResource(R.string.metrics_back_to_live))
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -217,12 +231,17 @@ fun PerformanceScreen(
                                 type = "text/plain"
                                 putExtra(android.content.Intent.EXTRA_TEXT, text)
                             }
-                            exportContext.startActivity(android.content.Intent.createChooser(send, "Share session"))
-                        }) { Text("Share summary") }
+                            exportContext.startActivity(
+                                android.content.Intent.createChooser(
+                                    send,
+                                    exportContext.getString(R.string.metrics_share_chooser)
+                                )
+                            )
+                        }) { Text(stringResource(R.string.metrics_share_summary)) }
                         OutlinedButton(onClick = {
                             csvTarget = selectedSession
                             csvLauncher.launch(selectedSession.fileName)
-                        }) { Text("Save CSV") }
+                        }) { Text(stringResource(R.string.metrics_save_csv)) }
                     }
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -230,7 +249,7 @@ fun PerformanceScreen(
                             FilterChip(
                                 selected = windowMin == m,
                                 onClick = { windowMin = m; scrub = null },
-                                label = { Text("Live ${m}m") }
+                                label = { Text(stringResource(R.string.metrics_live_window, m)) }
                             )
                         }
                     }
@@ -241,12 +260,14 @@ fun PerformanceScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Game sessions are saved automatically.",
+                            text = stringResource(R.string.metrics_auto_saved_note),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f)
                         )
-                        TextButton(onClick = { scrub = null; onClearLive() }) { Text("Clear live") }
+                        TextButton(onClick = { scrub = null; onClearLive() }) {
+                            Text(stringResource(R.string.metrics_clear_live))
+                        }
                     }
                 }
             }
@@ -257,9 +278,9 @@ fun PerformanceScreen(
                 EcuCard {
                     Text(
                         text = if (viewingSaved) {
-                            "Loading session…"
+                            stringResource(R.string.metrics_loading_session)
                         } else {
-                            "No data yet. Start the governor on the Monitor tab. Graphs fill in at one point per second."
+                            stringResource(R.string.metrics_no_data)
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -274,11 +295,11 @@ fun PerformanceScreen(
             item {
                 EcuCard {
                     MetricChart(
-                        title = "POWER • TEMP • FPS",
+                        title = stringResource(R.string.metrics_chart_power_temp_fps),
                         series = listOf(
-                            ChartSeries("FPS", primary, fpsSeries, "", 0),
-                            ChartSeries("Power", ext.optimal, wattSeries, " W", 1, states = battStates, chargingColor = ext.warning),
-                            ChartSeries("Temp", ext.throttle, tempSeries, "°C", 1, zeroBased = false)
+                            ChartSeries(stringResource(R.string.metrics_series_fps), primary, fpsSeries, "", 0),
+                            ChartSeries(stringResource(R.string.metrics_series_power), ext.optimal, wattSeries, " W", 1, states = battStates, chargingColor = ext.warning),
+                            ChartSeries(stringResource(R.string.metrics_series_temp), ext.throttle, tempSeries, "°C", 1, zeroBased = false)
                         ),
                         timesMs = times,
                         saved = viewingSaved,
@@ -294,8 +315,8 @@ fun PerformanceScreen(
             item {
                 EcuCard {
                     MetricChart(
-                        title = "FPS PER WATT",
-                        series = listOf(ChartSeries("FPS/W", primary, fpwSeries, "", 1)),
+                        title = stringResource(R.string.metrics_chart_fpw),
+                        series = listOf(ChartSeries(stringResource(R.string.metrics_series_fpw), primary, fpwSeries, "", 1)),
                         timesMs = times,
                         saved = viewingSaved,
                         scrub = scrub,
@@ -309,8 +330,8 @@ fun PerformanceScreen(
             item {
                 EcuCard {
                     MetricChart(
-                        title = "WORK PER WATT (busy GHz / W)",
-                        series = listOf(ChartSeries("Work/W", secondary, wpwSeries, "", 2)),
+                        title = stringResource(R.string.metrics_chart_wpw),
+                        series = listOf(ChartSeries(stringResource(R.string.metrics_series_wpw), secondary, wpwSeries, "", 2)),
                         timesMs = times,
                         saved = viewingSaved,
                         scrub = scrub,
@@ -329,14 +350,20 @@ fun PerformanceScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("SAVED GAME SESSIONS", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        stringResource(R.string.metrics_saved_sessions_header),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     if (sessions.isNotEmpty()) {
-                        TextButton(onClick = { confirmDeleteAll = true }) { Text("Delete all") }
+                        TextButton(onClick = { confirmDeleteAll = true }) {
+                            Text(stringResource(R.string.metrics_delete_all))
+                        }
                     }
                 }
                 if (sessions.isEmpty()) {
                     Text(
-                        text = "Nothing saved yet. A session is recorded while a game from the Apps tab is in the foreground, and saved once it lasts at least 20 seconds. The newest 40 are kept.",
+                        text = stringResource(R.string.metrics_sessions_empty),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -356,11 +383,14 @@ fun PerformanceScreen(
         // 7. How the numbers are made
         item {
             EcuCard {
-                Text("HOW THESE ARE CALCULATED", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    stringResource(R.string.metrics_how_calc_header),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "FPS per watt = FPS shown by the app divided by battery power draw. Work per watt = (CPU cluster frequency × cores × load + GPU frequency × load), in busy GHz, divided by power. " +
-                        "Work is an estimate, not a benchmark, so compare it only on this phone. Higher is more efficient. Ratios use a 5-second average and are blank while power is below 0.3 W or there is no FPS.",
+                    text = stringResource(R.string.metrics_how_calc_body),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -371,13 +401,17 @@ fun PerformanceScreen(
     if (confirmDeleteAll) {
         AlertDialog(
             onDismissRequest = { confirmDeleteAll = false },
-            title = { Text("Delete all saved sessions?") },
-            text = { Text("This removes ${sessions.size} saved session(s). It cannot be undone.") },
+            title = { Text(stringResource(R.string.metrics_delete_all_title)) },
+            text = { Text(pluralStringResource(R.plurals.plural_sessions_remove, sessions.size, sessions.size)) },
             confirmButton = {
-                TextButton(onClick = { confirmDeleteAll = false; onDeleteAllSessions() }) { Text("Delete") }
+                TextButton(onClick = { confirmDeleteAll = false; onDeleteAllSessions() }) {
+                    Text(stringResource(R.string.common_delete))
+                }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDeleteAll = false }) { Text("Cancel") }
+                TextButton(onClick = { confirmDeleteAll = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
             }
         )
     }
@@ -391,39 +425,46 @@ private fun SummaryCard(summary: MetricSummary, live: Boolean, last: MetricSampl
     EcuCard {
         if (live) {
             val nowPwr = when (last.batteryState) {
-                BatteryState.CHARGING -> "Chg ${fmt(last.watts)} W"
-                BatteryState.FULL_PLUGGED -> "Plug 0.0 W"
+                BatteryState.CHARGING -> stringResource(R.string.metrics_chg_val, fmt(last.watts))
+                BatteryState.FULL_PLUGGED -> stringResource(R.string.metrics_plug_val)
                 BatteryState.DISCHARGING -> "${fmt(last.watts)} W"
                 BatteryState.UNKNOWN -> "– W"
             }
-            Text(
-                text = "NOW  ${if (last.fps >= 0f) fmt(last.fps, 0) else "–"} FPS  •  $nowPwr  •  ${fmt(last.tempC)}°C",
-                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodyMedium.fontSize),
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Text(
+                    text = stringResource(
+                        R.string.metrics_now_line,
+                        if (last.fps >= 0f) fmt(last.fps, 0) else "–",
+                        nowPwr,
+                        fmt(last.tempC)
+                    ),
+                    style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodyMedium.fontSize),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
             Spacer(modifier = Modifier.height(10.dp))
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatTile("AVG FPS", fmt(summary.avgFps, 0), Modifier.weight(1f))
-            StatTile("5% LOW", fmt(summary.p5Fps, 0), Modifier.weight(1f))
-            StatTile("AVG POWER", fmt(summary.avgWatts) + " W", Modifier.weight(1f))
+            StatTile(stringResource(R.string.metrics_stat_avg_fps), fmt(summary.avgFps, 0), Modifier.weight(1f))
+            StatTile(stringResource(R.string.metrics_stat_5pct_low), fmt(summary.p5Fps, 0), Modifier.weight(1f))
+            StatTile(stringResource(R.string.metrics_stat_avg_power), fmt(summary.avgWatts) + " W", Modifier.weight(1f))
         }
         Spacer(modifier = Modifier.height(8.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatTile("FPS / W", fmt(summary.avgFpsPerWatt), Modifier.weight(1f))
-            StatTile("WORK / W", fmt(summary.avgWorkPerWatt, 2), Modifier.weight(1f))
-            StatTile("MAX TEMP", fmt(summary.maxTempC) + "°C", Modifier.weight(1f))
+            StatTile(stringResource(R.string.metrics_stat_fpw), fmt(summary.avgFpsPerWatt), Modifier.weight(1f))
+            StatTile(stringResource(R.string.metrics_stat_wpw), fmt(summary.avgWorkPerWatt, 2), Modifier.weight(1f))
+            StatTile(stringResource(R.string.metrics_stat_max_temp), fmt(summary.maxTempC) + "°C", Modifier.weight(1f))
         }
         Spacer(modifier = Modifier.height(8.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatTile("PEAK POWER", fmt(summary.maxWatts) + " W", Modifier.weight(1f))
-            StatTile("MIN POWER", fmt(summary.minWatts) + " W", Modifier.weight(1f))
-            StatTile("ENERGY", fmt(summary.energyWh, 2) + " Wh", Modifier.weight(1f))
+            StatTile(stringResource(R.string.metrics_stat_peak_power), fmt(summary.maxWatts) + " W", Modifier.weight(1f))
+            StatTile(stringResource(R.string.metrics_stat_min_power), fmt(summary.minWatts) + " W", Modifier.weight(1f))
+            StatTile(stringResource(R.string.metrics_stat_energy), fmt(summary.energyWh, 2) + " Wh", Modifier.weight(1f))
         }
         Spacer(modifier = Modifier.height(8.dp))
-        val chgNote = if (summary.includesCharging) " • charging excluded from power stats" else ""
+        val chgNote = if (summary.includesCharging) stringResource(R.string.metrics_chg_excluded) else ""
         Text(
-            text = "${fmtDuration(summary.durationMs)} shown$chgNote",
+            text = stringResource(R.string.metrics_duration_shown, fmtDuration(summary.durationMs), chgNote),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -444,12 +485,14 @@ private fun StatTile(label: String, value: String, modifier: Modifier = Modifier
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1
         )
-        Text(
-            text = value,
-            style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize),
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1
-        )
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Text(
+                text = value,
+                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.titleSmall.fontSize),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1
+            )
+        }
     }
 }
 
@@ -476,25 +519,31 @@ private fun SessionRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                val chgBadge = if (s.includesCharging) " • incl. charging" else ""
+                val chgBadge = if (s.includesCharging) stringResource(R.string.metrics_incl_charging) else ""
                 Text(
                     text = "${formatDate(info.startMs)} • ${fmtDuration(s.durationMs)}$chgBadge",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "${fmt(s.avgFps, 0)} FPS • ${fmt(s.avgWatts)} W • ${fmt(s.avgFpsPerWatt)} FPS/W • ${fmt(s.maxTempC)}°C",
+                    text = stringResource(
+                        R.string.metrics_session_stats,
+                        fmt(s.avgFps, 0),
+                        fmt(s.avgWatts),
+                        fmt(s.avgFpsPerWatt),
+                        fmt(s.maxTempC)
+                    ),
                     style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodySmall.fontSize),
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Power min ${fmt(s.minWatts)} W • peak ${fmt(s.maxWatts)} W",
+                    text = stringResource(R.string.metrics_session_power_minmax, fmt(s.minWatts), fmt(s.maxWatts)),
                     style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodySmall.fontSize),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = "Delete session")
+                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.metrics_delete_session_cd))
             }
         }
     }
@@ -542,8 +591,8 @@ private fun MetricChart(
                     sr.color
                 }
                 val itemText = when (ptState) {
-                    BatteryState.CHARGING -> "Chg ${fmt(v, sr.decimals)}${sr.unit}"
-                    BatteryState.FULL_PLUGGED -> "Plug 0.0${sr.unit}"
+                    BatteryState.CHARGING -> stringResource(R.string.metrics_chg_val_unit, fmt(v, sr.decimals), sr.unit)
+                    BatteryState.FULL_PLUGGED -> stringResource(R.string.metrics_plug_val_unit, sr.unit)
                     else -> "${sr.label} ${fmt(v, sr.decimals)}${sr.unit}"
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -565,150 +614,154 @@ private fun MetricChart(
         }
         Spacer(modifier = Modifier.height(8.dp))
 
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(height)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                .padding(vertical = 8.dp, horizontal = 4.dp)
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { off -> onScrubState((off.x / size.width).coerceIn(0f, 1f)) },
-                        onDoubleTap = { onScrubState(null) }
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(height)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .padding(vertical = 8.dp, horizontal = 4.dp)
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { off -> onScrubState((off.x / size.width).coerceIn(0f, 1f)) },
+                            onDoubleTap = { onScrubState(null) }
+                        )
+                    }
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { off -> onScrubState((off.x / size.width).coerceIn(0f, 1f)) },
+                            onHorizontalDrag = { change, _ ->
+                                change.consume()
+                                onScrubState((change.position.x / size.width).coerceIn(0f, 1f))
+                            }
+                        )
+                    }
+            ) {
+                for (frac in listOf(0.25f, 0.5f, 0.75f)) {
+                    val y = size.height * frac
+                    drawLine(
+                        color = gridColor.copy(alpha = 0.6f),
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = 1f
                     )
                 }
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { off -> onScrubState((off.x / size.width).coerceIn(0f, 1f)) },
-                        onHorizontalDrag = { change, _ ->
-                            change.consume()
-                            onScrubState((change.position.x / size.width).coerceIn(0f, 1f))
-                        }
-                    )
-                }
-        ) {
-            for (frac in listOf(0.25f, 0.5f, 0.75f)) {
-                val y = size.height * frac
-                drawLine(
-                    color = gridColor.copy(alpha = 0.6f),
-                    start = Offset(0f, y),
-                    end = Offset(size.width, y),
-                    strokeWidth = 1f
-                )
-            }
-            val stepX = size.width / (n - 1).coerceAtLeast(1)
-            val strokePx = 2.5.dp.toPx()
-            val dashEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
-            series.forEachIndexed { si, sr ->
-                val (lo, hi) = ranges[si]
-                val states = sr.states
-                val chgColor = sr.chargingColor
-                if (states != null && chgColor != null && states.size == sr.values.size) {
-                    val disPath = Path()
-                    val chgPath = Path()
-                    var prevMode = -1 // 0 = dis, 1 = chg
-                    var prevX = 0f
-                    var prevY = 0f
-                    sr.values.forEachIndexed { i, v ->
-                        if (v.isNaN() || v.isInfinite()) {
-                            prevMode = -1
-                        } else {
-                            val x = i * stepX
-                            val y = size.height * (1f - ((v - lo) / (hi - lo)).coerceIn(0f, 1f))
-                            val mode = if (states[i] == BatteryState.DISCHARGING) 0 else 1
-                            val targetPath = if (mode == 0) disPath else chgPath
-                            if (prevMode != mode) {
-                                if (prevMode >= 0) {
-                                    targetPath.moveTo(prevX, prevY)
-                                    targetPath.lineTo(x, y)
+                val stepX = size.width / (n - 1).coerceAtLeast(1)
+                val strokePx = 2.5.dp.toPx()
+                val dashEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
+                series.forEachIndexed { si, sr ->
+                    val (lo, hi) = ranges[si]
+                    val states = sr.states
+                    val chgColor = sr.chargingColor
+                    if (states != null && chgColor != null && states.size == sr.values.size) {
+                        val disPath = Path()
+                        val chgPath = Path()
+                        var prevMode = -1 // 0 = dis, 1 = chg
+                        var prevX = 0f
+                        var prevY = 0f
+                        sr.values.forEachIndexed { i, v ->
+                            if (v.isNaN() || v.isInfinite()) {
+                                prevMode = -1
+                            } else {
+                                val x = i * stepX
+                                val y = size.height * (1f - ((v - lo) / (hi - lo)).coerceIn(0f, 1f))
+                                val mode = if (states[i] == BatteryState.DISCHARGING) 0 else 1
+                                val targetPath = if (mode == 0) disPath else chgPath
+                                if (prevMode != mode) {
+                                    if (prevMode >= 0) {
+                                        targetPath.moveTo(prevX, prevY)
+                                        targetPath.lineTo(x, y)
+                                    } else {
+                                        targetPath.moveTo(x, y)
+                                    }
                                 } else {
-                                    targetPath.moveTo(x, y)
+                                    targetPath.lineTo(x, y)
                                 }
-                            } else {
-                                targetPath.lineTo(x, y)
-                            }
-                            prevMode = mode
-                            prevX = x
-                            prevY = y
-                        }
-                    }
-                    drawPath(
-                        path = disPath,
-                        color = sr.color,
-                        style = Stroke(width = strokePx, cap = StrokeCap.Round)
-                    )
-                    drawPath(
-                        path = chgPath,
-                        color = chgColor,
-                        style = Stroke(width = strokePx, cap = StrokeCap.Round, pathEffect = dashEffect)
-                    )
-                } else {
-                    val path = Path()
-                    var penDown = false
-                    sr.values.forEachIndexed { i, v ->
-                        if (v.isNaN() || v.isInfinite()) {
-                            penDown = false
-                        } else {
-                            val x = i * stepX
-                            val y = size.height * (1f - ((v - lo) / (hi - lo)).coerceIn(0f, 1f))
-                            if (!penDown) {
-                                path.moveTo(x, y)
-                                penDown = true
-                            } else {
-                                path.lineTo(x, y)
+                                prevMode = mode
+                                prevX = x
+                                prevY = y
                             }
                         }
+                        drawPath(
+                            path = disPath,
+                            color = sr.color,
+                            style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                        )
+                        drawPath(
+                            path = chgPath,
+                            color = chgColor,
+                            style = Stroke(width = strokePx, cap = StrokeCap.Round, pathEffect = dashEffect)
+                        )
+                    } else {
+                        val path = Path()
+                        var penDown = false
+                        sr.values.forEachIndexed { i, v ->
+                            if (v.isNaN() || v.isInfinite()) {
+                                penDown = false
+                            } else {
+                                val x = i * stepX
+                                val y = size.height * (1f - ((v - lo) / (hi - lo)).coerceIn(0f, 1f))
+                                if (!penDown) {
+                                    path.moveTo(x, y)
+                                    penDown = true
+                                } else {
+                                    path.lineTo(x, y)
+                                }
+                            }
+                        }
+                        drawPath(
+                            path = path,
+                            color = sr.color,
+                            style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                        )
                     }
-                    drawPath(
-                        path = path,
-                        color = sr.color,
-                        style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                }
+                if (scrubIndex != null) {
+                    val x = scrubIndex * stepX
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.7f),
+                        start = Offset(x, 0f),
+                        end = Offset(x, size.height),
+                        strokeWidth = 1.5.dp.toPx()
                     )
                 }
             }
-            if (scrubIndex != null) {
-                val x = scrubIndex * stepX
-                drawLine(
-                    color = Color.White.copy(alpha = 0.7f),
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = 1.5.dp.toPx()
+
+            Spacer(modifier = Modifier.height(4.dp))
+            val spanMs = if (n >= 2) timesMs.last() - timesMs.first() else 0L
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    text = if (saved) "0:00" else "-${fmtDuration(spanMs)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = if (scrubIndex != null) {
+                        val t = timesMs[scrubIndex] - timesMs.first()
+                        if (saved) stringResource(R.string.metrics_scrub_at, fmtDuration(t))
+                        else stringResource(R.string.metrics_scrub_ago, fmtDuration(spanMs - t))
+                    } else {
+                        stringResource(R.string.metrics_scrub_hint)
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = if (saved) fmtDuration(spanMs) else stringResource(R.string.metrics_now),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-
-        Spacer(modifier = Modifier.height(4.dp))
-        val spanMs = if (n >= 2) timesMs.last() - timesMs.first() else 0L
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(
-                text = if (saved) "0:00" else "-${fmtDuration(spanMs)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = if (scrubIndex != null) {
-                    val t = timesMs[scrubIndex] - timesMs.first()
-                    if (saved) "at ${fmtDuration(t)}" else "${fmtDuration(spanMs - t)} ago"
-                } else {
-                    "drag to inspect • double-tap to clear"
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = if (saved) fmtDuration(spanMs) else "now",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
         if (showScaleNote) {
             Spacer(modifier = Modifier.height(2.dp))
+            val rangesSummary = series.indices.joinToString("  •  ") { i ->
+                val (lo, hi) = ranges[i]
+                "${series[i].label} ${fmt(lo, 0)}–${fmt(hi, 0)}"
+            }
             Text(
-                text = "Each line has its own scale: " + series.indices.joinToString("  •  ") { i ->
-                    val (lo, hi) = ranges[i]
-                    "${series[i].label} ${fmt(lo, 0)}–${fmt(hi, 0)}"
-                },
+                text = stringResource(R.string.metrics_scale_note, rangesSummary),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

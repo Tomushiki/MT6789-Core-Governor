@@ -29,7 +29,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.governor.SensorPinner
 import com.example.ui.components.EcuCard
 import com.example.ui.components.SettingSwitchRow
@@ -48,16 +50,15 @@ fun SensorPinSection(
     val cfg = state.config
     EcuCard {
         Text(
-            text = "NIFTY FEATURES",
+            text = stringResource(R.string.nifty_header),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary
         )
         Spacer(modifier = Modifier.height(10.dp))
 
         SettingSwitchRow(
-            title = "Pin sensor refresh rate",
-            explanation = "Keeps the chosen sensors running at a fast, fixed rate for every app, so a slow gyroscope responds quicker. " +
-                "Runs while the governor is running. No root needed.",
+            title = stringResource(R.string.nifty_enable_title),
+            explanation = stringResource(R.string.nifty_enable_desc),
             checked = cfg.enabled,
             onCheckedChange = { onUpdate(it, null, null, null) },
             testTag = "sensor_pin_switch"
@@ -65,7 +66,7 @@ fun SensorPinSection(
 
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = "Rate",
+            text = stringResource(R.string.nifty_rate_title),
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (cfg.enabled) 1f else 0.38f)
         )
@@ -80,28 +81,28 @@ fun SensorPinSection(
                 FilterChip(
                     selected = cfg.rate == rate,
                     onClick = { onUpdate(null, rate, null, null) },
-                    label = { Text(rate.label) },
+                    label = { Text(stringResource(rate.labelRes)) },
                     enabled = cfg.enabled,
                     modifier = Modifier.testTag("sensor_pin_rate_${rate.key}")
                 )
             }
         }
         Text(
-            text = "Max asks the sensor for its fastest rate. Rates above 200 Hz need the high-sampling-rate permission, which the app declares.",
+            text = stringResource(R.string.nifty_rate_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = "Sensors",
+            text = stringResource(R.string.nifty_sensors_title),
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (cfg.enabled) 1f else 0.38f)
         )
         Spacer(modifier = Modifier.height(4.dp))
         if (state.available.isEmpty()) {
             Text(
-                text = "No supported motion sensors found on this device.",
+                text = stringResource(R.string.nifty_no_sensors),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error
             )
@@ -113,10 +114,11 @@ fun SensorPinSection(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 state.available.forEach { info ->
+                    val label = if (info.labelRes != 0) stringResource(info.labelRes) else info.label
                     FilterChip(
                         selected = info.type in cfg.sensorTypes,
                         onClick = { onUpdate(null, null, info.type, null) },
-                        label = { Text(info.label) },
+                        label = { Text(label) },
                         enabled = cfg.enabled,
                         modifier = Modifier.testTag("sensor_pin_type_${info.type}")
                     )
@@ -126,8 +128,8 @@ fun SensorPinSection(
 
         Spacer(modifier = Modifier.height(10.dp))
         SettingSwitchRow(
-            title = "Pause while the screen is off",
-            explanation = "Releases the sensors when the screen turns off and pins them again when it turns on. Saves battery.",
+            title = stringResource(R.string.nifty_pause_off_title),
+            explanation = stringResource(R.string.nifty_pause_off_desc),
             checked = cfg.pauseWhenScreenOff,
             onCheckedChange = { onUpdate(null, null, null, it) },
             enabled = cfg.enabled,
@@ -138,9 +140,9 @@ fun SensorPinSection(
             Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = when {
-                    state.active -> "ACTIVE"
-                    !isRunning -> "Waiting: starts when the governor starts."
-                    else -> "Paused (screen off) or no sensor could be registered. See the log."
+                    state.active -> stringResource(R.string.nifty_status_active)
+                    !isRunning -> stringResource(R.string.nifty_status_waiting)
+                    else -> stringResource(R.string.nifty_status_paused)
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = if (state.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -149,10 +151,12 @@ fun SensorPinSection(
                 state.available
                     .filter { it.type in cfg.sensorTypes }
                     .forEach { info ->
+                        val label = if (info.labelRes != 0) stringResource(info.labelRes) else info.label
                         val hz = state.measuredHz[info.type]
-                        val cap = if (info.maxHz > 0) " / hardware ${info.maxHz} Hz" else ""
+                        val cap = if (info.maxHz > 0) stringResource(R.string.nifty_hw_cap, info.maxHz) else ""
+                        val hzStr = hz?.let { "$it Hz" } ?: stringResource(R.string.nifty_measuring)
                         Text(
-                            text = "${info.label}: ${hz?.let { "$it Hz" } ?: "measuring…"}$cap",
+                            text = "$label: $hzStr$cap",
                             style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelMedium.fontSize),
                             color = MaterialTheme.colorScheme.onSurface
                         )
