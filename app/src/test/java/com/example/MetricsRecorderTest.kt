@@ -97,9 +97,37 @@ class MetricsRecorderTest {
     @Test
     fun liveHistoryRecordsAllModesAtOneHz() {
         // Ticks 250 ms apart should still give one sample per second.
+        rec.setLiveVisible(true)
         for (i in 0 until 40) rec.onTelemetry(tel(GovernorMode.NORMAL), 3_000_000L + i * 250L)
         assertEquals(10, rec.live.value.size)
         assertFalse(rec.recording.value)
+    }
+
+    @Test
+    fun liveListIsOnlyPublishedWhileVisibleButStillBuffered() {
+        for (i in 0 until 40) rec.onTelemetry(tel(GovernorMode.NORMAL), 3_100_000L + i * 250L)
+        assertEquals(0, rec.live.value.size)
+        // Becoming visible publishes everything buffered so far, once.
+        rec.setLiveVisible(true)
+        assertEquals(10, rec.live.value.size)
+        rec.onTelemetry(tel(GovernorMode.NORMAL), 3_100_000L + 40 * 250L)
+        assertEquals(11, rec.live.value.size)
+        // Hiding releases the published copy; the buffer keeps filling.
+        rec.setLiveVisible(false)
+        assertEquals(0, rec.live.value.size)
+        rec.onTelemetry(tel(GovernorMode.NORMAL), 3_100_000L + 41 * 250L + 1_000L)
+        assertEquals(0, rec.live.value.size)
+        rec.setLiveVisible(true)
+        assertEquals(12, rec.live.value.size)
+    }
+
+    @Test
+    fun ratingFeedKeepsFlowingWhileLiveListIsHidden() {
+        var count = 0
+        rec.onSample = { _, _ -> count++ }
+        for (i in 0 until 40) rec.onTelemetry(tel(GovernorMode.NORMAL), 3_200_000L + i * 250L)
+        assertEquals(10, count)
+        assertEquals(0, rec.live.value.size)
     }
 
     @Test

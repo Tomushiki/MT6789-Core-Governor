@@ -65,6 +65,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,6 +79,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.governor.UpdateState
@@ -144,13 +147,13 @@ fun CoreGovernorRootScreen(
     val hardwareSpec by vm.hardwareSpec.collectAsStateWithLifecycle()
     val config by vm.config.collectAsStateWithLifecycle()
     val presets by vm.presets.collectAsStateWithLifecycle()
-    val telemetry by vm.telemetry.collectAsStateWithLifecycle()
+    // Only the active mode is read at the root, so the top bar does not recompose on every telemetry tick.
+    val activeMode by vm.activeMode.collectAsStateWithLifecycle()
     val sensorPin by vm.sensorPin.collectAsStateWithLifecycle()
     val logs by vm.logs.collectAsStateWithLifecycle()
     val installedApps by vm.installedApps.collectAsStateWithLifecycle()
     val isLoadingApps by vm.isLoadingApps.collectAsStateWithLifecycle()
     val usageStatsGranted by vm.usageStatsGranted.collectAsStateWithLifecycle()
-    val metricsLive by vm.metricsLive.collectAsStateWithLifecycle()
     val metricsSessions by vm.metricsSessions.collectAsStateWithLifecycle()
     val metricsRecording by vm.metricsRecording.collectAsStateWithLifecycle()
     val selectedSession by vm.selectedSession.collectAsStateWithLifecycle()
@@ -160,9 +163,37 @@ fun CoreGovernorRootScreen(
 
     val smartControls by vm.appControls.collectAsStateWithLifecycle()
     var currentTab by rememberSaveable { mutableStateOf(NavTab.MONITOR) }
+    // Tracks whether the activity is started (in front), so hidden tabs never do background UI work.
+    var appStarted by remember { mutableStateOf(true) }
+    val activityLifecycle = (context as? ComponentActivity)?.lifecycle
+    DisposableEffect(activityLifecycle) {
+        val lc = activityLifecycle
+        if (lc == null) {
+            onDispose { }
+        } else {
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_START -> {
+                        appStarted = true
+                        vm.setAppInForeground(true)
+                    }
+                    Lifecycle.Event.ON_STOP -> {
+                        appStarted = false
+                        vm.setAppInForeground(false)
+                    }
+                    else -> Unit
+                }
+            }
+            lc.addObserver(observer)
+            onDispose { lc.removeObserver(observer) }
+        }
+    }
     LaunchedEffect(currentTab) {
         vm.setEnergyTabVisible(currentTab == NavTab.ENERGY)
         vm.setSystemTabVisible(currentTab == NavTab.SYSTEM)
+    }
+    LaunchedEffect(currentTab, appStarted) {
+        vm.setMetricsTabVisible(appStarted && currentTab == NavTab.METRICS)
     }
 
     // Android 13+ notification permission for Foreground Service status notification
@@ -221,9 +252,9 @@ fun CoreGovernorRootScreen(
                             )
                         }
                         StatusPill(
-                            label = telemetry.activeMode.name,
-                            color = if (telemetry.activeMode.name == "GAME") ext.warning else MaterialTheme.colorScheme.primary,
-                            containerColor = if (telemetry.activeMode.name == "GAME") ext.warningContainer else MaterialTheme.colorScheme.primaryContainer
+                            label = activeMode.name,
+                            color = if (activeMode.name == "GAME") ext.warning else MaterialTheme.colorScheme.primary,
+                            containerColor = if (activeMode.name == "GAME") ext.warningContainer else MaterialTheme.colorScheme.primaryContainer
                         )
                     }
                 }
@@ -287,15 +318,20 @@ fun CoreGovernorRootScreen(
         }
         Box(Modifier.weight(1f)) {
         when (currentTab) {
-            NavTab.MONITOR -> MonitorScreen(
-                telemetry = telemetry,
-                hardwareSpec = hardwareSpec,
-                onToggleGovernor = vm::toggleGovernorRunning,
-                onSelectModeOverride = vm::setModeOverride,
-                onRediscover = vm::rediscoverHardware,
-                modifier = Modifier
-            )
+            NavTab.MONITOR -> {
+                // Live telemetry is collected only here, so only the Monitor tab recomposes on each tick.
+                val telemetry by vm.telemetry.collectAsStateWithLifecycle()
+                MonitorScreen(
+                    telemetry = telemetry,
+                    hardwareSpec = hardwareSpec,
+                    onToggleGovernor = vm::toggleGovernorRunning,
+                    onSelectModeOverride = vm::setModeOverride,
+                    onRediscover = vm::rediscoverHardware,
+                    modifier = Modifier
+                )
+            }
             NavTab.METRICS -> {
+                val metricsLive by vm.metricsLive.collectAsStateWithLifecycle()
                 val appLabels = remember(installedApps) { installedApps.associate { it.packageName to it.label } }
                 PerformanceScreen(
                     live = metricsLive,
@@ -318,11 +354,12 @@ fun CoreGovernorRootScreen(
                 val demandRows by vm.appDemandRows.collectAsStateWithLifecycle()
                 val refreshUi by vm.refreshState.collectAsStateWithLifecycle()
                 val screenOffSnap by vm.screenOffSnapshot.collectAsStateWithLifecycle()
+                val isRunning by vm.isRunning.collectAsStateWithLifecycle()
                 EnergyScreen(
                     snapshot = energySnapshot,
                     batterySnapshot = batterySnapshot,
                     config = config,
-                    isRunning = telemetry.isRunning,
+                    isRunning = isRunning,
                     onUpdateSettings = vm::updateEfficiencySettings,
                     onResetModel = vm::resetPowerModel,
                     onExportJson = vm::exportPowerModelJson,
@@ -362,9 +399,10 @@ fun CoreGovernorRootScreen(
             NavTab.TUNING -> TuningScreen(
                 config = config,
                 hardwareSpec = hardwareSpec,
-                telemetry = telemetry,
+                telemetryFlow = vm.telemetry,
                 presets = presets,
                 onUpdatePollInterval = vm::updatePollInterval,
+                onUpdateAdaptivePolling = vm::updateAdaptivePolling,
                 onUpdateSafetyFloor = vm::updateSafetyFloor,
                 onUpdateStartOnBoot = vm::updateStartOnBoot,
                 onUpdateCpuLoadUsesBusiestCore = vm::updateCpuLoadUsesBusiestCore,

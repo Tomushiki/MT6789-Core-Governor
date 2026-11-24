@@ -426,6 +426,7 @@ class ConfigStorage(private val context: Context) {
     private fun configToJson(c: GovernorConfig): JSONObject {
         return JSONObject().apply {
             put("pollIntervalMs", c.pollIntervalMs)
+            put("adaptivePollingEnabled", c.adaptivePollingEnabled)
             put("startOnBoot", c.startOnBoot)
             put("cpuLoadUsesBusiestCore", c.cpuLoadUsesBusiestCore)
             put("screenOffSavingEnabled", c.screenOffSavingEnabled)
@@ -552,6 +553,7 @@ class ConfigStorage(private val context: Context) {
 
         return GovernorConfig(
             pollIntervalMs = obj.optLong("pollIntervalMs", default.pollIntervalMs).coerceIn(50L, 1000L),
+            adaptivePollingEnabled = obj.optBoolean("adaptivePollingEnabled", default.adaptivePollingEnabled),
             startOnBoot = obj.optBoolean("startOnBoot", default.startOnBoot),
             cpuLoadUsesBusiestCore = obj.optBoolean("cpuLoadUsesBusiestCore", default.cpuLoadUsesBusiestCore),
             screenOffSavingEnabled = obj.optBoolean("screenOffSavingEnabled", default.screenOffSavingEnabled),

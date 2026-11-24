@@ -196,6 +196,13 @@ class GovernorEngine(context: Context) {
     private var lastWrittenGpuOppIndex: Int? = null
     private val failedWriteCooldownUntil = mutableMapOf<String, Long>()
 
+    // v2.7.4 adaptive polling state (written by the control tick, read by the control loop)
+    private var pollState = PollPolicy.State()
+    @Volatile
+    private var pollNextIntervalMs = 0L
+    private var pollStretchLogged = false
+    private var pollLastLogMs = 0L
+
     // Screen-off power saving state
     @Volatile
     private var isScreenInteractive: Boolean =
@@ -454,9 +461,15 @@ class GovernorEngine(context: Context) {
                         continue
                     }
                     val elapsed = System.currentTimeMillis() - cycleStart
-                    val targetInterval = _config.value.pollIntervalMs.coerceIn(50L, 1000L)
+                    val baseInterval = _config.value.pollIntervalMs.coerceIn(50L, 1000L)
+                    val nextInterval = pollNextIntervalMs
+                    val targetInterval = if (nextInterval > baseInterval) nextInterval else baseInterval
                     val sleepMs = (targetInterval - elapsed).coerceAtLeast(15L)
-                    delay(sleepMs)
+                    if (targetInterval > baseInterval) {
+                        sleepStretched(sleepMs, baseInterval)
+                    } else {
+                        delay(sleepMs)
+                    }
                 }
             } finally {
                 metrics.onStopped()
@@ -472,6 +485,31 @@ class GovernorEngine(context: Context) {
 
     fun setInitialScreenInteractive(interactive: Boolean) {
         isScreenInteractive = interactive
+    }
+
+    /**
+     * Stretched (adaptive) sleep. Sleeps in slices of the configured interval so a touch, a screen
+     * change or a config change ends the stretch within one normal interval, as before.
+     */
+    private suspend fun sleepStretched(totalMs: Long, sliceMs: Long) {
+        val touchAtStart = interaction.lastTouchMs
+        val cfgAtStart = _config.value
+        var remaining = totalMs
+        while (remaining > 0L) {
+            val slice = minOf(remaining, sliceMs.coerceAtLeast(15L))
+            delay(slice)
+            remaining -= slice
+            if (remaining <= 0L) return
+            val cfgNow = _config.value
+            if (interaction.lastTouchMs != touchAtStart ||
+                !isScreenInteractive ||
+                cfgNow.pollIntervalMs != cfgAtStart.pollIntervalMs ||
+                !cfgNow.adaptivePollingEnabled ||
+                cfgNow.modeOverride != cfgAtStart.modeOverride
+            ) {
+                return
+            }
+        }
     }
 
     fun onScreenOff() {
@@ -764,6 +802,7 @@ class GovernorEngine(context: Context) {
 
     private suspend fun runControlTick(hw: HardwareSpec, nowMs: Long) {
         val cfg = _config.value
+        pollNextIntervalMs = 0L
 
         val readPaths = mutableListOf("/proc/stat")
         for (p in hw.cpuPolicies) {
@@ -1684,6 +1723,42 @@ class GovernorEngine(context: Context) {
             )
         }
         metrics.onTelemetry(_telemetry.value, nowMs)
+
+        // 9. v2.7.4 adaptive polling: decide how long the loop may sleep before the next tick.
+        val pollBase = cfg.pollIntervalMs.coerceIn(50L, 1000L)
+        val pollDecision = PollPolicy.decide(
+            pollState,
+            PollPolicy.Inputs(
+                nowMs = nowMs,
+                enabled = cfg.adaptivePollingEnabled,
+                baseIntervalMs = pollBase,
+                gameMode = activeMode == GovernorMode.GAME,
+                burstActive = burstActive,
+                tempThrottleActive = tempThrottleActive,
+                powerThrottleActive = powerThrottleActive,
+                cpuLoadPct = smoothedTotalCpuLoad,
+                gpuLoadPct = gpuLiveState.smoothedLoadPct,
+                maxLoadSpikePct = maxLoadSpike,
+                lastTouchMs = interaction.lastTouchMs,
+                screenInteractive = isScreenInteractive,
+                foregroundChanged = fgPkg.isNotBlank() && prevFg.isNotBlank() && fgPkg != prevFg
+            )
+        )
+        pollState = pollDecision.state
+        pollNextIntervalMs = pollDecision.intervalMs
+        if (pollDecision.stretched != pollStretchLogged && nowMs - pollLastLogMs >= 10_000L) {
+            pollStretchLogged = pollDecision.stretched
+            pollLastLogMs = nowMs
+            log(
+                LogLevel.INFO,
+                "Poll",
+                if (pollDecision.stretched) {
+                    "Adaptive polling: calm, polling every ${pollDecision.intervalMs}ms (min ${pollBase}ms)."
+                } else {
+                    "Adaptive polling: activity, polling every ${pollBase}ms."
+                }
+            )
+        }
     }
 
     private fun startFpsSampler() {
@@ -2173,6 +2248,10 @@ class GovernorEngine(context: Context) {
 
     private fun resetLoopState() {
         prevCpuTicks = emptyMap()
+        pollState = PollPolicy.State()
+        pollNextIntervalMs = 0L
+        pollStretchLogged = false
+        pollLastLogMs = 0L
         prevRawClusterLoad.clear()
         smoothedClusterLoad.clear()
         smoothedCoreLoad.clear()

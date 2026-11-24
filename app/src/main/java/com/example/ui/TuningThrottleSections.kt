@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -44,6 +45,7 @@ import com.example.model.HardwareSpec
 import com.example.model.PowerPolarity
 import com.example.model.PowerUnitScale
 import com.example.model.TelemetryState
+import kotlinx.coroutines.flow.StateFlow
 import com.example.model.ThrottleCurveShape
 import com.example.ui.components.EcuCard
 import com.example.ui.components.SettingSliderRow
@@ -58,7 +60,7 @@ import kotlin.math.roundToLong
 fun ThermalThrottleSection(
     config: GovernorConfig,
     hardwareSpec: HardwareSpec,
-    telemetry: TelemetryState,
+    telemetryFlow: StateFlow<TelemetryState>,
     onSelectTempSensor: (String) -> Unit,
     onUpdateTempThrottle: (
         enabled: Boolean?,
@@ -73,6 +75,7 @@ fun ThermalThrottleSection(
         chargingStartOffsetC: Float?
     ) -> Unit
 ) {
+    val telemetry by telemetryFlow.collectAsStateWithLifecycle()
     val ext = LocalExtendedColors.current
     val t = config.tempThrottle
     var sensorMenuExpanded by remember { mutableStateOf(false) }
@@ -277,7 +280,7 @@ fun ThermalThrottleSection(
 @Composable
 fun PowerThrottleSection(
     config: GovernorConfig,
-    telemetry: TelemetryState,
+    telemetryFlow: StateFlow<TelemetryState>,
     onUpdatePowerThrottle: (
         enabled: Boolean?,
         limitWatts: Float?,
@@ -290,6 +293,7 @@ fun PowerThrottleSection(
         componentAware: Boolean?
     ) -> Unit
 ) {
+    val telemetry by telemetryFlow.collectAsStateWithLifecycle()
     val ext = LocalExtendedColors.current
     val p = config.powerThrottle
 

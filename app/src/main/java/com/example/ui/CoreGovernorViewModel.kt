@@ -21,6 +21,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -38,6 +39,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import com.example.CoreGovernorApp
 import com.example.governor.BatteryEstimatorUiSnapshot
@@ -78,6 +81,16 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     val config = engine.config
     val presets = engine.presets
     val telemetry = engine.telemetry
+
+    // Low-rate views of telemetry so the top bar and similar do not recompose on every tick.
+    val activeMode: StateFlow<GovernorMode> = telemetry
+        .map { it.activeMode }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), telemetry.value.activeMode)
+    val isRunning: StateFlow<Boolean> = telemetry
+        .map { it.isRunning }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), telemetry.value.isRunning)
     val sensorPin = engine.sensorPinner.state
     val logs: StateFlow<List<LogEntry>> = engine.logs
     val powerModelSnapshot: StateFlow<PowerModelUiSnapshot> = engine.powerModel.uiSnapshot
@@ -187,6 +200,10 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
 
     fun updatePollInterval(ms: Long) {
         engine.updateConfig { it.copy(pollIntervalMs = ms.coerceIn(50L, 1000L)) }
+    }
+
+    fun updateAdaptivePolling(enabled: Boolean) {
+        engine.updateConfig { it.copy(adaptivePollingEnabled = enabled) }
     }
 
     fun updateSafetyFloor(pct: Float) {
@@ -478,6 +495,11 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
 
     fun clearLogs() = engine.clearLogs()
 
+    /** The live metrics list is only built while the Metrics tab is on screen. */
+    fun setMetricsTabVisible(visible: Boolean) {
+        engine.metrics.setLiveVisible(visible)
+    }
+
     fun setEnergyTabVisible(visible: Boolean) {
         engine.powerModel.setUiVisible(visible)
         engine.batteryEstimator.setUiVisible(visible)
@@ -621,14 +643,39 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     fun setCulpritThreshold(pct: Float) { _culpritThreshold.value = pct }
     fun dismissSystemNote() { _systemNote.value = null }
 
-    /** Sampling runs only while the System tab is on screen. */
+    @Volatile
+    private var appInForeground = true
+
+    /** Called from the activity lifecycle (started = true, stopped = false). */
+    fun setAppInForeground(foreground: Boolean) {
+        appInForeground = foreground
+    }
+
+    private fun canSampleProcesses(): Boolean {
+        if (!appInForeground) return false
+        val pm = getApplication<Application>().getSystemService(Context.POWER_SERVICE) as? PowerManager
+        return pm?.isInteractive ?: true
+    }
+
+    /** Sampling runs only while the System tab is on screen, the app is in front and the screen is on. */
     fun setSystemTabVisible(visible: Boolean) {
         if (visible) {
             if (systemJob?.isActive == true) return
             systemJob = viewModelScope.launch(Dispatchers.IO) {
                 while (isActive) {
+                    if (!canSampleProcesses()) {
+                        // Paused: drop the old reading so a long gap is not averaged into the next one.
+                        if (prevTicks != null) {
+                            prevTicks = null
+                            tracker.clear()
+                        }
+                        delay(PROCESS_PAUSED_CHECK_MS)
+                        continue
+                    }
+                    val first = prevTicks == null
                     sampleProcesses()
-                    delay(4_000L)
+                    // The first sample is immediate and the next follows quickly, so CPU % shows up fast.
+                    delay(if (first) PROCESS_FIRST_GAP_MS else PROCESS_SAMPLE_MS)
                 }
             }
         } else {
@@ -732,3 +779,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 }
+
+/** System tab process sampling: normal gap (v2.7.4: 8 s, was 4 s), quick second sample, and pause re-check. */
+private const val PROCESS_SAMPLE_MS = 8_000L
+private const val PROCESS_FIRST_GAP_MS = 3_000L
+private const val PROCESS_PAUSED_CHECK_MS = 2_000L

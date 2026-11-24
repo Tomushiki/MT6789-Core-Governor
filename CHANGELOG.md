@@ -2,6 +2,19 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.7.4] - 2026-11-24
+
+CoreGovernor now uses less CPU and memory by itself. Governing behaviour is unchanged: thermal and power throttling, the learned power model, the efficiency governor, smart app profiles and touch boost work exactly as before.
+
+### Added
+- **Adaptive polling (Tuning > Control, on by default).** Your Poll Interval is still the fastest the loop ever runs. When the phone has been calm for about 2 seconds (screen on, no game, no launch burst, no throttling, low CPU and GPU load, no touch for 1.5 seconds), the loop waits up to about 350 ms between checks. It goes back to your Poll Interval straight away when you touch the screen, switch apps, load jumps, a game starts or throttling begins. Turn it off to always poll at the Poll Interval. The Log tab notes when it switches between calm and active (at most once every 10 seconds).
+
+### Changed
+- **Smoother app screens.** Only the Monitor tab, and the temperature and power cards in Tuning, now update several times per second. Other tabs and the top bar no longer redraw on every reading.
+- **System tab sampling is lighter.** The process list refreshes every 8 seconds (was 4), pauses while the screen is off or the app is not in front, and still shows the first reading right away. Culprit detection still looks at about 30 seconds (now 4 samples instead of 6).
+- **Metrics live list.** The live history is only prepared while the Metrics tab is open, and appears at once when you open it. Recording, saved sessions and the device rating are not affected.
+- Version 2.7.4 (versionCode 45).
+
 ## [2.7.3] - 2026-11-24
 
 ### Added

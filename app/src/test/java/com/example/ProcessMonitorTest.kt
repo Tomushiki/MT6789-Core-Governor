@@ -87,6 +87,29 @@ PID UID RSS ARGS
     }
 
     @Test
+    fun defaultCulpritWindowIsFourSamples() {
+        // v2.7.4: samples are 8 s apart, so 4 samples cover the same ~30 s as 6 samples at 4 s did.
+        assertEquals(4, CulpritTracker.DEFAULT_WINDOW)
+        val t = CulpritTracker()
+        fun row(cpu: Float) = ProcRow("com.heavy.app", true, 1, cpu, 50f, false, null)
+        assertFalse(t.update(listOf(row(30f)), 15f)[0].culprit)
+        assertFalse(t.update(listOf(row(30f)), 15f)[0].culprit)
+        assertFalse(t.update(listOf(row(30f)), 15f)[0].culprit)
+        assertTrue(t.update(listOf(row(30f)), 15f)[0].culprit)
+    }
+
+    @Test
+    fun culpritWindowForgetsOldSamples() {
+        val t = CulpritTracker()
+        fun row(cpu: Float) = ProcRow("com.heavy.app", true, 1, cpu, 50f, false, null)
+        repeat(4) { t.update(listOf(row(30f)), 15f) }
+        // Four quiet samples push the busy ones out of the window, so the flag clears.
+        var last = t.update(listOf(row(0f)), 15f)[0]
+        repeat(3) { last = t.update(listOf(row(0f)), 15f)[0] }
+        assertFalse(last.culprit)
+    }
+
+    @Test
     fun badNamesAreNotKillable() {
         val r = ProcRow("com.x; reboot", true, 1, 50f, 1f, false, null)
         assertFalse(r.killable)

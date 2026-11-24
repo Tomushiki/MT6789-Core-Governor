@@ -71,6 +71,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -112,6 +113,9 @@ import com.example.ui.theme.MonoMetricStyle
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -127,13 +131,22 @@ private enum class TuningCategory(val label: String) {
     PRESETS("Presets & HW")
 }
 
+/** Slow-changing telemetry facts the Tuning screen needs (a change here is rare, unlike a live tick). */
+private data class TuningTelemetryInfo(
+    val ddrSupported: Boolean,
+    val isRunning: Boolean,
+    val clusterCount: Int,
+    val clusterCpuCount: Int
+)
+
 @Composable
 fun TuningScreen(
     config: GovernorConfig,
     hardwareSpec: HardwareSpec,
-    telemetry: TelemetryState,
+    telemetryFlow: StateFlow<TelemetryState>,
     presets: List<PresetItem>,
     onUpdatePollInterval: (Long) -> Unit,
+    onUpdateAdaptivePolling: (Boolean) -> Unit,
     onUpdateSafetyFloor: (Float) -> Unit,
     onUpdateStartOnBoot: (Boolean) -> Unit,
     onUpdateCpuLoadUsesBusiestCore: (Boolean) -> Unit,
@@ -209,6 +222,28 @@ fun TuningScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    // Only the slow-changing bits of telemetry are read here, so this screen does not recompose on every tick.
+    val tuningInfo by remember(telemetryFlow) {
+        telemetryFlow
+            .map { t ->
+                TuningTelemetryInfo(
+                    ddrSupported = t.ddrSupported,
+                    isRunning = t.isRunning,
+                    clusterCount = t.clusters.size,
+                    clusterCpuCount = t.clusters.sumOf { it.relatedCpus.size }
+                )
+            }
+            .distinctUntilChanged()
+    }.collectAsStateWithLifecycle(
+        initialValue = telemetryFlow.value.let { t ->
+            TuningTelemetryInfo(
+                ddrSupported = t.ddrSupported,
+                isRunning = t.isRunning,
+                clusterCount = t.clusters.size,
+                clusterCpuCount = t.clusters.sumOf { it.relatedCpus.size }
+            )
+        }
+    )
     var selectedCategory by remember { mutableStateOf(TuningCategory.ALL) }
     var editingMode by remember { mutableStateOf(GovernorMode.NORMAL) }
     var presetNameInput by remember { mutableStateOf("") }
@@ -409,6 +444,16 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        SettingSwitchRow(
+                            title = "Adaptive polling",
+                            explanation = "When the phone is idle and calm for a couple of seconds, the loop checks a little less often (up to about 350 ms) to save battery and CPU. It goes back to your Poll Interval the instant you touch the screen, open a game or app, load rises, or throttling starts. Turn off to always poll at the Poll Interval.",
+                            checked = config.adaptivePollingEnabled,
+                            onCheckedChange = onUpdateAdaptivePolling,
+                            testTag = "adaptive_polling_switch"
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
                         SettingSliderRow(
                             title = "Safety Floor Cap",
                             valueText = "${config.safetyFloorPct.roundToInt()}%",
@@ -601,7 +646,7 @@ fun TuningScreen(
                         )
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        if (!telemetry.ddrSupported) {
+                        if (!tuningInfo.ddrSupported) {
                             Text(
                                 text = "Not supported on this device.",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -769,13 +814,13 @@ fun TuningScreen(
                             OverlaySizing.getScreenSizePx(windowManager)
                         }
                         val detailedRowCount = remember(
-                            telemetry.clusters.size,
-                            telemetry.clusters.sumOf { it.relatedCpus.size },
+                            tuningInfo.clusterCount,
+                            tuningInfo.clusterCpuCount,
                             hardwareSpec.cpuPolicies.size,
                             hardwareSpec.cpuPolicies.sumOf { it.relatedCpus.size }
                         ) {
                             when {
-                                telemetry.clusters.isNotEmpty() -> 3 + telemetry.clusters.sumOf { 1 + it.relatedCpus.size }
+                                tuningInfo.clusterCount > 0 -> 3 + tuningInfo.clusterCount + tuningInfo.clusterCpuCount
                                 hardwareSpec.cpuPolicies.isNotEmpty() -> 3 + hardwareSpec.cpuPolicies.sumOf { 1 + it.relatedCpus.size }
                                 else -> OverlaySizing.DEFAULT_DETAILED_ROW_COUNT
                             }
@@ -937,7 +982,7 @@ fun TuningScreen(
                 item {
                     SensorPinSection(
                         state = sensorPin,
-                        telemetry = telemetry,
+                        isRunning = tuningInfo.isRunning,
                         onUpdate = onUpdateSensorPin
                     )
                 }
@@ -949,7 +994,7 @@ fun TuningScreen(
                     ThermalThrottleSection(
                         config = config,
                         hardwareSpec = hardwareSpec,
-                        telemetry = telemetry,
+                        telemetryFlow = telemetryFlow,
                         onSelectTempSensor = onSelectTempSensor,
                         onUpdateTempThrottle = onUpdateTempThrottle
                     )
@@ -961,7 +1006,7 @@ fun TuningScreen(
                 item {
                     PowerThrottleSection(
                         config = config,
-                        telemetry = telemetry,
+                        telemetryFlow = telemetryFlow,
                         onUpdatePowerThrottle = onUpdatePowerThrottle
                     )
                 }

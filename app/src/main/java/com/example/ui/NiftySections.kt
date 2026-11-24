@@ -31,7 +31,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.governor.SensorPinner
-import com.example.model.TelemetryState
 import com.example.ui.components.EcuCard
 import com.example.ui.components.SettingSwitchRow
 import com.example.ui.theme.MonoMetricStyle
@@ -43,7 +42,7 @@ import com.example.ui.theme.MonoMetricStyle
 @Composable
 fun SensorPinSection(
     state: SensorPinner.State,
-    telemetry: TelemetryState,
+    isRunning: Boolean,
     onUpdate: (enabled: Boolean?, rate: SensorPinner.Rate?, toggleType: Int?, pauseWhenScreenOff: Boolean?) -> Unit
 ) {
     val cfg = state.config
@@ -140,7 +139,7 @@ fun SensorPinSection(
             Text(
                 text = when {
                     state.active -> "ACTIVE"
-                    !telemetry.isRunning -> "Waiting: starts when the governor starts."
+                    !isRunning -> "Waiting: starts when the governor starts."
                     else -> "Paused (screen off) or no sensor could be registered. See the log."
                 },
                 style = MaterialTheme.typography.labelMedium,

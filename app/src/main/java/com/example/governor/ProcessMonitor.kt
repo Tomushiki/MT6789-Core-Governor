@@ -155,8 +155,15 @@ object ProcessMonitor {
     }
 }
 
-/** Flags an app as a culprit when its average CPU over the last [window] samples stays above a limit. */
-class CulpritTracker(private val window: Int = 6) {
+/**
+ * Flags an app as a culprit when its average CPU over the last [window] samples stays above a limit.
+ * v2.7.4: samples come every 8 s, so 4 samples keep the same window of about 30 s (was 6 samples at 4 s).
+ */
+class CulpritTracker(private val window: Int = DEFAULT_WINDOW) {
+    companion object {
+        const val DEFAULT_WINDOW = 4
+    }
+
     private val hist = HashMap<String, ArrayDeque<Float>>()
 
     fun update(rows: List<ProcRow>, thresholdPct: Float): List<ProcRow> {

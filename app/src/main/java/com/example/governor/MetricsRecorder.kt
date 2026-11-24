@@ -325,6 +325,20 @@ class MetricsRecorder(
     private val liveBuf = ArrayDeque<MetricSample>()
     private var lastSampleMs = 0L
 
+    /** v2.7.4: the live list is only published while the Metrics tab is on screen. Recording is unaffected. */
+    private var liveVisible = false
+
+    /**
+     * Tells the recorder whether anyone is looking at the live list. Becoming visible publishes the
+     * buffer once; hiding releases the published copy. The buffer itself keeps filling either way.
+     */
+    @Synchronized
+    fun setLiveVisible(visible: Boolean) {
+        if (visible == liveVisible) return
+        liveVisible = visible
+        _live.value = if (visible) liveBuf.toList() else emptyList()
+    }
+
     private var sessionSamples = ArrayList<MetricSample>()
     private var sessionPkg = ""
     private var sessionActive = false
@@ -366,7 +380,7 @@ class MetricsRecorder(
 
         liveBuf.addLast(sample)
         while (liveBuf.size > LIVE_CAPACITY) liveBuf.removeFirst()
-        _live.value = liveBuf.toList()
+        if (liveVisible) _live.value = liveBuf.toList()
 
         val inGame = t.activeMode == GovernorMode.GAME
         onSample?.invoke(sample, inGame)

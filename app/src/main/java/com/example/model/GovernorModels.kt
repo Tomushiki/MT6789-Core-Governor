@@ -194,6 +194,7 @@ data class PowerThrottleConfig(
 
 data class GovernorConfig(
     val pollIntervalMs: Long = 150L,
+    val adaptivePollingEnabled: Boolean = true,
     val startOnBoot: Boolean = false,
     val cpuLoadUsesBusiestCore: Boolean = true,
     val screenOffSavingEnabled: Boolean = false,

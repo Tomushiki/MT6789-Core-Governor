@@ -37,6 +37,7 @@ In Auto, the app switches to Game mode when a selected app is in the foreground.
 - Ramp-Down Speed: how fast speeds fall when load drops. Slower keeps performance steady but wastes some power.
 - CPU Load = Busiest Core: grades each cluster by its busiest core. Leave it on if one heavy thread should make the cluster speed up.
 - Poll Interval: how often the governor checks the hardware. Keep the default unless you have a reason.
+- Adaptive polling (on by default): when the phone is idle and calm for a couple of seconds, the governor checks the hardware a little less often (up to about 350 ms) to use less battery and CPU. It returns to your Poll Interval instantly when you touch the screen, open or switch apps, start a game, load rises, or throttling starts, so performance is not affected. Turn it off if you want the governor to always check at the Poll Interval. Touch detection needs Smart app profiles or Adaptive refresh rate to be on; without them, calm is judged by load alone.
 - Normal Mode Launch Burst: a short boost when you open an app or when load suddenly spikes, so apps open quickly.
 
 ## 5. Protecting your phone
@@ -134,7 +135,7 @@ CoreGovernor estimates your battery's real usable capacity and passively learns 
 
 ## 7g. Process monitor
 
-- The System tab lists apps and system processes by CPU use (percent of one core) and memory. It only samples while the tab is open.
+- The System tab lists apps and system processes by CPU use (percent of one core) and memory. It only samples while the tab is open, the app is in front and the screen is on, and refreshes every 8 seconds.
 - An app is marked as a culprit when it stays busy in the background for about 30 seconds. Pick the sensitivity with the High, Medium and Low chips.
 - The X button stops an app with root (after you confirm). It may start again by itself. Core system processes, root processes, daemons, your launcher, keyboard and dialer, this app and the app on screen are protected and cannot be stopped.
 
