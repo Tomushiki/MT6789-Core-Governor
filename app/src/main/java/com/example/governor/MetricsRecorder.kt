@@ -342,6 +342,7 @@ class MetricsRecorder(
     private var sessionSamples = ArrayList<MetricSample>()
     private var sessionPkg = ""
     private var sessionActive = false
+    private val saveLock = Any()
 
     init {
         scope.launch(Dispatchers.IO) { refreshSessions() }
@@ -424,26 +425,28 @@ class MetricsRecorder(
     }
 
     private fun saveSession(pkg: String, samples: List<MetricSample>) {
-        try {
-            dir.mkdirs()
-            val start = samples.first().tMs
-            val end = samples.last().tMs
-            val safePkg = pkg.ifBlank { "unknown" }.replace(Regex("[^A-Za-z0-9._-]"), "_")
-            val file = File(dir, "${start}_$safePkg.csv")
-            val summary = MetricsMath.summarize(samples)
-            file.bufferedWriter().use { w ->
-                w.write(MetricsMath.encodeHeader(pkg.ifBlank { "unknown" }, start, end, summary))
-                w.newLine()
-                for (s in samples) {
-                    w.write(MetricsMath.encodeSample(s))
+        synchronized(saveLock) {
+            try {
+                dir.mkdirs()
+                val start = samples.first().tMs
+                val end = samples.last().tMs
+                val safePkg = pkg.ifBlank { "unknown" }.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val file = File(dir, "${start}_$safePkg.csv")
+                val summary = MetricsMath.summarize(samples)
+                file.bufferedWriter().use { w ->
+                    w.write(MetricsMath.encodeHeader(pkg.ifBlank { "unknown" }, start, end, summary))
                     w.newLine()
+                    for (s in samples) {
+                        w.write(MetricsMath.encodeSample(s))
+                        w.newLine()
+                    }
                 }
+                pruneOld()
+                refreshSessions()
+                log(LogLevel.INFO, "Metrics", "Saved session ${safePkg} (${samples.size}s).")
+            } catch (e: Exception) {
+                log(LogLevel.WARN, "Metrics", "Could not save session: ${e.message}")
             }
-            pruneOld()
-            refreshSessions()
-            log(LogLevel.INFO, "Metrics", "Saved session ${safePkg} (${samples.size}s).")
-        } catch (e: Exception) {
-            log(LogLevel.WARN, "Metrics", "Could not save session: ${e.message}")
         }
     }
 

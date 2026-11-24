@@ -4,6 +4,10 @@ All notable changes to **CoreGovernor** will be documented in this file.
 
 ## [Unreleased]
 
+No changes yet.
+
+## [3.6.0] - 2026-11-24
+
 ### Added
 - **Stutter Hunter (Tuning > Power).** Learns each game's normal FPS (from the Games list) while in the foreground and watches for sudden drops. When FPS dips below your sensitivity threshold without thermal/power throttling or GPU saturation, it samples background processes and either logs the top CPU hog ("Notify only", default) or stops it with `am force-stop` ("Stop apps") using session safety brakes and a 6-second recovery check. Includes a live status line, recent actions history, and a non-system Whitelist.
 
