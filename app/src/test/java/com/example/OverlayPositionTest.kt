@@ -47,7 +47,7 @@ class OverlayPositionTest {
         assertEquals(300 to 1000, c.overlayPosPm(false))
     }
 
-    @Test fun maxScalePctUsesStyleFractionAndClamps50To200() {
+    @Test fun maxScalePctUsesStyleFractionAndClamps25To200() {
         // Compact allows 60% width x 35% height; 1000x2000 -> 600x700 allowed.
         // Natural 300x100 -> width ratio 2.0 (200%), height ratio 7.0 -> 200.
         assertEquals(200, OverlaySizing.maxScalePct(1000, 2000, OverlayStyle.COMPACT, 300f, 100f))
@@ -61,8 +61,9 @@ class OverlayPositionTest {
         // Expanded/Detailed allow 45% width x 35% height: 1080 * 0.45 = 486; 486 / 600 = 81%.
         assertEquals(81, OverlaySizing.maxScalePct(1080, 2400, OverlayStyle.EXPANDED, 600f, 200f))
 
-        // Tight landscape height floors at 50%: 1080 * 0.35 = 378; 378 / 932 = 40.5 -> clamped to 50.
-        assertEquals(50, OverlaySizing.maxScalePct(2400, 1080, OverlayStyle.DETAILED, 500f, 932f))
+        // Tight landscape height: 1080 * 0.35 = 378; 378 / 932 = 40.5 -> 40 (the floor is now 25%).
+        assertEquals(40, OverlaySizing.maxScalePct(2400, 1080, OverlayStyle.DETAILED, 500f, 932f))
+        assertEquals(25, OverlaySizing.maxScalePct(2400, 1080, OverlayStyle.DETAILED, 500f, 3000f))
     }
 
     @Test fun windowOriginStaysFlushOnScreenBounds() {
