@@ -55,7 +55,6 @@ jobs:
               -keypass "$ANDROID_KEY_PASSWORD"
           fi
           echo "keystore_path=$KEYSTORE_FILE" >> "$GITHUB_OUTPUT"
-
       - name: Build signed release APK
         env:
           KEYSTORE_PATH: ${{ steps.keystore.outputs.keystore_path }}
@@ -77,7 +76,6 @@ jobs:
           sha256sum "$OUT_APK" > "${OUT_APK}.sha256"
           echo "apk_path=$OUT_APK" >> "$GITHUB_OUTPUT"
           echo "sha_path=${OUT_APK}.sha256" >> "$GITHUB_OUTPUT"
-
       - name: Clean up temporary keystore
         if: always()
         run: rm -f "${RUNNER_TEMP}/release-keystore.jks"
