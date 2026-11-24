@@ -12,6 +12,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
       - name: Resolve release tag
         id: tag
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
@@ -21,9 +24,6 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-
-      # DELETE THE OLD "Set up Android SDK" STEP COMPLETELY
-      # The runner already has Android SDK
 
       - name: Accept Android SDK licenses
         run: yes | sdkmanager --licenses || true
