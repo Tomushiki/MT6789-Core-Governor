@@ -2,6 +2,22 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [3.2.0] - 2026-11-24
+
+### Changed
+- **Minimalistic look.** Calmer, flatter colours with a softer accent, thinner and quieter chart lines, a flatter bottom bar (only the selected tab is highlighted, no heavy pill) and slightly tighter cards. Nothing about how the app works has changed: every screen, switch, slider and setting is still there and behaves the same.
+
+### Added
+- **Appearance (System tab).** All purely visual and remembered:
+  - **Themes:** System, Dark, Light or AMOLED black, plus an accent colour.
+  - **Border colour:** presets or a custom colour.
+  - **Corner radius slider** (sharp to very round) and a **card transparency slider**.
+  - **Liquid glass:** frosted translucent cards with a soft sheen and light edge. With a background picture it also blurs the picture (Android 12+).
+  - **Background image** from the system photo picker (no storage permission), with a dimming slider and Remove.
+  - A Reset button returns everything to the minimalistic defaults.
+- **New app icon** (phoenix), including the themed (monochrome) icon.
+- Version 3.2.0 (versionCode 48).
+
 ## [3.1.0] - 2026-11-24
 
 ### Added

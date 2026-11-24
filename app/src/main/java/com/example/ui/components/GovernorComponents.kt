@@ -16,6 +16,8 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -50,6 +52,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.model.TelemetrySample
+import com.example.ui.theme.Appearance
 import com.example.ui.theme.LocalExtendedColors
 import com.example.ui.theme.MonoMetricStyle
 import kotlin.math.roundToInt
@@ -60,19 +63,42 @@ fun EcuCard(
     accentBorder: Color? = null,
     content: @Composable () -> Unit
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(
-            width = 1.dp,
-            color = accentBorder ?: MaterialTheme.colorScheme.outline
+    val shape = RoundedCornerShape(Appearance.cornerRadius.dp)
+    if (Appearance.liquidGlass) {
+        // Liquid glass: frosted translucent fill, soft sheen and a bright rim light on the edge.
+        val fill = Brush.linearGradient(
+            listOf(Color.White.copy(alpha = 0.16f), Color.White.copy(alpha = 0.04f))
         )
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            content()
+        val rim = accentBorder?.let { Brush.linearGradient(listOf(it, it)) } ?: Brush.linearGradient(
+            listOf(Color.White.copy(alpha = 0.55f), Color.White.copy(alpha = 0.06f), Color.White.copy(alpha = 0.30f))
+        )
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.28f))
+                .background(fill)
+                .border(1.dp, rim, shape)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                content()
+            }
+        }
+    } else {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = shape,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            ),
+            border = BorderStroke(
+                width = 1.dp,
+                color = accentBorder ?: MaterialTheme.colorScheme.outline
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                content()
+            }
         }
     }
 }
@@ -180,7 +206,7 @@ fun TelemetryHistoryGraph(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "TELEMETRY HISTORY",
+                text = "Telemetry history",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -221,7 +247,7 @@ fun TelemetryHistoryGraph(
                 for (frac in listOf(0.25f, 0.5f, 0.75f)) {
                     val y = size.height * frac
                     drawLine(
-                        color = gridColor.copy(alpha = 0.6f),
+                        color = gridColor.copy(alpha = 0.35f),
                         start = Offset(0f, y),
                         end = Offset(size.width, y),
                         strokeWidth = 1f
@@ -244,12 +270,12 @@ fun TelemetryHistoryGraph(
                     )
                 }
 
-                drawSeries(history.map { it.avgCpuLoadPct / 100f }, primary, 2.8f)
-                drawSeries(history.map { it.gpuLoadPct / 100f }, secondary, 2.8f)
+                drawSeries(history.map { it.avgCpuLoadPct / 100f }, primary, 2f)
+                drawSeries(history.map { it.gpuLoadPct / 100f }, secondary, 2f)
                 // Temp scaled 20C..80C -> 0..1
-                drawSeries(history.map { (it.tempC - 20f) / 60f }, ext.throttle, 2.5f)
+                drawSeries(history.map { (it.tempC - 20f) / 60f }, ext.throttle, 1.8f)
                 // Watts scaled 0..12W -> 0..1
-                drawSeries(history.map { it.watts / 12f }, ext.optimal, 2.5f)
+                drawSeries(history.map { it.watts / 12f }, ext.optimal, 1.8f)
             }
         }
     }

@@ -119,9 +119,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        com.example.ui.theme.Appearance.init(applicationContext)
         setContent {
             CoreGovernorTheme {
-                CoreGovernorRootScreen()
+                com.example.ui.AppearanceBackground {
+                    CoreGovernorRootScreen()
+                }
             }
         }
     }
@@ -217,13 +220,15 @@ fun CoreGovernorRootScreen(
         currentTab = NavTab.MONITOR
     }
 
+    val hasBackground = com.example.ui.theme.Appearance.background != null
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        containerColor = if (hasBackground) androidx.compose.ui.graphics.Color.Transparent else MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
+                    containerColor = if (hasBackground) androidx.compose.ui.graphics.Color.Transparent else MaterialTheme.colorScheme.background
                 ),
                 title = {
                     Row(
@@ -261,7 +266,10 @@ fun CoreGovernorRootScreen(
             )
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = if (hasBackground) MaterialTheme.colorScheme.background.copy(alpha = 0.85f) else MaterialTheme.colorScheme.background,
+                tonalElevation = 0.dp
+            ) {
                 NavTab.entries.forEach { tab ->
                     val selected = currentTab == tab
                     NavigationBarItem(
@@ -278,6 +286,13 @@ fun CoreGovernorRootScreen(
                         },
                         label = { Text(tab.label, maxLines = 1, softWrap = false) },
                         alwaysShowLabel = false,
+                        colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
                         modifier = Modifier.testTag("nav_${tab.name.lowercase()}")
                     )
                 }

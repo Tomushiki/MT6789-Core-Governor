@@ -17,32 +17,32 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Precision Technical ECU Dark Palette
-val ObsCanvas = Color(0xFF0B0F14)
-val CarbonSurface = Color(0xFF121821)
-val CarbonSurfaceHigh = Color(0xFF19222E)
-val CarbonSurfaceHighest = Color(0xFF212C3B)
-val HairlineBorder = Color(0xFF283548)
+// Minimal dark palette: flat, neutral, one soft accent
+val ObsCanvas = Color(0xFF0E0F11)
+val CarbonSurface = Color(0xFF16181B)
+val CarbonSurfaceHigh = Color(0xFF1C1F23)
+val CarbonSurfaceHighest = Color(0xFF24282D)
+val HairlineBorder = Color(0xFF2A2E34)
 
-val CyanAccent = Color(0xFF00E5FF)
-val CyanMuted = Color(0xFF0A4754)
-val AmberAccent = Color(0xFFFFB300)
-val AmberMuted = Color(0xFF4D3600)
-val EmeraldAccent = Color(0xFF00E676)
-val EmeraldMuted = Color(0xFF084225)
-val CoralThrottle = Color(0xFFFF5252)
-val CoralMuted = Color(0xFF4F1619)
+val CyanAccent = Color(0xFF7FD6E2)
+val CyanMuted = Color(0xFF1D3D44)
+val AmberAccent = Color(0xFFE9B459)
+val AmberMuted = Color(0xFF3F3220)
+val EmeraldAccent = Color(0xFF6FD39A)
+val EmeraldMuted = Color(0xFF1D3A2B)
+val CoralThrottle = Color(0xFFEC7272)
+val CoralMuted = Color(0xFF45232A)
 
-val TextPrimaryDark = Color(0xFFEAF1F8)
-val TextSecondaryDark = Color(0xFF93A4B8)
+val TextPrimaryDark = Color(0xFFECEEF0)
+val TextSecondaryDark = Color(0xFF8E959E)
 
-// Crisp Lab Light Palette
-val LabCanvas = Color(0xFFF3F6FA)
+// Minimal light palette
+val LabCanvas = Color(0xFFF7F8F9)
 val LabSurface = Color(0xFFFFFFFF)
-val LabSurfaceHigh = Color(0xFFE9EFF6)
-val LabBorder = Color(0xFFCFD9E6)
+val LabSurfaceHigh = Color(0xFFEEF0F2)
+val LabBorder = Color(0xFFDADDE1)
 
-val CyanDark = Color(0xFF006875)
+val CyanDark = Color(0xFF1F7886)
 val CyanContainerLight = Color(0xFFD0F4FA)
 val AmberDark = Color(0xFF945700)
 val AmberContainerLight = Color(0xFFFFE7C2)
@@ -50,4 +50,4 @@ val EmeraldDark = Color(0xFF006D3B)
 val CoralDark = Color(0xFFC62828)
 
 val TextPrimaryLight = Color(0xFF101820)
-val TextSecondaryLight = Color(0xFF4F6073)
+val TextSecondaryLight = Color(0xFF5B6570)
