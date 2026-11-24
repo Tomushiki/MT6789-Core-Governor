@@ -134,7 +134,10 @@ class MetricsRecorderTest {
     fun stoppingTheGovernorSavesAndLongGapSplits() {
         feed(4_000_000L, 25, tel(GovernorMode.GAME))
         // 60 s pause (screen-off saving), then the game continues: first part is saved on its own.
-        feed(4_000_000L + 85_000L, 25, tel(GovernorMode.GAME))
+        feed(4_000_000L + 85_000L, 1, tel(GovernorMode.GAME))
+        // Let the first save finish before the second starts, so the two background saves cannot race.
+        waitForSessions(1)
+        feed(4_000_000L + 86_000L, 24, tel(GovernorMode.GAME))
         rec.onTelemetry(tel(GovernorMode.GAME, running = false), 4_000_000L + 120_000L)
         waitForSessions(2)
         assertEquals(2, rec.sessions.value.size)
