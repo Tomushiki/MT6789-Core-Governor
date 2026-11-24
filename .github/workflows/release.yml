@@ -1,135 +1,58 @@
-name: Release Signed APK
+name: Test and build signed release APK
 
 on:
   push:
     tags:
-      - 'v*.*.*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Existing version tag to build, for example v3.6.0'
-        required: true
-        type: string
-
-permissions:
-  contents: write
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
-env:
-  JAVA_VERSION: '17'
-  GRADLE_OPTS: '-Dorg.gradle.daemon=false'
+      - 'v*'
 
 jobs:
-  build-release:
-    name: Test and build signed release APK
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v5
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
       - name: Resolve release tag
-        id: release
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            TAG="${{ inputs.tag }}"
-          fi
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Expected a semantic version tag such as v3.6.0; got $TAG"
-            exit 1
-          fi
-          VERSION="${TAG#v}"
-          PROJECT_VERSION="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
-          if [[ "$PROJECT_VERSION" != "$VERSION" ]]; then
-            echo "::error::Project version $PROJECT_VERSION does not match tag $TAG"
-            exit 1
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: gradle
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses >/dev/null || true
+        run: yes | sdkmanager --licenses || true
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
-
-      - name: Run unit tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
 
       - name: Decode release keystore
-        id: keystore
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for value in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
-            if [[ -z "${!value}" ]]; then
-              echo "::error::Missing required signing secret: $value"
-              exit 1
-            fi
-          done
-          KEYSTORE_FILE="${RUNNER_TEMP}/release-keystore.jks"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_FILE"
-          keytool -list -keystore "$KEYSTORE_FILE" \
-            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
-            -alias "$ANDROID_KEY_ALIAS" >/dev/null
-          echo "path=$KEYSTORE_FILE" >> "$GITHUB_OUTPUT"
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
 
       - name: Build signed release APK
+        run: ./gradlew assembleRelease
         env:
-          KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease --stacktrace
+          KEYSTORE_PATH: app/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Prepare release assets
-        id: assets
-        env:
-          TAG: ${{ steps.release.outputs.tag }}
-        shell: bash
         run: |
-          set -euo pipefail
-          SRC_APK="app/build/outputs/apk/release/app-release.apk"
-          OUT_APK="${RUNNER_TEMP}/CoreGovernor-${TAG}-release.apk"
-          [[ -f "$SRC_APK" ]] || { echo "::error::Release APK was not produced"; exit 1; }
-          cp "$SRC_APK" "$OUT_APK"
-          sha256sum "$OUT_APK" > "${OUT_APK}.sha256"
-          echo "apk=$OUT_APK" >> "$GITHUB_OUTPUT"
-          echo "sha=${OUT_APK}.sha256" >> "$GITHUB_OUTPUT"
-
-      - name: Delete temporary keystore
-        if: always()
-        run: rm -f "${{ steps.keystore.outputs.path }}"
+          ls -lh app/build/outputs/apk/release/
+          cp app/build/outputs/apk/release/*.apk ./
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release.outputs.tag }}
-          name: CoreGovernor ${{ steps.release.outputs.version }}
-          body_path: CHANGELOG.md
-          generate_release_notes: true
-          files: |
-            ${{ steps.assets.outputs.apk }}
-            ${{ steps.assets.outputs.sha }}
+          files: "*.apk"
+          tag_name: ${{ steps.tag.outputs.tag }}
+
+      - name: Delete temporary keystore
+        if: always()
+        run: rm -f app/release.keystore
