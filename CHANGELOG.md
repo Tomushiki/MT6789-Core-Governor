@@ -6,6 +6,31 @@ All notable changes to **CoreGovernor** will be documented in this file.
 
 No changes yet.
 
+## [3.6.3] - 2026-11-24
+
+### Changed
+- **Bigger overlay size range.** The overlay size sliders now go well past 100% in portrait (it used to stop around 73%) and further in landscape. The overlay is still limited so it always fits on screen.
+
+## [3.6.2] - 2026-11-24
+
+### Fixed
+- **Landscape overlay.** The overlay, its size limit and the position sliders now share one screen size and orientation, taken from the system configuration instead of the display rotation (which could report portrait while rotated). This fixes the tiny size cap, the wrong position and the size flicker in landscape.
+
+## [3.6.1] - 2026-11-24
+
+### Added
+- **Stutter Hunter reports governor throttling.** When an FPS dip happens while the governor is actively limiting performance because of heat, or because of the battery/power limit (or Afterburn blocked by heat or battery), Stutter Hunter now says so in its actions list and log instead of blaming a background process. No process is investigated or stopped in that case. A low battery percentage alone is never reported as the cause.
+- **Afterburn ending toast.** A pill now also appears when Afterburn drops from boosting to reduced or blocked (heat or battery) while you are still in the game.
+
+### Changed
+- **Afterburn toasts are selected-game only.** Start and ending toasts appear only for an app in your Games list that is also the foreground app. Apps that are only in the Afterburn list never show a toast, and leaving the game does not show an ending toast.
+- **Landscape overlay controls and remembered positions.** Landscape sizes and positions are saved separately from portrait for every overlay style, and fall back to the portrait values for older saved configs.
+
+### Fixed
+- **Overlay drag in landscape.** The overlay can now be dragged across the whole screen in landscape (screen size is taken from the physical display and current rotation) and uses the landscape position. Placement details are written to the log under "Overlay".
+- **Landscape position sliders.** The horizontal and vertical position sliders now save to the landscape slot while the phone is in landscape (they were saving to the portrait slot, so they looked stuck).
+- **Liquid glass text color.** Text inside liquid-glass cards now uses the theme's text color instead of turning black.
+
 ## [3.6.0] - 2026-11-24
 
 ### Added

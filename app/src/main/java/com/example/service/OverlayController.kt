@@ -31,6 +31,7 @@ import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
@@ -39,6 +40,7 @@ import com.example.data.LocaleHelper
 import com.example.governor.GovernorEngine
 import com.example.model.BatteryState
 import com.example.model.GovernorConfig
+import com.example.model.LogLevel
 import com.example.model.GovernorMode
 import com.example.model.overlayCompactScaleFor
 import com.example.model.overlayExpandedScaleFor
@@ -58,6 +60,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
@@ -124,16 +127,31 @@ object OverlaySizing {
         }
     }
 
+    /** Pure: orders the physical sides as (width, height) for the given orientation. */
+    fun orderScreenSides(sideA: Int, sideB: Int, landscape: Boolean): Pair<Int, Int> {
+        val longSide = max(sideA, sideB)
+        val shortSide = min(sideA, sideB)
+        return if (landscape) longSide to shortSide else shortSide to longSide
+    }
+
+    /**
+     * Single source of truth for the overlay's screen size and orientation. Display.rotation can lag
+     * or be wrong on some builds (GSI), so the orientation comes from the system configuration, the
+     * same value the Compose UI uses, and only the rotation-independent long/short sides come from
+     * the display. Use the second value of this pair's ordering as "landscape = width > height".
+     */
     fun getScreenSizePx(windowManager: WindowManager): Pair<Int, Int> {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = windowManager.currentWindowMetrics.bounds
-            bounds.width() to bounds.height()
-        } else {
-            val dm = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(dm)
-            dm.widthPixels to dm.heightPixels
+        @Suppress("DEPRECATION")
+        val display = windowManager.defaultDisplay
+        val dm = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        display.getRealMetrics(dm)
+        val landscape = when (android.content.res.Resources.getSystem().configuration.orientation) {
+            Configuration.ORIENTATION_LANDSCAPE -> true
+            Configuration.ORIENTATION_PORTRAIT -> false
+            else -> display.rotation == Surface.ROTATION_90 || display.rotation == Surface.ROTATION_270
         }
+        return orderScreenSides(dm.widthPixels, dm.heightPixels, landscape)
     }
 
     fun measureNaturalSizeAtScaleOne(
@@ -239,8 +257,8 @@ object OverlaySizing {
         naturalHAt1: Float
     ): Int {
         if (screenW <= 0 || screenH <= 0) return MIN_SCALE_PCT
-        val wFactor = if (style == OverlayStyle.COMPACT) 0.60f else 0.45f
-        val hFactor = 0.35f
+        val wFactor = 0.85f
+        val hFactor = 0.50f
         val allowedW = screenW.toFloat() * wFactor
         val allowedH = screenH.toFloat() * hFactor
         val ratio = minOf(
@@ -539,6 +557,11 @@ class OverlayController(
         params.y = y
         lastAppliedXPm = xPm
         lastAppliedYPm = yPm
+        engine.log(
+            LogLevel.INFO,
+            "Overlay",
+            "Place: screen ${screenW}x$screenH, overlay ${viewW}x$viewH, pos $xPm/$yPm pm -> $x,$y px"
+        )
     }
 
     private fun hide() {
@@ -1498,6 +1521,11 @@ class OverlayController(
                         } catch (_: Throwable) {
                         }
                         val land = screenW > screenH
+                        engine.log(
+                            LogLevel.INFO,
+                            "Overlay",
+                            "Drag end: screen ${screenW}x$screenH, overlay ${viewW}x$viewH, raw ${params.x},${params.y} -> $xPm/$yPm pm (${if (land) "landscape" else "portrait"})"
+                        )
                         engine.updateConfig {
                             // Save into the slot for the orientation the user dragged in.
                             it.withOverlayPosPm(land, xPm, yPm)
