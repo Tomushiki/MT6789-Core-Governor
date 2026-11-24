@@ -460,6 +460,39 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun updateAfterburn(
+        enabled: Boolean? = null,
+        strength: com.example.model.BoostStrength? = null,
+        thermalConditionEnabled: Boolean? = null,
+        thermalMarginC: Float? = null,
+        batteryConditionEnabled: Boolean? = null,
+        batteryThresholdPct: Int? = null,
+        voltageSagEnabled: Boolean? = null
+    ) {
+        engine.updateConfig { cfg ->
+            val b = cfg.afterburn
+            cfg.copy(
+                afterburn = b.copy(
+                    enabled = enabled ?: b.enabled,
+                    strength = strength ?: b.strength,
+                    thermalConditionEnabled = thermalConditionEnabled ?: b.thermalConditionEnabled,
+                    thermalMarginC = (thermalMarginC ?: b.thermalMarginC).coerceIn(3f, 8f),
+                    batteryConditionEnabled = batteryConditionEnabled ?: b.batteryConditionEnabled,
+                    batteryThresholdPct = (batteryThresholdPct ?: b.batteryThresholdPct).coerceIn(10, 90),
+                    voltageSagEnabled = voltageSagEnabled ?: b.voltageSagEnabled
+                )
+            )
+        }
+    }
+
+    fun toggleBoostPackage(packageName: String) {
+        engine.updateConfig { cfg ->
+            val next = cfg.boostPackages.toMutableSet()
+            if (packageName in next) next.remove(packageName) else next.add(packageName)
+            cfg.copy(boostPackages = next)
+        }
+    }
+
     fun toggleGamePackage(packageName: String) {
         engine.updateConfig { cfg ->
             val next = cfg.gamePackages.toMutableSet()

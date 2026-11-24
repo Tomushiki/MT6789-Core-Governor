@@ -25,6 +25,8 @@ import com.example.model.HardwareSpec
 import com.example.model.ModeOverride
 import com.example.model.ModeProfile
 import com.example.model.PowerPolarity
+import com.example.model.BoostStrength
+import com.example.model.AfterburnConfig
 import com.example.model.PowerThrottleConfig
 import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
@@ -505,6 +507,18 @@ class ConfigStorage(private val context: Context) {
             put("adaptiveActiveHz", c.adaptiveActiveHz)
             put("adaptiveIdleDelayMs", c.adaptiveIdleDelayMs)
             put("screenOffAnalysisEnabled", c.screenOffAnalysisEnabled)
+            put("afterburn", JSONObject().apply {
+                put("enabled", c.afterburn.enabled)
+                put("strength", c.afterburn.strength.name)
+                put("thermalConditionEnabled", c.afterburn.thermalConditionEnabled)
+                put("thermalMarginC", c.afterburn.thermalMarginC.toDouble())
+                put("batteryConditionEnabled", c.afterburn.batteryConditionEnabled)
+                put("batteryThresholdPct", c.afterburn.batteryThresholdPct)
+                put("voltageSagEnabled", c.afterburn.voltageSagEnabled)
+            })
+            val boostArr = JSONArray()
+            c.boostPackages.sorted().forEach { boostArr.put(it) }
+            put("boostPackages", boostArr)
         }
     }
 
@@ -545,6 +559,12 @@ class ConfigStorage(private val context: Context) {
                 games.add(gamesArr.getString(i))
             }
         }
+        val boostPkgs = mutableSetOf<String>()
+        val boostArr = obj.optJSONArray("boostPackages")
+        if (boostArr != null) {
+            for (i in 0 until boostArr.length()) boostPkgs.add(boostArr.getString(i))
+        }
+        val ibObj = obj.optJSONObject("afterburn")
         val tObj = obj.optJSONObject("tempThrottle")
         val pObj = obj.optJSONObject("powerThrottle")
 
@@ -567,13 +587,13 @@ class ConfigStorage(private val context: Context) {
             overlayDetailed = loadedDetailed,
             overlayOpacityPct = obj.optInt("overlayOpacityPct", default.overlayOpacityPct).coerceIn(30, 100),
             overlayBgOpacityPct = obj.optInt("overlayBgOpacityPct", default.overlayBgOpacityPct).coerceIn(0, 100),
-            overlayCompactScalePct = obj.optInt("overlayCompactScalePct", default.overlayCompactScalePct).coerceIn(50, 200),
-            overlayExpandedScalePct = obj.optInt("overlayExpandedScalePct", default.overlayExpandedScalePct).coerceIn(50, 200),
+            overlayCompactScalePct = obj.optInt("overlayCompactScalePct", default.overlayCompactScalePct).coerceIn(25, 200),
+            overlayExpandedScalePct = obj.optInt("overlayExpandedScalePct", default.overlayExpandedScalePct).coerceIn(25, 200),
             overlayCompactScalePctL = obj.optInt("overlayCompactScalePctL", default.overlayCompactScalePctL).let {
-                if (it < 0) -1 else it.coerceIn(50, 200)
+                if (it < 0) -1 else it.coerceIn(25, 200)
             },
             overlayExpandedScalePctL = obj.optInt("overlayExpandedScalePctL", default.overlayExpandedScalePctL).let {
-                if (it < 0) -1 else it.coerceIn(50, 200)
+                if (it < 0) -1 else it.coerceIn(25, 200)
             },
             overlayCompactXPm = obj.optInt("overlayCompactXPm", default.overlayCompactXPm).coerceIn(0, 1000),
             overlayCompactYPm = obj.optInt("overlayCompactYPm", default.overlayCompactYPm).coerceIn(0, 1000),
@@ -633,7 +653,17 @@ class ConfigStorage(private val context: Context) {
             adaptiveIdleHz = obj.optInt("adaptiveIdleHz", default.adaptiveIdleHz).coerceIn(0, 360),
             adaptiveActiveHz = obj.optInt("adaptiveActiveHz", default.adaptiveActiveHz).coerceIn(0, 360),
             adaptiveIdleDelayMs = obj.optInt("adaptiveIdleDelayMs", default.adaptiveIdleDelayMs).coerceIn(500, 5000),
-            screenOffAnalysisEnabled = obj.optBoolean("screenOffAnalysisEnabled", default.screenOffAnalysisEnabled)
+            screenOffAnalysisEnabled = obj.optBoolean("screenOffAnalysisEnabled", default.screenOffAnalysisEnabled),
+            afterburn = if (ibObj != null) AfterburnConfig(
+                enabled = ibObj.optBoolean("enabled", false),
+                strength = enumOrDefault(ibObj.optString("strength"), BoostStrength.MEDIUM),
+                thermalConditionEnabled = ibObj.optBoolean("thermalConditionEnabled", true),
+                thermalMarginC = ibObj.optDouble("thermalMarginC", 5.0).toFloat().coerceIn(3f, 8f),
+                batteryConditionEnabled = ibObj.optBoolean("batteryConditionEnabled", true),
+                batteryThresholdPct = ibObj.optInt("batteryThresholdPct", 40).coerceIn(10, 90),
+                voltageSagEnabled = ibObj.optBoolean("voltageSagEnabled", true)
+            ) else default.afterburn,
+            boostPackages = boostPkgs
         )
     }
 

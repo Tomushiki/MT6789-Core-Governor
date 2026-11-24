@@ -34,6 +34,7 @@ import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
 import com.example.model.GpuLiveState
 import com.example.model.HardwareSpec
+import com.example.model.AfterburnState
 import com.example.model.LogEntry
 import com.example.model.LogLevel
 import com.example.model.ModeOverride
@@ -226,6 +227,13 @@ class GovernorEngine(context: Context) {
     private var latchedPeakTempC = 0f
     private var currentTempCpuCapPct = 100f
     private var currentTempGpuCapPct = 100f
+
+    // v3.0.0 Afterburn state
+    private var afterburnDecision = AfterburnDecision(0f, AfterburnState.OFF)
+    private val batteryTruthModel = BatteryTruthModel().also {
+        it.load(appContext.getSharedPreferences("battery_truth", 0).getString("profile", null))
+    }
+    private var batteryTruth = BatteryTruthState()
 
     // Power throttle state
     private val wattWindow = ArrayDeque<Float>()
@@ -999,6 +1007,45 @@ class GovernorEngine(context: Context) {
         val tempThrottleActive = cfg.tempThrottle.enabled &&
             (currentTempCpuCapPct < 99.5f || currentTempGpuCapPct < 99.5f)
 
+        // 4b. v3.0.0 Afterburn: decided from temperature + battery together, per selected app.
+        batteryTruth = batteryTruthModel.update(
+            nowMs = nowMs,
+            voltageMv = if (rawReading.voltageMv > 0f) rawReading.voltageMv else cachedBattVoltMv,
+            dischargeMa = if (stableBatteryState == BatteryState.DISCHARGING) abs(rawReading.currentMa) else -abs(rawReading.currentMa),
+            gaugePct = cachedBatteryPct,
+            discharging = stableBatteryState == BatteryState.DISCHARGING,
+            plugged = stableBatteryState.isPluggedOrCharging
+        )
+        batteryTruthModel.takeDirtySerialized()?.let { txt ->
+            appContext.getSharedPreferences("battery_truth", 0).edit().putString("profile", txt).apply()
+            log(LogLevel.INFO, "Battery", "Battery calibration saved (full-charge ${batteryTruth.fullChargeMv.roundToInt()} mV).")
+        }
+        // Decisions use the voltage-graded level when it is trustworthy, otherwise the gauge.
+        val effBattPct = if (batteryTruth.valid && batteryTruth.confidencePct >= 50) {
+            batteryTruth.truePct.roundToInt().coerceIn(0, 100)
+        } else cachedBatteryPct
+        val prevBoostState = afterburnDecision.state
+        afterburnDecision = AfterburnLogic.decide(
+            cfg = cfg.afterburn,
+            appSelected = fgPkg in cfg.boostPackages,
+            tempC = tempC,
+            throttleStartC = cfg.tempThrottle.startTempC,
+            batteryPct = effBattPct,
+            pluggedOrCharging = stableBatteryState.isPluggedOrCharging,
+            wasActive = afterburnDecision.active,
+            sagMv = batteryTruth.sagMv
+        )
+        val boostLevel = afterburnDecision.level
+        if (afterburnDecision.state != prevBoostState &&
+            afterburnDecision.state != AfterburnState.IDLE && prevBoostState != AfterburnState.IDLE
+        ) {
+            log(
+                LogLevel.INFO,
+                "Afterburn",
+                "Afterburn: ${prevBoostState.label} -> ${afterburnDecision.state.label} (${(boostLevel * 100f).roundToInt()}%, ${"%.1f".format(Locale.US, tempC)}C, batt ${effBattPct}%, sag ${batteryTruth.sagMv.roundToInt()}mV)"
+            )
+        }
+
         // 5b. Gentle Power Throttle (discharging ONLY; release cleanly while charging/plugged)
         val maxWin = cfg.powerThrottle.averagingSamples.coerceIn(2, 40)
         val avgWatts: Float
@@ -1010,7 +1057,10 @@ class GovernorEngine(context: Context) {
             avgWatts = if (wattWindow.isNotEmpty()) wattWindow.average().toFloat() else rawReading.dischargeWatts
             smoothedChargeWatts = 0f
             if (cfg.powerThrottle.enabled) {
-                if (avgWatts > cfg.powerThrottle.limitWatts) {
+                if (avgWatts > cfg.powerThrottle.limitWatts && boostLevel > 0f) {
+                    // Afterburn is bypassing the cap: hold the stored cap so it does not sink while boosting.
+                    overPowerSinceMs = null
+                } else if (avgWatts > cfg.powerThrottle.limitWatts) {
                     val startOver = overPowerSinceMs ?: nowMs.also { overPowerSinceMs = it }
                     if (nowMs - startOver >= cfg.powerThrottle.sustainMs) {
                         val prevCap = currentPowerCapPct
@@ -1079,7 +1129,7 @@ class GovernorEngine(context: Context) {
             gpuShareSmoothed = 0.5f
         }
 
-        val (cpuPowerCap, gpuPowerCap) = if (cfg.powerThrottle.componentAware && powerThrottleActive) {
+        val (cpuPowerCapRaw, gpuPowerCapRaw) = if (cfg.powerThrottle.componentAware && powerThrottleActive) {
             GovernorMath.splitPowerCap(
                 basePowerCapPct = currentPowerCapPct,
                 gpuShare = gpuShareSmoothed,
@@ -1088,6 +1138,9 @@ class GovernorEngine(context: Context) {
         } else {
             currentPowerCapPct to currentPowerCapPct
         }
+
+        val cpuPowerCap = AfterburnLogic.relieveCap(cpuPowerCapRaw, boostLevel)
+        val gpuPowerCap = AfterburnLogic.relieveCap(gpuPowerCapRaw, boostLevel)
 
         val clusterCount = hw.cpuPolicies.size.coerceAtLeast(1)
         val clusterFactors = mutableMapOf<Int, Float>()
@@ -1716,6 +1769,19 @@ class GovernorEngine(context: Context) {
                 tempGpuCapPct = currentTempGpuCapPct,
                 powerThrottleActive = powerThrottleActive,
                 powerCapPct = currentPowerCapPct,
+                afterburnState = afterburnDecision.state,
+                afterburnLevelPct = (boostLevel * 100f).roundToInt(),
+                truePct = if (batteryTruth.valid) batteryTruth.truePct else -1f,
+                trueHeadroomPct = batteryTruth.headroomPct,
+                batteryChemistry = batteryTruth.chemistry.label,
+                batterySagMv = batteryTruth.sagMv,
+                batteryResistanceMohm = batteryTruth.internalResistanceMohm,
+                truthConfidencePct = batteryTruth.confidencePct,
+                calChargeDone = batteryTruth.calChargeDone,
+                calDischargeDone = batteryTruth.calDischargeDone,
+                calRunning = batteryTruth.calRunning,
+                fullChargeMv = batteryTruth.fullChargeMv,
+                fullChargeMah = batteryTruth.fullChargeMah,
                 effectiveCpuCapPct = effectiveCpuCapPct,
                 effectiveGpuCapPct = effectiveGpuCapPct,
                 lastPollDurationMs = pollDuration,
@@ -2277,6 +2343,8 @@ class GovernorEngine(context: Context) {
         ramOrigMinHz = 0L
         lastRamReassertMs = 0L
         latchedPeakTempC = 0f
+        afterburnDecision = AfterburnDecision(0f, AfterburnState.OFF)
+        batteryTruthModel.reset()
         currentTempCpuCapPct = 100f
         currentTempGpuCapPct = 100f
         burstEndTimeMs = 0L

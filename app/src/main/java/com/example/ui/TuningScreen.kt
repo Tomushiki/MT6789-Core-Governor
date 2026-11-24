@@ -206,6 +206,15 @@ fun TuningScreen(
         polarity: PowerPolarity?,
         componentAware: Boolean?
     ) -> Unit,
+    onUpdateAfterburn: (
+        enabled: Boolean?,
+        strength: com.example.model.BoostStrength?,
+        thermalConditionEnabled: Boolean?,
+        thermalMarginC: Float?,
+        batteryConditionEnabled: Boolean?,
+        batteryThresholdPct: Int?,
+        voltageSagEnabled: Boolean?
+    ) -> Unit,
     onSavePreset: (String) -> Unit,
     onLoadPreset: (PresetItem) -> Unit,
     onDeletePreset: (PresetItem) -> Unit,
@@ -1008,6 +1017,13 @@ fun TuningScreen(
                         config = config,
                         telemetryFlow = telemetryFlow,
                         onUpdatePowerThrottle = onUpdatePowerThrottle
+                    )
+                }
+                item {
+                    AfterburnSection(
+                        config = config,
+                        telemetryFlow = telemetryFlow,
+                        onUpdateAfterburn = onUpdateAfterburn
                     )
                 }
             }

@@ -66,6 +66,8 @@ fun AppsScreen(
     gamePackages: Set<String>,
     usageStatsGranted: Boolean,
     onToggleGamePackage: (String) -> Unit,
+    boostPackages: Set<String> = emptySet(),
+    onToggleBoostPackage: (String) -> Unit = {},
     onRefreshUsageStats: () -> Unit,
     modifier: Modifier = Modifier,
     smartControls: Map<String, com.example.governor.AppControlInfo> = emptyMap(),
@@ -76,18 +78,24 @@ fun AppsScreen(
     val ext = LocalExtendedColors.current
     var query by remember { mutableStateOf("") }
     var showOnlyGames by remember { mutableStateOf(false) }
+    // v3.0.0: false = Games list (Normal/Game mode), true = Afterburn list
+    var boostMode by remember { mutableStateOf(false) }
+    val selectedPackages = if (boostMode) boostPackages else gamePackages
+    val onToggleSelected: (String) -> Unit = if (boostMode) onToggleBoostPackage else onToggleGamePackage
+    val selectColor = if (boostMode) ext.optimal else ext.warning
+    val selectContainer = if (boostMode) ext.optimalContainer else ext.warningContainer
 
-    val filteredApps = remember(installedApps, query, showOnlyGames, gamePackages) {
+    val filteredApps = remember(installedApps, query, showOnlyGames, selectedPackages) {
         installedApps
             .filter { app ->
                 val matchesQuery = query.isBlank() ||
                     app.label.contains(query, ignoreCase = true) ||
                     app.packageName.contains(query, ignoreCase = true)
-                val matchesFilter = !showOnlyGames || app.packageName in gamePackages
+                val matchesFilter = !showOnlyGames || app.packageName in selectedPackages
                 matchesQuery && matchesFilter
             }
             .sortedWith(
-                compareByDescending<InstalledAppInfo> { it.packageName in gamePackages }
+                compareByDescending<InstalledAppInfo> { it.packageName in selectedPackages }
                     .thenBy { it.label.lowercase() }
             )
     }
@@ -137,6 +145,33 @@ fun AppsScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = !boostMode,
+                onClick = { boostMode = false },
+                label = { Text("Games list (${gamePackages.size})") },
+                modifier = Modifier.testTag("mode_games_chip")
+            )
+            FilterChip(
+                selected = boostMode,
+                onClick = { boostMode = true },
+                label = { Text("Afterburn (${boostPackages.size})") },
+                modifier = Modifier.testTag("mode_afterburn_chip")
+            )
+        }
+        Text(
+            text = if (boostMode) {
+                "Tick the apps and games Afterburn may work on. Set it up in Tuning > Power."
+            } else {
+                "Tick the games that switch the governor into Game mode."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -166,14 +201,14 @@ fun AppsScreen(
                 FilterChip(
                     selected = showOnlyGames,
                     onClick = { showOnlyGames = true },
-                    label = { Text("Games (${gamePackages.size})") },
+                    label = { Text(if (boostMode) "Selected (${boostPackages.size})" else "Games (${gamePackages.size})") },
                     modifier = Modifier.testTag("filter_games_only_chip")
                 )
             }
             StatusPill(
-                label = "${gamePackages.size} SELECTED",
-                color = ext.warning,
-                containerColor = ext.warningContainer
+                label = "${selectedPackages.size} SELECTED",
+                color = selectColor,
+                containerColor = selectContainer
             )
         }
 
@@ -206,11 +241,11 @@ fun AppsScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(filteredApps, key = { it.packageName }) { app ->
-                    val isGame = app.packageName in gamePackages
+                    val isGame = app.packageName in selectedPackages
                     EcuCard(
-                        accentBorder = if (isGame) ext.warning else null,
+                        accentBorder = if (isGame) selectColor else null,
                         modifier = Modifier
-                            .clickable { onToggleGamePackage(app.packageName) }
+                            .clickable { onToggleSelected(app.packageName) }
                             .testTag("app_item_${app.packageName}")
                     ) {
                         Row(
@@ -241,7 +276,7 @@ fun AppsScreen(
                             }
                             Checkbox(
                                 checked = isGame,
-                                onCheckedChange = { onToggleGamePackage(app.packageName) },
+                                onCheckedChange = { onToggleSelected(app.packageName) },
                                 modifier = Modifier.testTag("app_checkbox_${app.packageName}")
                             )
                         }

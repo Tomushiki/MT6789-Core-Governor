@@ -2,6 +2,31 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [3.1.0] - 2026-11-24
+
+### Added
+- **Real battery level (Energy tab > Battery).** The app now grades the actual battery level from voltage and current behaviour. It learns the battery's internal resistance from voltage drops when the load jumps, adds the sag back, and reads the level from a voltage curve. It shows the real level, how much headroom the gauge hides, the detected chemistry, resistance and live sag.
+- **High-voltage vs standard Li-ion detection.** A 4.4 V cell and a 4.2 V cell use different curves. The app tells them apart from what the cell actually does (a resting voltage above 4.26 V can only be high-voltage) and re-learns on every start.
+- **Battery calibration (Energy tab).** One undisturbed charge to 100% (until the battery stops taking power) records the full-charge voltage, which settles whether the cell is 4.2 V or 4.4 V, plus the charged capacity. One undisturbed discharge from 95% to empty records the real resting-voltage curve. Plugging in, a long gap or a restart discards the run in progress. The result is saved and used for the real level.
+- **Afterburn uses the real level and voltage sag.** The battery condition uses the graded level when it is trusted, so a gauge that reads low no longer holds boost back. New optional "Voltage sag awareness": boost fades from 150 mV of sag and stops at 400 mV, to protect a weak or cold cell.
+
+### Changed
+- **Overlays can be made smaller.** Minimum size for the compact, expanded and detailed overlays is now 25% (was 50%).
+- **Design capacity fix.** If the kernel reports a design capacity 10 times too small (for example 516 instead of 5160 mAh), it is corrected from the kernel full capacity, so State of Health no longer reads above 100%. A value that cannot be trusted is hidden and you can set it manually.
+- Version 3.1.0 (versionCode 47).
+
+## [3.0.0] - 2026-11-24
+
+### Added
+- **Afterburn (Tuning > Power).** While an app you picked is in front, Afterburn temporarily bypasses the power-throttle cap so the phone can hold higher clocks. It has a master switch and a strength (Light / Medium / Max). Thermal throttling always stays in charge, and the stored cap is held (not pushed down) during a boost, so normal limits come back smoothly when the boost ends.
+  - **Thermal condition (optional).** Boost only while the temperature is at least 3 to 8 C (adjustable) below your thermal throttle start. More headroom gives a stronger boost.
+  - **Battery condition (optional).** Below the threshold (default 40%) the boost is reduced, and close to empty there is none. Charging ignores it.
+  - **The two conditions decide together.** A low battery raises the required temperature margin by 2 C, and thermal headroom scales the boost. Either can be switched off and the other still works. A live status (Idle / Boosting / Reduced / Blocked) shows on the card, and changes are written to the Log tab.
+- **Afterburn app list (Apps tab).** A new "Afterburn" list next to the Games list picks the apps and games Afterburn may work on.
+
+### Changed
+- Version 3.0.0 (versionCode 46). Afterburn is off by default, so nothing changes until you turn it on.
+
 ## [2.7.4] - 2026-11-24
 
 CoreGovernor now uses less CPU and memory by itself. Governing behaviour is unchanged: thermal and power throttling, the learned power model, the efficiency governor, smart app profiles and touch boost work exactly as before.

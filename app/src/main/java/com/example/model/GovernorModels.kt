@@ -192,6 +192,35 @@ data class PowerThrottleConfig(
     val componentAware: Boolean = true
 )
 
+enum class BoostStrength(val label: String, val factor: Float) {
+    LIGHT("Light", 0.45f),
+    MEDIUM("Medium", 0.75f),
+    MAX("Max", 1.0f)
+}
+
+enum class AfterburnState(val label: String) {
+    OFF("Off"),
+    IDLE("Idle"),
+    BOOSTING("Boosting"),
+    REDUCED("Reduced"),
+    BLOCKED_THERMAL("Blocked: heat"),
+    BLOCKED_BATTERY("Blocked: battery")
+}
+
+/** v3.0.0 Afterburn: temporarily relaxes power-cap banding while the conditions below are met. */
+data class AfterburnConfig(
+    val enabled: Boolean = false,
+    val strength: BoostStrength = BoostStrength.MEDIUM,
+    val thermalConditionEnabled: Boolean = true,
+    /** Boost only while the temperature is at least this many degrees C below the thermal throttle start (3..8). */
+    val thermalMarginC: Float = 5f,
+    val batteryConditionEnabled: Boolean = true,
+    /** Below this battery % (discharging) the boost is reduced. */
+    val batteryThresholdPct: Int = 40,
+    /** Boost less when the battery voltage sags a lot under load (uses the learned internal resistance). */
+    val voltageSagEnabled: Boolean = true
+)
+
 data class GovernorConfig(
     val pollIntervalMs: Long = 150L,
     val adaptivePollingEnabled: Boolean = true,
@@ -274,7 +303,10 @@ data class GovernorConfig(
     val adaptiveActiveHz: Int = 0,
     val adaptiveIdleDelayMs: Int = 1500,
     // v2.7.1 Screen-off power analysis (passive, default ON)
-    val screenOffAnalysisEnabled: Boolean = true
+    val screenOffAnalysisEnabled: Boolean = true,
+    // v3.0.0 Afterburn (default OFF); boostPackages = apps/games it is allowed to work on
+    val afterburn: AfterburnConfig = AfterburnConfig(),
+    val boostPackages: Set<String> = emptySet()
 )
 
 data class PresetItem(
@@ -367,6 +399,19 @@ data class TelemetryState(
     val tempGpuCapPct: Float = 100f,
     val powerThrottleActive: Boolean = false,
     val powerCapPct: Float = 100f,
+    val afterburnState: AfterburnState = AfterburnState.OFF,
+    val afterburnLevelPct: Int = 0,
+    val truePct: Float = -1f,
+    val trueHeadroomPct: Float = 0f,
+    val batteryChemistry: String = "Detecting",
+    val batterySagMv: Float = 0f,
+    val batteryResistanceMohm: Float = 0f,
+    val truthConfidencePct: Int = 0,
+    val calChargeDone: Boolean = false,
+    val calDischargeDone: Boolean = false,
+    val calRunning: String = "",
+    val fullChargeMv: Float = 0f,
+    val fullChargeMah: Float = 0f,
     val effectiveCpuCapPct: Float = 100f,
     val effectiveGpuCapPct: Float = 100f,
     val lastPollDurationMs: Long = 0L,
@@ -412,13 +457,13 @@ fun GovernorConfig.withOverlayPosPm(landscape: Boolean, xPm: Int?, yPm: Int?): G
 /** Effective compact overlay scale % for the given orientation (-1 sentinel falls back to portrait). */
 fun GovernorConfig.overlayCompactScaleFor(landscape: Boolean): Int {
     val raw = if (landscape && overlayCompactScalePctL >= 0) overlayCompactScalePctL else overlayCompactScalePct
-    return raw.coerceIn(50, 200)
+    return raw.coerceIn(25, 200)
 }
 
 /** Effective expanded/detailed overlay scale % for the given orientation (-1 sentinel falls back to portrait). */
 fun GovernorConfig.overlayExpandedScaleFor(landscape: Boolean): Int {
     val raw = if (landscape && overlayExpandedScalePctL >= 0) overlayExpandedScalePctL else overlayExpandedScalePct
-    return raw.coerceIn(50, 200)
+    return raw.coerceIn(25, 200)
 }
 
 /** Effective overlay scale % for the active style and orientation. */
@@ -436,8 +481,8 @@ fun GovernorConfig.withOverlayScalePct(
     compactPct: Int? = null,
     expandedPct: Int? = null
 ): GovernorConfig {
-    val nextCompact = compactPct?.coerceIn(50, 200)
-    val nextExpanded = expandedPct?.coerceIn(50, 200)
+    val nextCompact = compactPct?.coerceIn(25, 200)
+    val nextExpanded = expandedPct?.coerceIn(25, 200)
     return if (landscape) {
         copy(
             overlayCompactScalePctL = nextCompact ?: overlayCompactScalePctL,

@@ -66,7 +66,7 @@ enum class OverlayStyle {
 }
 
 object OverlaySizing {
-    const val MIN_SCALE_PCT = 50
+    const val MIN_SCALE_PCT = 25
     const val MAX_SCALE_PCT = 200
     const val DEFAULT_DETAILED_ROW_COUNT = 13
 

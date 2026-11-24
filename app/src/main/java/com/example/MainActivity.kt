@@ -366,6 +366,7 @@ fun CoreGovernorRootScreen(
                     onUpdateBatterySettings = vm::updateBatterySettings,
                     onResetBatteryEstimate = vm::resetBatteryEstimate,
                     modifier = Modifier,
+                    telemetryFlow = vm.telemetry,
                     extraContent = {
                         item(key = "smart_app_demand") {
                             AppDemandCard(
@@ -416,6 +417,7 @@ fun CoreGovernorRootScreen(
                 onSelectTempSensor = vm::selectTempSensor,
                 onUpdateTempThrottle = vm::updateTempThrottle,
                 onUpdatePowerThrottle = vm::updatePowerThrottle,
+                onUpdateAfterburn = vm::updateAfterburn,
                 onSavePreset = vm::saveNamedPreset,
                 onLoadPreset = vm::loadPreset,
                 onDeletePreset = vm::deletePreset,
@@ -438,6 +440,8 @@ fun CoreGovernorRootScreen(
                 gamePackages = config.gamePackages,
                 usageStatsGranted = usageStatsGranted,
                 onToggleGamePackage = vm::toggleGamePackage,
+                boostPackages = config.boostPackages,
+                onToggleBoostPackage = vm::toggleBoostPackage,
                 onRefreshUsageStats = vm::refreshUsageStatsPermission,
                 modifier = Modifier,
                 smartControls = smartControls,

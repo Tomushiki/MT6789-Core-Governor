@@ -57,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -116,6 +117,7 @@ fun EnergyScreen(
     ) -> Unit,
     onResetBatteryEstimate: () -> Unit,
     modifier: Modifier = Modifier,
+    telemetryFlow: kotlinx.coroutines.flow.StateFlow<com.example.model.TelemetryState>? = null,
     extraContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -254,6 +256,7 @@ fun EnergyScreen(
             BatteryCard(
                 batt = batterySnapshot,
                 config = config,
+                telemetryFlow = telemetryFlow,
                 onToggleEstimation = { onUpdateBatterySettings(it, null) },
                 onEditDesignOverride = { showDesignOverrideDialog = true },
                 onResetBatteryEstimate = { showResetBatteryDialog = true }
@@ -587,6 +590,7 @@ private fun formatMinutesEta(totalMin: Int): String {
 private fun BatteryCard(
     batt: BatteryEstimatorUiSnapshot,
     config: GovernorConfig,
+    telemetryFlow: kotlinx.coroutines.flow.StateFlow<com.example.model.TelemetryState>? = null,
     onToggleEstimation: (Boolean) -> Unit,
     onEditDesignOverride: () -> Unit,
     onResetBatteryEstimate: () -> Unit
@@ -761,7 +765,8 @@ private fun BatteryCard(
         Spacer(modifier = Modifier.height(8.dp))
         val designStr = when {
             config.batteryDesignCapacityOverrideMah > 0 -> "${config.batteryDesignCapacityOverrideMah} mAh (manual)"
-            batt.sysfsDesignCapacityMah > 0 -> "${batt.sysfsDesignCapacityMah} mAh"
+            batt.designCapacityMah > 0 -> "${batt.designCapacityMah} mAh"
+            batt.sysfsDesignCapacityMah > 0 -> "${batt.sysfsDesignCapacityMah} mAh (looks wrong, set manually)"
             else -> "--"
         }
         val cyclesStr = if (batt.cycleCount >= 0) "${batt.cycleCount}" else "--"
@@ -778,6 +783,9 @@ private fun BatteryCard(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        if (telemetryFlow != null) {
+            BatteryTruthLine(telemetryFlow)
+        }
 
         Spacer(modifier = Modifier.height(6.dp))
         Text(
@@ -1028,4 +1036,48 @@ private fun PowerCurveChart(
             )
         }
     }
+}
+
+
+/** v3.1.0: real battery level graded from voltage and current behaviour (own composable so only this line redraws). */
+@Composable
+private fun BatteryTruthLine(telemetryFlow: kotlinx.coroutines.flow.StateFlow<com.example.model.TelemetryState>) {
+    val t by telemetryFlow.collectAsStateWithLifecycle()
+    val ext = LocalExtendedColors.current
+    val line1 = if (t.truePct >= 0f) {
+        val head = t.trueHeadroomPct
+        val tag = when {
+            head >= 3f -> "+${head.roundToInt()}% headroom the gauge hides"
+            head <= -3f -> "${head.roundToInt()}% below the gauge"
+            else -> "matches the gauge"
+        }
+        "Real level: ~${t.truePct.roundToInt()}% ($tag)"
+    } else {
+        "Real level: grading (needs unplugged use)"
+    }
+    Text(
+        text = line1,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (t.truePct >= 0f && t.trueHeadroomPct >= 3f) ext.optimal else MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Text(
+        text = "${t.batteryChemistry} • R ${t.batteryResistanceMohm.roundToInt()} mΩ • sag ${t.batterySagMv.roundToInt()} mV • trust ${t.truthConfidencePct}%",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    val calText = when {
+        t.calChargeDone && t.calDischargeDone ->
+            "Calibrated: full charge ${t.fullChargeMv.roundToInt()} mV" +
+                (if (t.fullChargeMah > 0f) ", ${t.fullChargeMah.roundToInt()} mAh charged" else "") + ", discharge curve learned"
+        t.calRunning == "charge" -> "Calibrating: keep charging to 100% until it stops taking power"
+        t.calRunning == "discharge" -> "Calibrating: keep discharging, do not plug in"
+        t.calChargeDone -> "Charge calibrated (${t.fullChargeMv.roundToInt()} mV). Next: one unplugged discharge from 95% to empty"
+        t.calDischargeDone -> "Discharge calibrated. Next: one undisturbed charge to 100%"
+        else -> "Not calibrated: one undisturbed charge to 100% and one unplugged discharge from 95% to empty teaches the battery type"
+    }
+    Text(
+        text = calText,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (t.calChargeDone && t.calDischargeDone) ext.optimal else MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }

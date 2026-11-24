@@ -734,6 +734,16 @@ class BatteryEstimator(
         onLog(LogLevel.INFO, "BatteryEst", "Battery capacity estimate reset.")
     }
 
+    /** Some kernels report the design capacity 10x too small (516 instead of 5160). Fix it when the full capacity proves it. */
+    private fun plausibleDesignMah(design: Int, fullMah: Int): Int {
+        if (design <= 0 || fullMah <= 0) return design
+        val ratio = fullMah.toFloat() / design.toFloat()
+        if (ratio in 0.5f..1.6f) return design
+        val x10 = design * 10
+        val ratio10 = fullMah.toFloat() / x10.toFloat()
+        return if (ratio10 in 0.5f..1.6f) x10 else 0
+    }
+
     fun pushSnapshotNow() {
         val snap = synchronized(lock) {
             val activeDelta = if (segPhase == SegPhase.COLLECTING && segStartPct >= 0 && lastBatteryPct >= 0) {
@@ -741,7 +751,7 @@ class BatteryEstimator(
                 else (lastBatteryPct - segStartPct).coerceAtLeast(0)
             } else 0
 
-            val resolvedDesign = if (designOverrideMah > 0) designOverrideMah else sysfsDesignCapacityMah
+            val resolvedDesign = if (designOverrideMah > 0) designOverrideMah else plausibleDesignMah(sysfsDesignCapacityMah, sysfsFullCapacityMah)
             val combMah = combined.combinedMah
             val combWh = combined.combinedWh
             val soh = if (combMah > 0f && resolvedDesign > 0) {
