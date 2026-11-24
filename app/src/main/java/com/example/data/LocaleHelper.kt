@@ -43,7 +43,8 @@ object LocaleHelper {
         LocaleOption("hi", "हिन्दी"),
         LocaleOption("ar", "العربية"),
         LocaleOption("fr", "Français"),
-        LocaleOption("vi", "Tiếng Việt")
+        LocaleOption("vi", "Tiếng Việt"),
+        LocaleOption("fa", "فارسی")
     )
 
     fun normalizeTag(raw: String?): String {
@@ -61,6 +62,7 @@ object LocaleHelper {
             "ar" -> "ar"
             "fr" -> "fr"
             "vi" -> "vi"
+            "fa", "fa-ir", "per", "fas" -> "fa"
             else -> ""
         }
     }
@@ -79,6 +81,7 @@ object LocaleHelper {
             "ar" -> Locale("ar")
             "fr" -> Locale.FRENCH
             "vi" -> Locale("vi")
+            "fa" -> Locale("fa")
             else -> null
         }
     }

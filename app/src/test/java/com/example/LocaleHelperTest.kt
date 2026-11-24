@@ -39,6 +39,8 @@ class LocaleHelperTest {
         assertEquals("pt-BR", LocaleHelper.normalizeTag("pt"))
         assertEquals("ar", LocaleHelper.normalizeTag("AR"))
         assertEquals("vi", LocaleHelper.normalizeTag("vi"))
+        assertEquals("fa", LocaleHelper.normalizeTag("fa"))
+        assertEquals("fa", LocaleHelper.normalizeTag("fa_IR"))
         assertEquals("", LocaleHelper.normalizeTag("xx"))
         assertEquals("", LocaleHelper.normalizeTag("ja-JP"))
     }

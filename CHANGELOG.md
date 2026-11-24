@@ -6,6 +6,11 @@ All notable changes to **CoreGovernor** will be documented in this file.
 
 No changes yet.
 
+## [3.6.5] - 2026-11-24
+
+### Added
+- **Persian (فارسی) language.** The whole app, overlay and notifications are now available in Persian, with right-to-left layout. Choose it under Appearance > Language.
+
 ## [3.6.4] - 2026-11-24
 
 ### Added

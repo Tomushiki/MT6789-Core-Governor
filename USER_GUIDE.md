@@ -148,7 +148,7 @@ If the governor does not stay running for a minute after an automatic start at b
 
 - **Protect from being killed (root).** Tuning > Control. On by default. Keeps CoreGovernor and its root helper from being killed by the system and restarts the service if it dies while the governor is meant to be running. The status line shows what is applied (for example oom_score_adj, whitelisted, standby, phantom killer, watchdog). Switching it off restores the system settings it changed. If your phone still kills the app, also allow background activity in the app's system settings.
 - **Afterburn toast.** A short pill at the top of the screen when Afterburn starts boosting a selected app. It never takes touches. Needs the overlay permission. Switch: Tuning > Afterburn > Afterburn toast.
-- **Language.** System tab > Appearance > Language. Changes apply at once.
+- **Language.** System tab > Appearance > Language (includes Persian, right-to-left). Changes apply at once.
 - **Updates.** Turn on "Include pre-releases" if you want test versions. If GitHub says you are rate limited, the message tells you when to try again.
 - **Dimensity 8300 preset.** In Tuning > Presets, only on matching phones. It changes the CPU/GPU maximums and the temperature throttle and leaves everything else as it is.
 
