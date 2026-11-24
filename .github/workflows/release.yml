@@ -1,89 +1,61 @@
-name: Release Signed APK
+name: Test and build signed release APK
 
 on:
   push:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
-
 jobs:
-  build-release:
-    name: Test & Build Signed Release APK
+  build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Resolve release tag
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Gradle 9.3.1
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
+      # DELETE THE OLD "Set up Android SDK" STEP COMPLETELY
+      # The runner already has Android SDK
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
 
       - name: Run unit tests
-        run: gradle :app:testDebugUnitTest
+        run: ./gradlew test
 
-      - name: Decode release keystore from GitHub Secrets
-        id: keystore
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
-            echo "::error::Missing one or more required signing secrets (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD)."
-            exit 1
-          fi
-          KEYSTORE_FILE="${RUNNER_TEMP}/release-keystore.jks"
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_FILE"
-          # Align alias in the temporary runner keystore if user's alias differs from "upload"
-          if [ "$ANDROID_KEY_ALIAS" != "upload" ]; then
-            keytool -changealias \
-              -keystore "$KEYSTORE_FILE" \
-              -storepass "$ANDROID_KEYSTORE_PASSWORD" \
-              -alias "$ANDROID_KEY_ALIAS" \
-              -destalias "upload" \
-              -keypass "$ANDROID_KEY_PASSWORD"
-          fi
-          echo "keystore_path=$KEYSTORE_FILE" >> "$GITHUB_OUTPUT"
+      - name: Decode release keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
+
       - name: Build signed release APK
+        run: ./gradlew assembleRelease
         env:
-          KEYSTORE_PATH: ${{ steps.keystore.outputs.keystore_path }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: gradle :app:assembleRelease --no-daemon
+          KEYSTORE_PATH: app/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      - name: Prepare release APK artifact
-        id: artifact
+      - name: Prepare release assets
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          SRC_APK="app/build/outputs/apk/release/app-release.apk"
-          OUT_APK="${RUNNER_TEMP}/CoreGovernor-${TAG}-release.apk"
-          if [ ! -f "$SRC_APK" ]; then
-            echo "::error::Expected signed release APK at $SRC_APK was not produced."
-            exit 1
-          fi
-          cp "$SRC_APK" "$OUT_APK"
-          sha256sum "$OUT_APK" > "${OUT_APK}.sha256"
-          echo "apk_path=$OUT_APK" >> "$GITHUB_OUTPUT"
-          echo "sha_path=${OUT_APK}.sha256" >> "$GITHUB_OUTPUT"
-      - name: Clean up temporary keystore
-        if: always()
-        run: rm -f "${RUNNER_TEMP}/release-keystore.jks"
+          ls -lh app/build/outputs/apk/release/
+          cp app/build/outputs/apk/release/*.apk ./
 
-      - name: Create GitHub Release and attach APK
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
-          files: |
-            ${{ steps.artifact.outputs.apk_path }}
-            ${{ steps.artifact.outputs.sha_path }}
+          files: "*.apk"
+          tag_name: ${{ steps.tag.outputs.tag }}
+
+      - name: Delete temporary keystore
+        if: always()
+        run: rm -f app/release.keystore
