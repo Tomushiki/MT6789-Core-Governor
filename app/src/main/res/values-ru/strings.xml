@@ -802,6 +802,41 @@
     <string name="system_share_rating_part">%1$s %2$d (%3$s)</string>
     <string name="system_share_rating_usage">Записано времени: %1$s ч</string>
 
+    <!-- Stutter Hunter -->
+    <string name="hunter_header">ОХОТНИК ЗА ФРИЗАМИ</string>
+    <string name="hunter_enable_title">Включить охотник за фризами</string>
+    <string name="hunter_enable_desc">Изучает нормальный FPS каждой игры. При сильном падении FPS находит фоновое приложение, нагружающее CPU, и сообщает о нём или останавливает его.</string>
+    <string name="hunter_mode_label">Действие при обнаружении</string>
+    <string name="hunter_mode_notify">Только сообщать</string>
+    <string name="hunter_mode_stop">Останавливать</string>
+    <string name="hunter_dip_title">Чувствительность просадки FPS</string>
+    <string name="hunter_dip_val">%1$d%% от нормы</string>
+    <string name="hunter_dip_desc">Срабатывает, когда FPS падает ниже этого процента от изученной нормы игры.</string>
+    <string name="hunter_cpu_title">Порог нагрузки CPU</string>
+    <string name="hunter_cpu_val">%1$d%% CPU</string>
+    <string name="hunter_cpu_desc">Минимальная средняя нагрузка CPU (одного ядра) для определения виновника.</string>
+    <string name="hunter_whitelist_btn">Исключения (%1$d)</string>
+    <string name="hunter_whitelist_desc">Приложения из списка исключений никогда не обвиняются и не останавливаются.</string>
+    <string name="hunter_whitelist_title">Исключения охотника за фризами</string>
+    <string name="hunter_whitelist_search">Поиск пользовательских приложений…</string>
+    <string name="hunter_whitelist_empty">Подходящих пользовательских приложений не найдено.</string>
+    <string name="hunter_status_off">Выкл</string>
+    <string name="hunter_status_idle">Ожидание</string>
+    <string name="hunter_status_learning">Обучение %1$d%%</string>
+    <string name="hunter_status_watching">Слежение, норма %1$d FPS</string>
+    <string name="hunter_status_checking">Проверка…</string>
+    <string name="hunter_status_stopped">Остановлен %1$s</string>
+    <string name="hunter_actions_title">Недавние действия</string>
+    <string name="hunter_actions_empty">Случаи просадок пока не зафиксированы.</string>
+    <string name="hunter_action_line">%1$s • %2$s → %3$s (%4$d%% CPU)</string>
+    <string name="hunter_action_fps_delta">%1$s • %2$d → %3$d FPS</string>
+    <string name="hunter_action_fps_single">%1$s • %2$d FPS</string>
+    <string name="hunter_res_reported">Записано</string>
+    <string name="hunter_res_checking">Остановлен (проверка…)</string>
+    <string name="hunter_res_recovered">Восстановлено</string>
+    <string name="hunter_res_did_not_help">Не помогло</string>
+    <string name="hunter_res_stop_failed">Не удалось остановить</string>
+
     <!-- Plurals -->
     <plurals name="plural_minutes">
         <item quantity="one">%1$d мин</item>

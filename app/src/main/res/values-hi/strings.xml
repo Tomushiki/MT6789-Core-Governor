@@ -802,6 +802,41 @@
     <string name="system_share_rating_part">%1$s %2$d (%3$s)</string>
     <string name="system_share_rating_usage">लॉग किया गया उपयोग: %1$s घं</string>
 
+    <!-- Stutter Hunter -->
+    <string name="hunter_header">स्टटर हंटर</string>
+    <string name="hunter_enable_title">स्टटर हंटर चालू करें</string>
+    <string name="hunter_enable_desc">हर गेम का सामान्य FPS सीखता है। जब FPS सामान्य से काफी नीचे गिरता है, तो बैकग्राउंड में CPU उपयोग करने वाले ऐप को ढूंढकर रिपोर्ट या बंद करता है।</string>
+    <string name="hunter_mode_label">दोषी मिलने पर कार्रवाई</string>
+    <string name="hunter_mode_notify">केवल सूचित करें</string>
+    <string name="hunter_mode_stop">ऐप्स बंद करें</string>
+    <string name="hunter_dip_title">FPS गिरावट संवेदनशीलता</string>
+    <string name="hunter_dip_val">सामान्य का %1$d%%</string>
+    <string name="hunter_dip_desc">गेम के सीखे गए सामान्य FPS के इस प्रतिशत से नीचे गिरने पर सक्रिय होता है।</string>
+    <string name="hunter_cpu_title">CPU उपयोग सीमा</string>
+    <string name="hunter_cpu_val">%1$d%% CPU</string>
+    <string name="hunter_cpu_desc">किसी अन्य ऐप को दोषी मानने के लिए आवश्यक न्यूनतम औसत CPU लोड (एक कोर का)।</string>
+    <string name="hunter_whitelist_btn">व्हाइटलिस्ट (%1$d)</string>
+    <string name="hunter_whitelist_desc">व्हाइटलिस्ट में शामिल ऐप्स को कभी दोषी नहीं ठहराया या बंद नहीं किया जाता।</string>
+    <string name="hunter_whitelist_title">स्टटर हंटर व्हाइटलिस्ट</string>
+    <string name="hunter_whitelist_search">गैर-सिस्टम ऐप्स खोजें…</string>
+    <string name="hunter_whitelist_empty">कोई मेल खाने वाला गैर-सिस्टम ऐप नहीं मिला।</string>
+    <string name="hunter_status_off">बंद</string>
+    <string name="hunter_status_idle">निष्क्रिय</string>
+    <string name="hunter_status_learning">सीख रहा है %1$d%%</string>
+    <string name="hunter_status_watching">निगरानी, सामान्य %1$d FPS</string>
+    <string name="hunter_status_checking">जाँच हो रही है…</string>
+    <string name="hunter_status_stopped">%1$s बंद किया गया</string>
+    <string name="hunter_actions_title">हालिया कार्रवाइयाँ</string>
+    <string name="hunter_actions_empty">अभी तक कोई स्टटर घटना दर्ज नहीं हुई।</string>
+    <string name="hunter_action_line">%1$s • %2$s → %3$s (%4$d%% CPU)</string>
+    <string name="hunter_action_fps_delta">%1$s • %2$d → %3$d FPS</string>
+    <string name="hunter_action_fps_single">%1$s • %2$d FPS</string>
+    <string name="hunter_res_reported">रिपोर्ट किया गया</string>
+    <string name="hunter_res_checking">बंद किया (जाँच जारी…)</string>
+    <string name="hunter_res_recovered">सुधार हुआ</string>
+    <string name="hunter_res_did_not_help">मदद नहीं मिली</string>
+    <string name="hunter_res_stop_failed">बंद करना विफल</string>
+
     <!-- Plurals -->
     <plurals name="plural_minutes">
         <item quantity="one">%1$d मि</item>

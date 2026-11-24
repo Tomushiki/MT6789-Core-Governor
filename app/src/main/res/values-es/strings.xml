@@ -802,6 +802,41 @@
     <string name="system_share_rating_part">%1$s %2$d (%3$s)</string>
     <string name="system_share_rating_usage">Uso registrado: %1$s h</string>
 
+    <!-- Stutter Hunter -->
+    <string name="hunter_header">CAZADOR DE TIRONES</string>
+    <string name="hunter_enable_title">Activar Cazador de tirones</string>
+    <string name="hunter_enable_desc">Aprende los FPS normales de cada juego. Cuando los FPS caen muy por debajo de lo normal, busca qué app en segundo plano consume CPU y la reporta o la detiene.</string>
+    <string name="hunter_mode_label">Acción al hallar culpable</string>
+    <string name="hunter_mode_notify">Solo notificar</string>
+    <string name="hunter_mode_stop">Detener apps</string>
+    <string name="hunter_dip_title">Sensibilidad de caída de FPS</string>
+    <string name="hunter_dip_val">%1$d%% de lo normal</string>
+    <string name="hunter_dip_desc">Se activa cuando los FPS bajan de este porcentaje respecto a los FPS normales aprendidos del juego.</string>
+    <string name="hunter_cpu_title">Umbral de uso de CPU</string>
+    <string name="hunter_cpu_val">%1$d%% CPU</string>
+    <string name="hunter_cpu_desc">Carga promedio mínima de CPU (de un núcleo) necesaria para culpar a otra app.</string>
+    <string name="hunter_whitelist_btn">Lista blanca (%1$d)</string>
+    <string name="hunter_whitelist_desc">Las apps en tu lista blanca nunca serán culpadas ni detenidas.</string>
+    <string name="hunter_whitelist_title">Lista blanca del Cazador de tirones</string>
+    <string name="hunter_whitelist_search">Buscar apps no del sistema…</string>
+    <string name="hunter_whitelist_empty">No se encontraron apps no del sistema.</string>
+    <string name="hunter_status_off">Apagado</string>
+    <string name="hunter_status_idle">Inactivo</string>
+    <string name="hunter_status_learning">Aprendiendo %1$d%%</string>
+    <string name="hunter_status_watching">Vigilando, normal %1$d FPS</string>
+    <string name="hunter_status_checking">Comprobando…</string>
+    <string name="hunter_status_stopped">%1$s detenido</string>
+    <string name="hunter_actions_title">Acciones recientes</string>
+    <string name="hunter_actions_empty">Aún no hay tirones registrados.</string>
+    <string name="hunter_action_line">%1$s • %2$s → %3$s (%4$d%% CPU)</string>
+    <string name="hunter_action_fps_delta">%1$s • %2$d → %3$d FPS</string>
+    <string name="hunter_action_fps_single">%1$s • %2$d FPS</string>
+    <string name="hunter_res_reported">Reportado</string>
+    <string name="hunter_res_checking">Detenido (comprobando…)</string>
+    <string name="hunter_res_recovered">Recuperado</string>
+    <string name="hunter_res_did_not_help">No ayudó</string>
+    <string name="hunter_res_stop_failed">Error al detener</string>
+
     <!-- Plurals -->
     <plurals name="plural_minutes">
         <item quantity="one">%1$d min</item>

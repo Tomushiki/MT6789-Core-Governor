@@ -226,6 +226,19 @@ data class AfterburnConfig(
     val toastEnabled: Boolean = true
 )
 
+enum class StutterHunterMode(@StringRes val labelRes: Int) {
+    NOTIFY(R.string.hunter_mode_notify),
+    STOP(R.string.hunter_mode_stop)
+}
+
+data class StutterHunterConfig(
+    val enabled: Boolean = false,
+    val mode: StutterHunterMode = StutterHunterMode.NOTIFY,
+    val dipPct: Int = 75,
+    val cpuThresholdPct: Int = 15,
+    val whitelist: Set<String> = emptySet()
+)
+
 data class GovernorConfig(
     val pollIntervalMs: Long = 150L,
     val adaptivePollingEnabled: Boolean = true,
@@ -312,7 +325,8 @@ data class GovernorConfig(
     val screenOffAnalysisEnabled: Boolean = true,
     // v3.0.0 Afterburn (default OFF); boostPackages = apps/games it is allowed to work on
     val afterburn: AfterburnConfig = AfterburnConfig(),
-    val boostPackages: Set<String> = emptySet()
+    val boostPackages: Set<String> = emptySet(),
+    val stutterHunter: StutterHunterConfig = StutterHunterConfig()
 )
 
 data class PresetItem(

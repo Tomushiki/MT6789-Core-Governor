@@ -802,6 +802,41 @@
     <string name="system_share_rating_part">%1$s %2$d (%3$s)</string>
     <string name="system_share_rating_usage">الاستخدام المسجل: %1$s س</string>
 
+    <!-- Stutter Hunter -->
+    <string name="hunter_header">صائد التقطيع</string>
+    <string name="hunter_enable_title">تفعيل صائد التقطيع</string>
+    <string name="hunter_enable_desc">يتعلم معدل FPS الطبيعي لكل لعبة. عندما ينخفض FPS بشكل ملحوظ، يحدد التطبيق في الخلفية الذي يستهلك CPU ويُبلغ عنه أو يوقفه.</string>
+    <string name="hunter_mode_label">الإجراء عند العثور على المتسبب</string>
+    <string name="hunter_mode_notify">إبلاغ فقط</string>
+    <string name="hunter_mode_stop">إيقاف التطبيقات</string>
+    <string name="hunter_dip_title">حساسية هبوط FPS</string>
+    <string name="hunter_dip_val">%1$d%% من الطبيعي</string>
+    <string name="hunter_dip_desc">يعمل عندما ينخفض FPS دون هذه النسبة المئوية من معدل FPS الطبيعي المتعلم للعبة.</string>
+    <string name="hunter_cpu_title">حد استهلاك CPU</string>
+    <string name="hunter_cpu_val">%1$d%% CPU</string>
+    <string name="hunter_cpu_desc">الحد الأدنى لمتوسط حمل CPU (لنواة واحدة) المطلوب لاتهام تطبيق آخر.</string>
+    <string name="hunter_whitelist_btn">القائمة البيضاء (%1$d)</string>
+    <string name="hunter_whitelist_desc">التطبيقات في القائمة البيضاء لا يتم اتهامها أو إيقافها أبداً.</string>
+    <string name="hunter_whitelist_title">القائمة البيضاء لصائد التقطيع</string>
+    <string name="hunter_whitelist_search">ابحث في تطبيقات المستخدم…</string>
+    <string name="hunter_whitelist_empty">لم يتم العثور على تطبيقات مستخدم مطابقة.</string>
+    <string name="hunter_status_off">متوقف</string>
+    <string name="hunter_status_idle">خامل</string>
+    <string name="hunter_status_learning">يتعلم %1$d%%</string>
+    <string name="hunter_status_watching">يراقب، الطبيعي %1$d FPS</string>
+    <string name="hunter_status_checking">يفحص…</string>
+    <string name="hunter_status_stopped">تم إيقاف %1$s</string>
+    <string name="hunter_actions_title">الإجراءات الأخيرة</string>
+    <string name="hunter_actions_empty">لم يتم تسجيل حوادث تقطيع بعد.</string>
+    <string name="hunter_action_line">%1$s • %2$s → %3$s (%4$d%% CPU)</string>
+    <string name="hunter_action_fps_delta">%1$s • %2$d → %3$d FPS</string>
+    <string name="hunter_action_fps_single">%1$s • %2$d FPS</string>
+    <string name="hunter_res_reported">تم الإبلاغ</string>
+    <string name="hunter_res_checking">تم الإيقاف (جارٍ التحقق…)</string>
+    <string name="hunter_res_recovered">تعافى</string>
+    <string name="hunter_res_did_not_help">لم يُجدِ نفعاً</string>
+    <string name="hunter_res_stop_failed">فشل الإيقاف</string>
+
     <!-- Plurals -->
     <plurals name="plural_minutes">
         <item quantity="zero">%1$d د</item>

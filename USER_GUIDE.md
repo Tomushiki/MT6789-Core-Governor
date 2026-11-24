@@ -151,6 +151,12 @@ If the governor does not stay running for a minute after an automatic start at b
 - **Updates.** Turn on "Include pre-releases" if you want test versions. If GitHub says you are rate limited, the message tells you when to try again.
 - **Dimensity 8300 preset.** In Tuning > Presets, only on matching phones. It changes the CPU/GPU maximums and the temperature throttle and leaves everything else as it is.
 
+## 7j. Stutter Hunter (Tuning > Power)
+
+- **What it does:** While a game from your Games list is in the foreground with the screen on and the governor service running, Stutter Hunter learns that game's normal FPS (ignoring the first 20 seconds and zero readings). Once at least 120 healthy seconds have been learned, a sustained dip below your sensitivity triggers a quick background CPU check.
+- **Notify only vs Stop apps:** Defaults to **Notify only**, which logs and lists the culprit without stopping anything. **Stop apps** runs `am force-stop` with root, enforces cooldowns and session caps, and checks 6 seconds later whether FPS recovered (if stopping an app did not help, it is skipped for the rest of the game session).
+- **Safety:** Thermal throttling, power throttling, or 90%+ GPU load skips hunting. Own app, foreground game, launcher, keyboard, dialer, system apps, protected processes, and apps in your **Whitelist** are never blamed or stopped.
+
 ## 8. Suggested starting points
 
 Daily use: start from the Balanced preset. Leave temperature and power throttling on. Keep Normal mode maximums below the top step if the phone gets warm.

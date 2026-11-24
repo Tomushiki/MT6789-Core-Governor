@@ -802,6 +802,41 @@
     <string name="system_share_rating_part">%1$s %2$d (%3$s)</string>
     <string name="system_share_rating_usage">Penggunaan tercatat: %1$s j</string>
 
+    <!-- Stutter Hunter -->
+    <string name="hunter_header">PEMBURU STUTTER</string>
+    <string name="hunter_enable_title">Aktifkan Pemburu Stutter</string>
+    <string name="hunter_enable_desc">Mempelajari FPS normal tiap game. Saat FPS turun jauh di bawah normal, mencari aplikasi latar belakang yang memakai CPU lalu melaporkannya atau menghentikannya.</string>
+    <string name="hunter_mode_label">Tindakan saat penyebab ditemukan</string>
+    <string name="hunter_mode_notify">Beritahu saja</string>
+    <string name="hunter_mode_stop">Hentikan aplikasi</string>
+    <string name="hunter_dip_title">Sensitivitas penurunan FPS</string>
+    <string name="hunter_dip_val">%1$d%% dari normal</string>
+    <string name="hunter_dip_desc">Aktif saat FPS turun di bawah persentase FPS normal game yang telah dipelajari.</string>
+    <string name="hunter_cpu_title">Ambang beban CPU</string>
+    <string name="hunter_cpu_val">%1$d%% CPU</string>
+    <string name="hunter_cpu_desc">Beban CPU rata-rata minimum (dari satu inti) yang diperlukan untuk menandai aplikasi lain.</string>
+    <string name="hunter_whitelist_btn">Daftar putih (%1$d)</string>
+    <string name="hunter_whitelist_desc">Aplikasi di daftar putih tidak akan pernah ditandai atau dihentikan.</string>
+    <string name="hunter_whitelist_title">Daftar putih Pemburu Stutter</string>
+    <string name="hunter_whitelist_search">Cari aplikasi non-sistem…</string>
+    <string name="hunter_whitelist_empty">Tidak ada aplikasi non-sistem yang cocok.</string>
+    <string name="hunter_status_off">Mati</string>
+    <string name="hunter_status_idle">Siaga</string>
+    <string name="hunter_status_learning">Mempelajari %1$d%%</string>
+    <string name="hunter_status_watching">Mengawasi, normal %1$d FPS</string>
+    <string name="hunter_status_checking">Memeriksa…</string>
+    <string name="hunter_status_stopped">Menghentikan %1$s</string>
+    <string name="hunter_actions_title">Tindakan terbaru</string>
+    <string name="hunter_actions_empty">Belum ada insiden stutter yang tercatat.</string>
+    <string name="hunter_action_line">%1$s • %2$s → %3$s (%4$d%% CPU)</string>
+    <string name="hunter_action_fps_delta">%1$s • %2$d → %3$d FPS</string>
+    <string name="hunter_action_fps_single">%1$s • %2$d FPS</string>
+    <string name="hunter_res_reported">Dilaporkan</string>
+    <string name="hunter_res_checking">Dihentikan (memeriksa…)</string>
+    <string name="hunter_res_recovered">Pulih</string>
+    <string name="hunter_res_did_not_help">Tidak membantu</string>
+    <string name="hunter_res_stop_failed">Gagal menghentikan</string>
+
     <!-- Plurals -->
     <plurals name="plural_minutes">
         <item quantity="other">%1$d mnt</item>

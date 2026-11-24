@@ -802,6 +802,41 @@
     <string name="system_share_rating_part">%1$s %2$d (%3$s)</string>
     <string name="system_share_rating_usage">Kaydedilen kullanım: %1$s sa</string>
 
+    <!-- Stutter Hunter -->
+    <string name="hunter_header">TAKILMA AVCISI</string>
+    <string name="hunter_enable_title">Takılma Avcısı\'nı etkinleştir</string>
+    <string name="hunter_enable_desc">Her oyunun normal FPS değerini öğrenir. FPS normalin çok altına düştüğünde arka planda CPU kullanan uygulamayı bulup bildirir veya durdurur.</string>
+    <string name="hunter_mode_label">Sorumlu bulunduğunda işlem</string>
+    <string name="hunter_mode_notify">Yalnızca bildir</string>
+    <string name="hunter_mode_stop">Uygulamaları durdur</string>
+    <string name="hunter_dip_title">FPS düşüş hassasiyeti</string>
+    <string name="hunter_dip_val">normalin %1$d%%\'i</string>
+    <string name="hunter_dip_desc">FPS, oyunun öğrenilen normal FPS değerinin bu yüzdesinin altına düştüğünde tetiklenir.</string>
+    <string name="hunter_cpu_title">CPU yük eşiği</string>
+    <string name="hunter_cpu_val">%1$d%% CPU</string>
+    <string name="hunter_cpu_desc">Başka bir uygulamayı sorumlu tutmak için gereken en düşük ortalama CPU yükü (tek çekirdek).</string>
+    <string name="hunter_whitelist_btn">İzin listesi (%1$d)</string>
+    <string name="hunter_whitelist_desc">İzin listesindeki uygulamalar asla suçlanmaz veya durdurulmaz.</string>
+    <string name="hunter_whitelist_title">Takılma Avcısı izin listesi</string>
+    <string name="hunter_whitelist_search">Sistem dışı uygulamalarda ara…</string>
+    <string name="hunter_whitelist_empty">Eşleşen sistem dışı uygulama bulunamadı.</string>
+    <string name="hunter_status_off">Kapalı</string>
+    <string name="hunter_status_idle">Boşta</string>
+    <string name="hunter_status_learning">Öğreniyor %1$d%%</string>
+    <string name="hunter_status_watching">İzleniyor, normal %1$d FPS</string>
+    <string name="hunter_status_checking">Kontrol ediliyor…</string>
+    <string name="hunter_status_stopped">%1$s durduruldu</string>
+    <string name="hunter_actions_title">Son işlemler</string>
+    <string name="hunter_actions_empty">Henüz takılma olayı kaydedilmedi.</string>
+    <string name="hunter_action_line">%1$s • %2$s → %3$s (%4$d%% CPU)</string>
+    <string name="hunter_action_fps_delta">%1$s • %2$d → %3$d FPS</string>
+    <string name="hunter_action_fps_single">%1$s • %2$d FPS</string>
+    <string name="hunter_res_reported">Bildirildi</string>
+    <string name="hunter_res_checking">Durduruldu (kontrol…)</string>
+    <string name="hunter_res_recovered">Düzeldi</string>
+    <string name="hunter_res_did_not_help">İşe yaramadı</string>
+    <string name="hunter_res_stop_failed">Durdurulamadı</string>
+
     <!-- Plurals -->
     <plurals name="plural_minutes">
         <item quantity="one">%1$d dk</item>

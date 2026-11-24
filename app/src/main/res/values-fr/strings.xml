@@ -802,6 +802,41 @@
     <string name="system_share_rating_part">%1$s %2$d (%3$s)</string>
     <string name="system_share_rating_usage">Utilisation enregistrée : %1$s h</string>
 
+    <!-- Stutter Hunter -->
+    <string name="hunter_header">CHASSEUR DE SACCADES</string>
+    <string name="hunter_enable_title">Activer le chasseur de saccades</string>
+    <string name="hunter_enable_desc">Apprend les FPS normaux de chaque jeu. Lorsque les FPS chutent nettement sous la normale, identifie l\'application en arrière-plan utilisant du CPU et la signale ou l\'arrête.</string>
+    <string name="hunter_mode_label">Action si coupable trouvé</string>
+    <string name="hunter_mode_notify">Notifier seulement</string>
+    <string name="hunter_mode_stop">Arrêter les apps</string>
+    <string name="hunter_dip_title">Sensibilité de chute FPS</string>
+    <string name="hunter_dip_val">%1$d%% de la normale</string>
+    <string name="hunter_dip_desc">Se déclenche lorsque les FPS passent sous ce pourcentage des FPS normaux appris pour le jeu.</string>
+    <string name="hunter_cpu_title">Seuil de charge CPU</string>
+    <string name="hunter_cpu_val">%1$d%% CPU</string>
+    <string name="hunter_cpu_desc">Charge CPU moyenne minimale (sur un cœur) requise pour incriminer une autre application.</string>
+    <string name="hunter_whitelist_btn">Liste blanche (%1$d)</string>
+    <string name="hunter_whitelist_desc">Les applications sur liste blanche ne sont jamais incriminées ni arrêtées.</string>
+    <string name="hunter_whitelist_title">Liste blanche du chasseur de saccades</string>
+    <string name="hunter_whitelist_search">Rechercher des apps non-système…</string>
+    <string name="hunter_whitelist_empty">Aucune application non-système correspondante.</string>
+    <string name="hunter_status_off">Désactivé</string>
+    <string name="hunter_status_idle">Inactif</string>
+    <string name="hunter_status_learning">Apprentissage %1$d%%</string>
+    <string name="hunter_status_watching">Surveillance, normal %1$d FPS</string>
+    <string name="hunter_status_checking">Analyse…</string>
+    <string name="hunter_status_stopped">%1$s arrêté</string>
+    <string name="hunter_actions_title">Actions récentes</string>
+    <string name="hunter_actions_empty">Aucun incident de saccade enregistré.</string>
+    <string name="hunter_action_line">%1$s • %2$s → %3$s (%4$d%% CPU)</string>
+    <string name="hunter_action_fps_delta">%1$s • %2$d → %3$d FPS</string>
+    <string name="hunter_action_fps_single">%1$s • %2$d FPS</string>
+    <string name="hunter_res_reported">Signalé</string>
+    <string name="hunter_res_checking">Arrêté (vérification…)</string>
+    <string name="hunter_res_recovered">Rétabli</string>
+    <string name="hunter_res_did_not_help">Sans effet</string>
+    <string name="hunter_res_stop_failed">Échec de l\'arrêt</string>
+
     <!-- Plurals -->
     <plurals name="plural_minutes">
         <item quantity="one">%1$d min</item>

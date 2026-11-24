@@ -802,6 +802,41 @@
     <string name="system_share_rating_part">%1$s %2$d (%3$s)</string>
     <string name="system_share_rating_usage">Thời gian đã ghi: %1$s giờ</string>
 
+    <!-- Stutter Hunter -->
+    <string name="hunter_header">THỢ SĂN GIẬT LAG</string>
+    <string name="hunter_enable_title">Bật Thợ săn giật lag</string>
+    <string name="hunter_enable_desc">Học mức FPS bình thường của từng game. Khi FPS tụt mạnh dưới mức bình thường, tìm ứng dụng nền đang ngốn CPU và báo cáo hoặc buộc dừng.</string>
+    <string name="hunter_mode_label">Hành động khi tìm thấy thủ phạm</string>
+    <string name="hunter_mode_notify">Chỉ thông báo</string>
+    <string name="hunter_mode_stop">Buộc dừng ứng dụng</string>
+    <string name="hunter_dip_title">Độ nhạy tụt FPS</string>
+    <string name="hunter_dip_val">%1$d%% mức bình thường</string>
+    <string name="hunter_dip_desc">Kích hoạt khi FPS giảm xuống dưới tỷ lệ này so với FPS bình thường đã học của game.</string>
+    <string name="hunter_cpu_title">Ngưỡng ngốn CPU</string>
+    <string name="hunter_cpu_val">%1$d%% CPU</string>
+    <string name="hunter_cpu_desc">Mức tải CPU trung bình tối thiểu (của một nhân) để xác định ứng dụng khác là thủ phạm.</string>
+    <string name="hunter_whitelist_btn">Danh sách loại trừ (%1$d)</string>
+    <string name="hunter_whitelist_desc">Các ứng dụng trong danh sách loại trừ không bao giờ bị quy kết hoặc buộc dừng.</string>
+    <string name="hunter_whitelist_title">Danh sách loại trừ Thợ săn giật lag</string>
+    <string name="hunter_whitelist_search">Tìm ứng dụng ngoài hệ thống…</string>
+    <string name="hunter_whitelist_empty">Không tìm thấy ứng dụng ngoài hệ thống phù hợp.</string>
+    <string name="hunter_status_off">Tắt</string>
+    <string name="hunter_status_idle">Chờ</string>
+    <string name="hunter_status_learning">Đang học %1$d%%</string>
+    <string name="hunter_status_watching">Đang theo dõi, bình thường %1$d FPS</string>
+    <string name="hunter_status_checking">Đang kiểm tra…</string>
+    <string name="hunter_status_stopped">Đã dừng %1$s</string>
+    <string name="hunter_actions_title">Hành động gần đây</string>
+    <string name="hunter_actions_empty">Chưa ghi nhận sự cố tụt FPS nào.</string>
+    <string name="hunter_action_line">%1$s • %2$s → %3$s (%4$d%% CPU)</string>
+    <string name="hunter_action_fps_delta">%1$s • %2$d → %3$d FPS</string>
+    <string name="hunter_action_fps_single">%1$s • %2$d FPS</string>
+    <string name="hunter_res_reported">Đã báo cáo</string>
+    <string name="hunter_res_checking">Đã dừng (đang kiểm tra…)</string>
+    <string name="hunter_res_recovered">Đã hồi phục</string>
+    <string name="hunter_res_did_not_help">Không cải thiện</string>
+    <string name="hunter_res_stop_failed">Dừng thất bại</string>
+
     <!-- Plurals -->
     <plurals name="plural_minutes">
         <item quantity="other">%1$d phút</item>

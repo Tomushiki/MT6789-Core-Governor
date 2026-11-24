@@ -808,6 +808,41 @@
     <string name="system_share_rating_part">%1$s %2$d (%3$s)</string>
     <string name="system_share_rating_usage">Usage logged: %1$s h</string>
 
+    <!-- Stutter Hunter -->
+    <string name="hunter_header">STUTTER HUNTER</string>
+    <string name="hunter_enable_title">Enable Stutter Hunter</string>
+    <string name="hunter_enable_desc">Learns each game\'s normal FPS. When FPS dips well below normal, finds which background app is using CPU and reports or stops it.</string>
+    <string name="hunter_mode_label">Action when culprit found</string>
+    <string name="hunter_mode_notify">Notify only</string>
+    <string name="hunter_mode_stop">Stop apps</string>
+    <string name="hunter_dip_title">FPS dip sensitivity</string>
+    <string name="hunter_dip_val">%1$d%% of normal</string>
+    <string name="hunter_dip_desc">Triggers when FPS drops below this percentage of the game\'s learned normal FPS.</string>
+    <string name="hunter_cpu_title">CPU hog threshold</string>
+    <string name="hunter_cpu_val">%1$d%% CPU</string>
+    <string name="hunter_cpu_desc">Minimum average CPU load (of one core) required to blame another app.</string>
+    <string name="hunter_whitelist_btn">Whitelist (%1$d)</string>
+    <string name="hunter_whitelist_desc">Apps on your whitelist are never blamed or stopped.</string>
+    <string name="hunter_whitelist_title">Stutter Hunter whitelist</string>
+    <string name="hunter_whitelist_search">Search non-system apps…</string>
+    <string name="hunter_whitelist_empty">No matching non-system apps found.</string>
+    <string name="hunter_status_off">Off</string>
+    <string name="hunter_status_idle">Idle</string>
+    <string name="hunter_status_learning">Learning %1$d%%</string>
+    <string name="hunter_status_watching">Watching, normal %1$d FPS</string>
+    <string name="hunter_status_checking">Checking…</string>
+    <string name="hunter_status_stopped">Stopped %1$s</string>
+    <string name="hunter_actions_title">Recent actions</string>
+    <string name="hunter_actions_empty">No stutter incidents recorded yet.</string>
+    <string name="hunter_action_line">%1$s • %2$s → %3$s (%4$d%% CPU)</string>
+    <string name="hunter_action_fps_delta">%1$s • %2$d → %3$d FPS</string>
+    <string name="hunter_action_fps_single">%1$s • %2$d FPS</string>
+    <string name="hunter_res_reported">Reported</string>
+    <string name="hunter_res_checking">Stopped (checking…)</string>
+    <string name="hunter_res_recovered">Recovered</string>
+    <string name="hunter_res_did_not_help">Did not help</string>
+    <string name="hunter_res_stop_failed">Stop failed</string>
+
     <!-- Plurals -->
     <plurals name="plural_minutes">
         <item quantity="one">%1$d min</item>

@@ -31,6 +31,8 @@ import com.example.model.PowerThrottleConfig
 import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
 import com.example.model.SmartAppMode
+import com.example.model.StutterHunterConfig
+import com.example.model.StutterHunterMode
 import com.example.model.TempThrottleConfig
 import com.example.model.ThrottleCurveShape
 import kotlinx.coroutines.CoroutineScope
@@ -537,6 +539,15 @@ class ConfigStorage(private val context: Context) {
             val boostArr = JSONArray()
             c.boostPackages.sorted().forEach { boostArr.put(it) }
             put("boostPackages", boostArr)
+            put("stutterHunter", JSONObject().apply {
+                put("enabled", c.stutterHunter.enabled)
+                put("mode", c.stutterHunter.mode.name)
+                put("dipPct", c.stutterHunter.dipPct)
+                put("cpuThresholdPct", c.stutterHunter.cpuThresholdPct)
+                val wlArr = JSONArray()
+                c.stutterHunter.whitelist.sorted().forEach { wlArr.put(it) }
+                put("whitelist", wlArr)
+            })
         }
     }
 
@@ -583,6 +594,7 @@ class ConfigStorage(private val context: Context) {
             for (i in 0 until boostArr.length()) boostPkgs.add(boostArr.getString(i))
         }
         val ibObj = obj.optJSONObject("afterburn")
+        val shObj = obj.optJSONObject("stutterHunter")
         val tObj = obj.optJSONObject("tempThrottle")
         val pObj = obj.optJSONObject("powerThrottle")
 
@@ -683,7 +695,24 @@ class ConfigStorage(private val context: Context) {
                 voltageSagEnabled = ibObj.optBoolean("voltageSagEnabled", true),
                 toastEnabled = ibObj.optBoolean("toast", true)
             ) else default.afterburn,
-            boostPackages = boostPkgs
+            boostPackages = boostPkgs,
+            stutterHunter = if (shObj != null) {
+                val wl = mutableSetOf<String>()
+                val wlArr = shObj.optJSONArray("whitelist")
+                if (wlArr != null) {
+                    for (i in 0 until wlArr.length()) {
+                        val pkg = wlArr.optString(i).trim()
+                        if (pkg.isNotEmpty()) wl.add(pkg)
+                    }
+                }
+                StutterHunterConfig(
+                    enabled = shObj.optBoolean("enabled", false),
+                    mode = enumOrDefault(shObj.optString("mode"), StutterHunterMode.NOTIFY),
+                    dipPct = shObj.optInt("dipPct", 75).coerceIn(60, 90),
+                    cpuThresholdPct = shObj.optInt("cpuThresholdPct", 15).coerceIn(10, 40),
+                    whitelist = wl
+                )
+            } else default.stutterHunter
         )
     }
 

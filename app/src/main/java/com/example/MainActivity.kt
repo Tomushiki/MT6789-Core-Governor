@@ -174,6 +174,7 @@ fun CoreGovernorRootScreen(
     val includePrereleases by vm.includePrereleases.collectAsStateWithLifecycle()
     val dismissedUpdateVersion by vm.dismissedUpdateVersion.collectAsStateWithLifecycle()
     val protectionStatus by vm.protectionStatus.collectAsStateWithLifecycle()
+    val stutterHunterStatus by vm.stutterHunterStatus.collectAsStateWithLifecycle()
     var showUpdatePanel by rememberSaveable { mutableStateOf(false) }
 
     val smartControls by vm.appControls.collectAsStateWithLifecycle()
@@ -593,6 +594,10 @@ fun CoreGovernorRootScreen(
                 protectionStatus = protectionStatus,
                 onSetProtectFromKill = vm::setProtectFromKill,
                 onReverifyProtection = vm::reverifyProtection,
+                stutterHunterStatus = stutterHunterStatus,
+                installedApps = installedApps,
+                onUpdateStutterHunter = vm::updateStutterHunter,
+                onToggleHunterWhitelist = vm::toggleHunterWhitelist,
                 modifier = Modifier
             )
             NavTab.OPPS -> OppTableScreen(

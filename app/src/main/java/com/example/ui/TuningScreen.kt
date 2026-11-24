@@ -236,6 +236,15 @@ fun TuningScreen(
     protectionStatus: com.example.governor.ProtectionStatus = com.example.governor.ProtectionStatus(),
     onSetProtectFromKill: (Boolean) -> Unit = {},
     onReverifyProtection: () -> Unit = {},
+    stutterHunterStatus: com.example.governor.StutterHunterStatus = com.example.governor.StutterHunterStatus(),
+    installedApps: List<com.example.model.InstalledAppInfo> = emptyList(),
+    onUpdateStutterHunter: (
+        enabled: Boolean?,
+        mode: com.example.model.StutterHunterMode?,
+        dipPct: Int?,
+        cpuThresholdPct: Int?
+    ) -> Unit = { _, _, _, _ -> },
+    onToggleHunterWhitelist: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1074,6 +1083,15 @@ fun TuningScreen(
                         config = config,
                         telemetryFlow = telemetryFlow,
                         onUpdateAfterburn = onUpdateAfterburn
+                    )
+                }
+                item {
+                    StutterHunterSection(
+                        config = config,
+                        status = stutterHunterStatus,
+                        installedApps = installedApps,
+                        onUpdateStutterHunter = onUpdateStutterHunter,
+                        onToggleWhitelist = onToggleHunterWhitelist
                     )
                 }
             }

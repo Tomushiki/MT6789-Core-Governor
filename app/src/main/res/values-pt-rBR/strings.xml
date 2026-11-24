@@ -802,6 +802,41 @@
     <string name="system_share_rating_part">%1$s %2$d (%3$s)</string>
     <string name="system_share_rating_usage">Uso registrado: %1$s h</string>
 
+    <!-- Stutter Hunter -->
+    <string name="hunter_header">CAÇADOR DE ENGASGOS</string>
+    <string name="hunter_enable_title">Ativar Caçador de engasgos</string>
+    <string name="hunter_enable_desc">Aprende o FPS normal de cada jogo. Quando o FPS cai bem abaixo do normal, identifica qual app em segundo plano está usando CPU e relata ou encerra.</string>
+    <string name="hunter_mode_label">Ação ao encontrar culpado</string>
+    <string name="hunter_mode_notify">Apenas notificar</string>
+    <string name="hunter_mode_stop">Encerrar apps</string>
+    <string name="hunter_dip_title">Sensibilidade de queda de FPS</string>
+    <string name="hunter_dip_val">%1$d%% do normal</string>
+    <string name="hunter_dip_desc">Dispara quando o FPS cai abaixo dessa porcentagem do FPS normal aprendido para o jogo.</string>
+    <string name="hunter_cpu_title">Limite de uso de CPU</string>
+    <string name="hunter_cpu_val">%1$d%% CPU</string>
+    <string name="hunter_cpu_desc">Carga média mínima de CPU (de um núcleo) necessária para apontar outro app.</string>
+    <string name="hunter_whitelist_btn">Lista de permissões (%1$d)</string>
+    <string name="hunter_whitelist_desc">Apps na lista de permissões nunca são apontados ou encerrados.</string>
+    <string name="hunter_whitelist_title">Lista de permissões do Caçador</string>
+    <string name="hunter_whitelist_search">Buscar apps não do sistema…</string>
+    <string name="hunter_whitelist_empty">Nenhum app não do sistema correspondente.</string>
+    <string name="hunter_status_off">Desligado</string>
+    <string name="hunter_status_idle">Ocioso</string>
+    <string name="hunter_status_learning">Aprendendo %1$d%%</string>
+    <string name="hunter_status_watching">Monitorando, normal %1$d FPS</string>
+    <string name="hunter_status_checking">Verificando…</string>
+    <string name="hunter_status_stopped">Encerrado %1$s</string>
+    <string name="hunter_actions_title">Ações recentes</string>
+    <string name="hunter_actions_empty">Nenhum engasgo registrado ainda.</string>
+    <string name="hunter_action_line">%1$s • %2$s → %3$s (%4$d%% CPU)</string>
+    <string name="hunter_action_fps_delta">%1$s • %2$d → %3$d FPS</string>
+    <string name="hunter_action_fps_single">%1$s • %2$d FPS</string>
+    <string name="hunter_res_reported">Relatado</string>
+    <string name="hunter_res_checking">Encerrado (verificando…)</string>
+    <string name="hunter_res_recovered">Recuperado</string>
+    <string name="hunter_res_did_not_help">Não ajudou</string>
+    <string name="hunter_res_stop_failed">Falha ao encerrar</string>
+
     <!-- Plurals -->
     <plurals name="plural_minutes">
         <item quantity="one">%1$d min</item>

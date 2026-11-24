@@ -26,10 +26,10 @@ import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import android.content.Context
-import android.telecom.TelecomManager
 import com.example.governor.CulpritTracker
 import com.example.governor.ProcRow
 import com.example.governor.ProcessMonitor
+import com.example.governor.ProtectedPackages
 import com.example.governor.RatingAgg
 import com.example.governor.RatingModel
 import com.example.governor.RatingResult
@@ -100,6 +100,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     val logs: StateFlow<List<LogEntry>> = engine.logs
     val powerModelSnapshot: StateFlow<PowerModelUiSnapshot> = engine.powerModel.uiSnapshot
     val batterySnapshot: StateFlow<BatteryEstimatorUiSnapshot> = engine.batteryEstimator.snapshot
+    val stutterHunterStatus: StateFlow<com.example.governor.StutterHunterStatus> =
+        com.example.governor.StutterHunterRunner.status
 
     // Performance Metrics tab
     val metricsLive: StateFlow<List<MetricSample>> = engine.metrics.live
@@ -525,6 +527,34 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun updateStutterHunter(
+        enabled: Boolean? = null,
+        mode: com.example.model.StutterHunterMode? = null,
+        dipPct: Int? = null,
+        cpuThresholdPct: Int? = null
+    ) {
+        engine.updateConfig { cfg ->
+            val h = cfg.stutterHunter
+            cfg.copy(
+                stutterHunter = h.copy(
+                    enabled = enabled ?: h.enabled,
+                    mode = mode ?: h.mode,
+                    dipPct = (dipPct ?: h.dipPct).coerceIn(60, 90),
+                    cpuThresholdPct = (cpuThresholdPct ?: h.cpuThresholdPct).coerceIn(10, 40)
+                )
+            )
+        }
+    }
+
+    fun toggleHunterWhitelist(packageName: String) {
+        engine.updateConfig { cfg ->
+            val h = cfg.stutterHunter
+            val next = h.whitelist.toMutableSet()
+            if (packageName in next) next.remove(packageName) else next.add(packageName)
+            cfg.copy(stutterHunter = h.copy(whitelist = next))
+        }
+    }
+
     fun toggleBoostPackage(packageName: String) {
         engine.updateConfig { cfg ->
             val next = cfg.boostPackages.toMutableSet()
@@ -783,28 +813,7 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    private fun protectedPackages(): Set<String> {
-        val ctx = getApplication<Application>()
-        val s = HashSet<String>()
-        s.add(ctx.packageName)
-        try {
-            val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-            ctx.packageManager.resolveActivity(home, PackageManager.MATCH_DEFAULT_ONLY)
-                ?.activityInfo?.packageName?.let { s.add(it) }
-        } catch (_: Exception) {
-        }
-        try {
-            Settings.Secure.getString(ctx.contentResolver, "default_input_method")
-                ?.substringBefore('/')?.let { if (it.isNotBlank()) s.add(it) }
-        } catch (_: Exception) {
-        }
-        try {
-            (ctx.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)
-                ?.defaultDialerPackage?.let { s.add(it) }
-        } catch (_: Exception) {
-        }
-        return s
-    }
+    private fun protectedPackages(): Set<String> = ProtectedPackages.resolve(getApplication())
 
     /** Stops an app with root. Only real, unprotected, non-foreground packages are allowed. */
     fun killApp(row: ProcRow) {

@@ -35,6 +35,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.LocaleHelper
 import com.example.governor.GovernorEngine
+import com.example.governor.StutterHunterRunner
 import com.example.model.BatteryState
 import com.example.model.GovernorMode
 import com.example.model.TelemetryState
@@ -57,6 +58,10 @@ class GovernorService : Service() {
     private var overlayNotifyJob: Job? = null
     private var protectionJob: Job? = null
     private var afterburnToastJob: Job? = null
+    private var stutterHunterJob: Job? = null
+    private var stutterHunterRunner: StutterHunterRunner? = null
+    @Volatile
+    private var screenInteractiveFlag: Boolean = true
     private lateinit var engine: GovernorEngine
     private lateinit var overlayController: OverlayController
     private lateinit var afterburnToastController: AfterburnToastController
@@ -108,10 +113,12 @@ class GovernorService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    screenInteractiveFlag = false
                     engine.onScreenOff()
                     overlayController.setScreenInteractive(false)
                 }
                 Intent.ACTION_SCREEN_ON -> {
+                    screenInteractiveFlag = true
                     engine.onScreenOn()
                     overlayController.setScreenInteractive(true)
                 }
@@ -127,6 +134,7 @@ class GovernorService : Service() {
         ensureNotificationChannel()
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         val interactive = pm.isInteractive
+        screenInteractiveFlag = interactive
         engine.setInitialScreenInteractive(interactive)
         overlayController = OverlayController(this, engine, serviceScope)
         overlayController.setScreenInteractive(interactive)
@@ -159,6 +167,9 @@ class GovernorService : Service() {
                 stableJob?.cancel()
                 protectionJob?.cancel()
                 protectionJob = null
+                stutterHunterJob?.cancel()
+                stutterHunterJob = null
+                stutterHunterRunner?.onStop()
                 engine.stopProtectionWatchdogAsync()
                 BootState.clearGuard(this)
                 engine.stopAndRestore()
@@ -197,8 +208,21 @@ class GovernorService : Service() {
                 engine.startGovernor()
                 observeTelemetry()
                 startProtectionLoop()
+                startStutterHunterLoop()
                 return START_STICKY
             }
+        }
+    }
+
+    private fun startStutterHunterLoop() {
+        if (stutterHunterJob?.isActive == true) return
+        val runner = stutterHunterRunner ?: StutterHunterRunner(
+            context = applicationContext,
+            engine = engine,
+            isScreenInteractive = { screenInteractiveFlag }
+        ).also { stutterHunterRunner = it }
+        stutterHunterJob = serviceScope.launch(Dispatchers.IO) {
+            runner.run(this)
         }
     }
 
@@ -378,6 +402,9 @@ class GovernorService : Service() {
         engine.rating.flush()
         stableJob?.cancel()
         protectionJob?.cancel()
+        stutterHunterJob?.cancel()
+        stutterHunterJob = null
+        stutterHunterRunner?.onStop()
         afterburnToastJob?.cancel()
         overlayNotifyJob?.cancel()
         telemetryJob?.cancel()
