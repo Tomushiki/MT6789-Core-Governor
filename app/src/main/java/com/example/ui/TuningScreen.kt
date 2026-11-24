@@ -573,6 +573,14 @@ fun TuningScreen(
                             },
                             testTag = "restore_last_state_switch"
                         )
+                        val guardAt = remember { BootState.guardTrippedAt(bootContext) }
+                        if (guardAt > 0L) {
+                            Text(
+                                text = "Boot guard skipped the last automatic start because the governor kept stopping right after boot. Start it by hand; this note clears after a stable run.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

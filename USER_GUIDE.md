@@ -16,6 +16,7 @@ A plain-English guide to what each part of CoreGovernor does and how to start. E
 - Energy: on-device learned power curves, live estimated vs measured power, and the opt-in Efficiency governor (see section 7d).
 - Tuning: all the settings explained below.
 - OPPs: the list of GPU speed steps your device reports. Useful for troubleshooting. Turn on Always pause on open if you want this screen to start paused every time.
+- System: your overall device rating and the process monitor (see sections 7f and 7g).
 - Apps: choose which apps count as games.
 - Log: what the governor has been doing, with timestamps. Check it to see whether things are working.
 
@@ -123,6 +124,23 @@ CoreGovernor estimates your battery's real usable capacity and passively learns 
 **Adaptive refresh rate (off by default).** Lowers the refresh rate when you are not touching the screen and returns to the highest on touch. It needs root and may behave differently on some ROMs: use Test switch first. If switching cannot be verified three times it turns itself off. Your original refresh-rate settings are restored when you turn it off or stop the service. Videos and games stay at the active rate.
 
 **Screen-off power analysis (on by default).** The Energy tab shows how much battery the phone uses with the screen off (periods of 3 minutes or more, not charging): drain per hour, deep-sleep share, a standby estimate and a verdict. If drain is high or deep sleep is low, the wake-source lists show the kernel sources and apps that kept the phone awake. Data needs the service running; give it a night to be meaningful.
+
+## 7f. Device rating and sharing sessions
+
+- The System tab shows one score from 0 to 100, made from performance, efficiency, power draw, thermals, idle load and standby drain. It needs about 30 minutes of unplugged use before it appears, and charging time is never counted.
+- Use it to compare settings on the same phone (play the same way, change one thing, check whether the score goes up). To compare different phones, only do so when the usage is similar. The confidence label tells you how much data is behind the number.
+- Share rating sends a short text you can paste into a group. Reset clears the collected data.
+- In the Metrics tab, open a saved session and use Share summary (text) or Save CSV (the raw data file).
+
+## 7g. Process monitor
+
+- The System tab lists apps and system processes by CPU use (percent of one core) and memory. It only samples while the tab is open.
+- An app is marked as a culprit when it stays busy in the background for about 30 seconds. Pick the sensitivity with the High, Medium and Low chips.
+- The X button stops an app with root (after you confirm). It may start again by itself. Core system processes, root processes, daemons, your launcher, keyboard and dialer, this app and the app on screen are protected and cannot be stopped.
+
+## 7h. Boot guard
+
+If the governor does not stay running for a minute after an automatic start at boot, 3 times in a row, the next automatic start is skipped once, and Tuning > Control shows a short note. Start it by hand from the Monitor screen. A stable run clears the note.
 
 ## 8. Suggested starting points
 

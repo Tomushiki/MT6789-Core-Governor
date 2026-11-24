@@ -316,6 +316,12 @@ class MetricsRecorder(
     private val _recording = MutableStateFlow(false)
     val recording: StateFlow<Boolean> = _recording.asStateFlow()
 
+    /** Called for every recorded sample (about 1/s) with whether a game is in the foreground. */
+    @Volatile
+    var onSample: ((MetricSample, Boolean) -> Unit)? = null
+
+    fun sessionFile(info: SessionInfo): File = File(dir, info.fileName)
+
     private val liveBuf = ArrayDeque<MetricSample>()
     private var lastSampleMs = 0L
 
@@ -363,6 +369,7 @@ class MetricsRecorder(
         _live.value = liveBuf.toList()
 
         val inGame = t.activeMode == GovernorMode.GAME
+        onSample?.invoke(sample, inGame)
         if (inGame) {
             if (sessionActive && sessionPkg != t.foregroundPackage && t.foregroundPackage.isNotBlank()) {
                 endSessionLocked() // switched to a different game

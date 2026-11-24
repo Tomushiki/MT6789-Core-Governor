@@ -89,6 +89,17 @@ class GovernorEngine(context: Context) {
         log(level, tag, msg)
     }
 
+    /** Overall device rating totals (rating.json). */
+    val rating = RatingStore(java.io.File(appContext.filesDir, "rating.json"), engineScope) { level, tag, msg ->
+        log(level, tag, msg)
+    }
+
+    init {
+        metrics.onSample = { s, inGame ->
+            rating.add(s.fps, s.watts, s.tempC, s.cpuLoadPct, inGame, s.batteryState.isPluggedOrCharging)
+        }
+    }
+
     /** On-device learned power model & opt-in efficiency governor helper. */
     val powerModel = PowerModel(java.io.File(appContext.filesDir, "power_model.json")) { level, tag, msg ->
         log(level, tag, msg)

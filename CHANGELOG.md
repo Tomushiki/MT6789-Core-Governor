@@ -2,6 +2,18 @@
 
 All notable changes to **CoreGovernor** will be documented in this file.
 
+## [2.7.3] - 2026-11-24
+
+### Added
+- **Boot guard (subtle).** If the governor never stays up for 60 seconds after an automatic start on boot, 3 boots in a row, the next automatic start is skipped once and the reason is written to the Log tab. Tuning > Control shows one small note only when this happened. Starting or stopping by hand always works and clears the counter, and a stable run clears it too.
+- **Share a saved session (Metrics tab).** Open a saved session, then Share summary (text with FPS, 5% low, temperature, power, FPS/W, energy, device and app version) or Save CSV (copies the session file to a place you choose).
+- **Overall device rating (new System tab).** One 0-100 score built over time from performance (5% low FPS), efficiency (FPS/W), power draw, thermals, idle CPU load outside games and standby drain (screen-off analysis). Uses only device-independent measures, ignores charging, shows a confidence level and a per-part breakdown, and has Share rating and Reset. Needs about 30 minutes of unplugged use. Stored in `rating.json` (atomic, serialized saves).
+- **Process monitor (System tab).** Lists apps and system processes by CPU use and memory while the tab is open. Apps that stay busy in the background for about 30 seconds are marked as culprits (sensitivity High / Medium / Low), with a small stop button that force-stops the app with root after a confirmation. Core system processes, root processes, native daemons, the launcher, the keyboard, the dialer, this app and the foreground app are protected and have no stop button.
+
+### Changed
+- The bottom bar now has 8 tabs, so only the selected tab shows its label.
+- Version 2.7.3 (versionCode 44).
+
 ## [2.7.2] - 2026-11-23
 
 ### Added

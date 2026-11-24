@@ -41,6 +41,8 @@ import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Bolt
@@ -88,6 +90,7 @@ import com.example.ui.EnergyScreen
 import com.example.ui.LogScreen
 import com.example.ui.MonitorScreen
 import com.example.ui.OppTableScreen
+import com.example.ui.SystemScreen
 import com.example.ui.PerformanceScreen
 import com.example.ui.TuningScreen
 import com.example.ui.components.StatusPill
@@ -104,6 +107,7 @@ enum class NavTab(
     ENERGY("Energy", Icons.Filled.Bolt, Icons.Outlined.Bolt),
     TUNING("Tuning", Icons.Filled.Tune, Icons.Outlined.Tune),
     OPPS("OPPs", Icons.Filled.TableChart, Icons.Outlined.TableChart),
+    SYSTEM("System", Icons.Filled.Memory, Icons.Outlined.Memory),
     APPS("Apps", Icons.Filled.Apps, Icons.Outlined.Apps),
     LOG("Log", Icons.Filled.ListAlt, Icons.Outlined.ListAlt)
 }
@@ -158,6 +162,7 @@ fun CoreGovernorRootScreen(
     var currentTab by rememberSaveable { mutableStateOf(NavTab.MONITOR) }
     LaunchedEffect(currentTab) {
         vm.setEnergyTabVisible(currentTab == NavTab.ENERGY)
+        vm.setSystemTabVisible(currentTab == NavTab.SYSTEM)
     }
 
     // Android 13+ notification permission for Foreground Service status notification
@@ -241,6 +246,7 @@ fun CoreGovernorRootScreen(
                             )
                         },
                         label = { Text(tab.label, maxLines = 1, softWrap = false) },
+                        alwaysShowLabel = false,
                         modifier = Modifier.testTag("nav_${tab.name.lowercase()}")
                     )
                 }
@@ -302,6 +308,7 @@ fun CoreGovernorRootScreen(
                     onDeleteSession = vm::deleteSession,
                     onDeleteAllSessions = vm::deleteAllSessions,
                     onClearLive = vm::clearLiveMetrics,
+                    onExportCsv = vm::exportSessionCsv,
                     modifier = Modifier
                 )
             }
@@ -399,6 +406,27 @@ fun CoreGovernorRootScreen(
                 onSmartSet = vm::smartSetControl,
                 onSmartReset = vm::smartResetApp
             )
+            NavTab.SYSTEM -> {
+                val rating by vm.deviceRating.collectAsStateWithLifecycle()
+                val rows by vm.systemRows.collectAsStateWithLifecycle()
+                val sysError by vm.systemError.collectAsStateWithLifecycle()
+                val sysNote by vm.systemNote.collectAsStateWithLifecycle()
+                val threshold by vm.culpritThreshold.collectAsStateWithLifecycle()
+                val labels = remember(installedApps) { installedApps.associate { it.packageName to it.label } }
+                SystemScreen(
+                    rating = rating,
+                    rows = rows,
+                    error = sysError,
+                    note = sysNote,
+                    thresholdPct = threshold,
+                    appLabels = labels,
+                    onThreshold = vm::setCulpritThreshold,
+                    onKill = vm::killApp,
+                    onDismissNote = vm::dismissSystemNote,
+                    onResetRating = vm::resetRating,
+                    modifier = Modifier
+                )
+            }
             NavTab.LOG -> LogScreen(
                 logs = logs,
                 onClearLogs = vm::clearLogs,

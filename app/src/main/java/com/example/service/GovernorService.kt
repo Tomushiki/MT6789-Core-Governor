@@ -125,11 +125,15 @@ class GovernorService : Service() {
         screenReceiverRegistered = true
     }
 
+    private var stableJob: Job? = null
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
                 // An explicit stop: do not bring the governor back after the next reboot.
                 BootState.setRunning(this, false)
+                stableJob?.cancel()
+                BootState.clearGuard(this)
                 engine.stopAndRestore()
                 stopForegroundCompat()
                 stopSelf()
@@ -147,6 +151,13 @@ class GovernorService : Service() {
             else -> {
                 // Remember that it should be running, so it is restored after a reboot.
                 BootState.setRunning(this, true)
+                // A start by hand (not from the boot receiver) clears the boot guard right away.
+                if (intent != null && !intent.getBooleanExtra(EXTRA_FROM_BOOT, false)) BootState.clearGuard(this)
+                stableJob?.cancel()
+                stableJob = serviceScope.launch {
+                    kotlinx.coroutines.delay(BootGuard.STABLE_MS)
+                    BootState.clearGuard(this@GovernorService)
+                }
                 startForegroundCompat(buildNotification(engine.telemetry.value))
                 engine.startGovernor()
                 observeTelemetry()
@@ -289,6 +300,8 @@ class GovernorService : Service() {
         engine.powerModel.flush()
         engine.appDemand.flush()
         engine.batteryEstimator.flush()
+        engine.rating.flush()
+        stableJob?.cancel()
         overlayNotifyJob?.cancel()
         telemetryJob?.cancel()
         serviceScope.cancel()
@@ -304,9 +317,13 @@ class GovernorService : Service() {
         const val ACTION_STOP = "com.example.action.STOP_GOVERNOR"
         const val ACTION_CYCLE_MODE = "com.example.action.CYCLE_MODE"
         const val ACTION_UNLOCK_OVERLAY = "com.example.action.UNLOCK_OVERLAY"
+        const val EXTRA_FROM_BOOT = "com.example.extra.FROM_BOOT"
 
-        fun start(context: Context) {
-            val intent = Intent(context, GovernorService::class.java).apply { action = ACTION_START }
+        fun start(context: Context, fromBoot: Boolean = false) {
+            val intent = Intent(context, GovernorService::class.java).apply {
+                action = ACTION_START
+                putExtra(EXTRA_FROM_BOOT, fromBoot)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {

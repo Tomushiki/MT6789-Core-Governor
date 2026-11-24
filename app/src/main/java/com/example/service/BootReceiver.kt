@@ -40,6 +40,17 @@ class BootReceiver : BroadcastReceiver() {
         } else {
             BootPolicy.shouldStartAfterUpdate(restore, lastRunning)
         }
+        if (start && isBoot) {
+            val d = BootGuard.evaluate(BootState.autoStartPending(context), BootState.bootFails(context))
+            BootState.recordGuardDecision(context, d)
+            if (!d.allowStart) {
+                app.engine.log(
+                    LogLevel.WARN, "Boot",
+                    "Boot guard: the governor did not stay up after the last ${BootGuard.MAX_FAILS} boot starts, so this auto-start is skipped. Start it by hand from the app."
+                )
+                return
+            }
+        }
         if (start) {
             val why = if (isBoot) {
                 if (startOnBoot) "start-on-boot is on" else "it was running before the reboot"
@@ -47,7 +58,7 @@ class BootReceiver : BroadcastReceiver() {
                 "it was running before the app update"
             }
             app.engine.log(LogLevel.INFO, "Boot", "$action received; starting GovernorService ($why).")
-            GovernorService.start(context)
+            GovernorService.start(context, fromBoot = isBoot)
         } else {
             app.engine.log(
                 LogLevel.INFO, "Boot",

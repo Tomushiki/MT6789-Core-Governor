@@ -24,6 +24,21 @@ import android.os.Build
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import android.content.Context
+import android.telecom.TelecomManager
+import com.example.governor.CulpritTracker
+import com.example.governor.ProcRow
+import com.example.governor.ProcessMonitor
+import com.example.governor.RatingAgg
+import com.example.governor.RatingModel
+import com.example.governor.RatingResult
+import com.example.governor.Standby
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import com.example.CoreGovernorApp
 import com.example.governor.BatteryEstimatorUiSnapshot
 import com.example.governor.MetricSample
@@ -560,6 +575,127 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun clearLiveMetrics() = engine.metrics.clearLive()
+
+    /** Copies a saved session's CSV file to a location the user picked. */
+    fun exportSessionCsv(info: SessionInfo, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.use { out ->
+                    engine.metrics.sessionFile(info).inputStream().use { it.copyTo(out) }
+                }
+                engine.log(LogLevel.INFO, "Metrics", "Saved session CSV to the chosen file.")
+            } catch (e: Exception) {
+                engine.log(LogLevel.WARN, "Metrics", "Could not save the CSV: ${e.message}")
+            }
+        }
+    }
+
+    // ---- Device rating ----
+
+    val deviceRating: StateFlow<RatingResult> = combine(
+        engine.rating.snapshot,
+        engine.screenOff.snapshot
+    ) { agg, off ->
+        val standby = if (off.hasData && off.offPctPerHWeek >= 0f) Standby(off.offPctPerHWeek, off.deepSleepPctWeek) else null
+        RatingModel.compute(agg, standby)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RatingModel.compute(RatingAgg(), null))
+
+    fun resetRating() = engine.rating.reset()
+
+    // ---- System tab: process monitor ----
+
+    private val _systemRows = MutableStateFlow<List<ProcRow>>(emptyList())
+    val systemRows: StateFlow<List<ProcRow>> = _systemRows.asStateFlow()
+    private val _systemError = MutableStateFlow<String?>(null)
+    val systemError: StateFlow<String?> = _systemError.asStateFlow()
+    private val _systemNote = MutableStateFlow<String?>(null)
+    val systemNote: StateFlow<String?> = _systemNote.asStateFlow()
+    private val _culpritThreshold = MutableStateFlow(15f)
+    val culpritThreshold: StateFlow<Float> = _culpritThreshold.asStateFlow()
+
+    private var systemJob: Job? = null
+    private var prevTicks: Map<Int, Long>? = null
+    private var prevMs = 0L
+    private val tracker = CulpritTracker()
+
+    fun setCulpritThreshold(pct: Float) { _culpritThreshold.value = pct }
+    fun dismissSystemNote() { _systemNote.value = null }
+
+    /** Sampling runs only while the System tab is on screen. */
+    fun setSystemTabVisible(visible: Boolean) {
+        if (visible) {
+            if (systemJob?.isActive == true) return
+            systemJob = viewModelScope.launch(Dispatchers.IO) {
+                while (isActive) {
+                    sampleProcesses()
+                    delay(4_000L)
+                }
+            }
+        } else {
+            systemJob?.cancel()
+            systemJob = null
+            prevTicks = null
+            tracker.clear()
+        }
+    }
+
+    private suspend fun sampleProcesses() {
+        try {
+            engine.rootShell.ensureSession()
+            val r = engine.rootShell.exec(ProcessMonitor.COMMAND)
+            val now = System.currentTimeMillis()
+            val procs = ProcessMonitor.parse(r.stdout)
+            if (procs.isEmpty()) {
+                _systemError.value = "Could not read the process list. Root access is needed."
+                return
+            }
+            _systemError.value = null
+            val prev = prevTicks
+            val rows = ProcessMonitor.group(
+                procs, prev, if (prev == null) 0L else now - prevMs,
+                engine.telemetry.value.foregroundPackage, protectedPackages()
+            )
+            prevTicks = procs.associate { it.pid to it.ticks }
+            prevMs = now
+            _systemRows.value = tracker.update(rows, _culpritThreshold.value)
+        } catch (e: Exception) {
+            _systemError.value = "Process list failed: ${e.message}"
+        }
+    }
+
+    private fun protectedPackages(): Set<String> {
+        val ctx = getApplication<Application>()
+        val s = HashSet<String>()
+        s.add(ctx.packageName)
+        try {
+            val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            ctx.packageManager.resolveActivity(home, PackageManager.MATCH_DEFAULT_ONLY)
+                ?.activityInfo?.packageName?.let { s.add(it) }
+        } catch (_: Exception) {
+        }
+        try {
+            Settings.Secure.getString(ctx.contentResolver, "default_input_method")
+                ?.substringBefore('/')?.let { if (it.isNotBlank()) s.add(it) }
+        } catch (_: Exception) {
+        }
+        try {
+            (ctx.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)
+                ?.defaultDialerPackage?.let { s.add(it) }
+        } catch (_: Exception) {
+        }
+        return s
+    }
+
+    /** Stops an app with root. Only real, unprotected, non-foreground packages are allowed. */
+    fun killApp(row: ProcRow) {
+        if (!row.killable) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val r = engine.rootShell.exec("am force-stop ${row.key}")
+            val ok = r.isSuccess
+            _systemNote.value = if (ok) "Stopped ${row.key}. It may start again by itself." else "Could not stop ${row.key}."
+            engine.log(if (ok) LogLevel.INFO else LogLevel.WARN, "System", "Stop ${row.key}: ${if (ok) "ok" else r.error ?: "failed"}")
+        }
+    }
 
     fun loadInstalledApps() {
         viewModelScope.launch {

@@ -120,8 +120,20 @@ fun PerformanceScreen(
     onDeleteSession: (SessionInfo) -> Unit,
     onDeleteAllSessions: () -> Unit,
     onClearLive: () -> Unit,
+    onExportCsv: (SessionInfo, android.net.Uri) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    val exportContext = androidx.compose.ui.platform.LocalContext.current
+    var csvTarget by remember { mutableStateOf<SessionInfo?>(null) }
+    val csvLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        val target = csvTarget
+        if (uri != null && target != null) {
+            onExportCsv(target, uri)
+            android.widget.Toast.makeText(exportContext, "Saving CSV", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     val ext = LocalExtendedColors.current
     val primary = MaterialTheme.colorScheme.primary
     val secondary = MaterialTheme.colorScheme.secondary
@@ -187,6 +199,30 @@ fun PerformanceScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedButton(onClick = { scrub = null; onSelectSession(null) }) {
                         Text("Back to live")
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            val ver = try {
+                                exportContext.packageManager.getPackageInfo(exportContext.packageName, 0).versionName ?: ""
+                            } catch (_: Exception) { "" }
+                            val text = com.example.governor.SessionExport.summaryText(
+                                title = name,
+                                startMs = selectedSession.startMs,
+                                s = selectedSession.summary,
+                                device = android.os.Build.MODEL ?: "Android",
+                                appVersion = ver
+                            )
+                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(android.content.Intent.EXTRA_TEXT, text)
+                            }
+                            exportContext.startActivity(android.content.Intent.createChooser(send, "Share session"))
+                        }) { Text("Share summary") }
+                        OutlinedButton(onClick = {
+                            csvTarget = selectedSession
+                            csvLauncher.launch(selectedSession.fileName)
+                        }) { Text("Save CSV") }
                     }
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
