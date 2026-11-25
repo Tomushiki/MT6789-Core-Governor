@@ -676,9 +676,6 @@
     <string name="nifty_no_sensors">इस डिवाइस पर कोई समर्थित मोशन सेंसर नहीं मिला।</string>
     <string name="nifty_pause_off_title">स्क्रीन बंद रहने पर रोकें</string>
     <string name="nifty_pause_off_desc">स्क्रीन बंद होने पर सेंसर मुक्त करता है और चालू होने पर फिर से पिन करता है। बैटरी बचाता है।</string>
-    <string name="nifty_game_only_title">केवल गेम में पिन करें</string>
-    <string name="nifty_game_only_desc">सेंसर को केवल तब पिन करता है जब कोई गेम पहचाना और चल रहा हो (गेम मोड), अन्यथा उन्हें मुक्त करता है। निष्क्रिय बिजली खपत घटाता है।</string>
-    <string name="nifty_status_game_wait">गेम की प्रतीक्षा है। सेंसर अभी पिन नहीं हैं।</string>
     <string name="nifty_status_active">सक्रिय</string>
     <string name="nifty_status_waiting">प्रतीक्षारत: गवर्नर शुरू होने पर प्रारंभ होता है।</string>
     <string name="nifty_status_paused">रुका हुआ (स्क्रीन बंद) या कोई सेंसर पंजीकृत नहीं हो सका। लॉग देखें।</string>
@@ -794,6 +791,10 @@
     <!-- Additional Helper Strings -->
     <string name="energy_est_vs_meas_val">%1$s W  बनाम  %2$s</string>
     <string name="batt_truth_diag">%1$s • R %2$d mΩ • सैग %3$d mV • भरोसा %4$d%%</string>
+    <string name="batt_charge_bands_session">इस सेशन में चार्जिंग: %1$s</string>
+    <string name="batt_charge_bands_lifetime">कुल चार्जिंग: %1$s</string>
+    <string name="batt_charge_voltage">अधिकतम चार्ज वोल्टेज: %1$s V (सेशन) • %2$s V (कुल)</string>
+    <string name="batt_charge_trust">चार्ज डेटा भरोसा: %1$d%% (तेज़ चार्जिंग क्षमता में कम गिनी जाती है)</string>
     <string name="batt_seg_line">• %1$s %2$d%%→%3$d%% (%4$dमि): %5$s mAh / %6$s Wh</string>
     <string name="smart_override_light">हल्का</string>
     <string name="smart_override_moderate">मध्यम</string>
@@ -873,12 +874,20 @@
         <item quantity="one">%1$d वेकअप</item>
         <item quantity="other">%1$d वेकअप</item>
     </plurals>
-    <string name="hunter_res_gov_thermal">गवर्नर: तापमान सीमा</string>
-    <string name="hunter_res_gov_battery">गवर्नर: बैटरी सीमा</string>
-    <string name="hunter_action_line_governor">%1$s • %2$s → गवर्नर</string>
-    <string name="afterburn_toast_reduced_title">AFTERBURN कम किया गया</string>
-    <string name="afterburn_toast_reduced_subtitle">%1$s • बूस्ट घटाया गया</string>
-    <string name="afterburn_toast_stopped_title">AFTERBURN रुका</string>
-    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • गर्मी के कारण रोका गया</string>
-    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • बैटरी के कारण रोका गया</string>
+
+    <!-- v3.6.6 Charge sleep guard -->
+    <string name="cg_header">चार्ज स्लीप गार्ड</string>
+    <string name="cg_enable">चार्ज स्लीप गार्ड</string>
+    <string name="cg_enable_desc">स्क्रीन बंद और फ़ोन चार्ज होने पर, बैकग्राउंड ऐप्स को रोकता है जो CPU को जगाकर फ़ोन गर्म करते हैं। रूट ज़रूरी है।</string>
+    <string name="cg_others">अन्य सभी यूज़र ऐप्स रोकें</string>
+    <string name="cg_others_desc">हर मिनट वे सभी इंस्टॉल ऐप्स भी रोकता है जो व्हाइटलिस्ट में नहीं हैं। आपका लॉन्चर, कीबोर्ड और फ़ोन हमेशा बने रहते हैं।</string>
+    <string name="cg_whitelist">व्हाइटलिस्ट (कभी नहीं रोके जाते)</string>
+    <string name="cg_whitelist_desc">जो ऐप्स चलते रहने चाहिए, जैसे मैसेंजर या अलार्म।</string>
+    <string name="cg_kill">हमेशा रोकने की सूची</string>
+    <string name="cg_kill_desc">चार्ज होते समय हर बार स्क्रीन बंद होने पर रोके जाने वाले ऐप्स और सिस्टम प्रोसेस।</string>
+    <string name="cg_choose">ऐप्स चुनें (%1$d)</string>
+    <string name="cg_fast_wake">फ़ास्ट वेक बूस्ट</string>
+    <string name="cg_fast_wake_desc">स्क्रीन बंद होने पर पावर बटन पहचानता है और क्लॉक तुरंत अधिकतम कर देता है, ताकि अनलॉक तेज़ हो।</string>
+    <string name="cg_search">ऐप्स खोजें</string>
+    <string name="cg_done">हो गया</string>
 </resources>

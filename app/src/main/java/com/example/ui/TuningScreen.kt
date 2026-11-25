@@ -170,7 +170,7 @@ fun TuningScreen(
         bgOpacityPct: Int?,
         isLandscape: Boolean
     ) -> Unit,
-    onUpdateOverlayPosition: (Int?, Int?, Boolean, Boolean) -> Unit,
+    onUpdateOverlayPosition: (Int?, Int?, Boolean) -> Unit,
     onUpdateRamPin: (Boolean?, Boolean?) -> Unit,
     onUpdateClusterRange: (GovernorMode, Int, FreqRange) -> Unit,
     onUpdateGpuRange: (GovernorMode, FreqRange) -> Unit,
@@ -231,8 +231,7 @@ fun TuningScreen(
         enabled: Boolean?,
         rate: SensorPinner.Rate?,
         toggleType: Int?,
-        pauseWhenScreenOff: Boolean?,
-        gameOnly: Boolean?
+        pauseWhenScreenOff: Boolean?
     ) -> Unit,
     protectionStatus: com.example.governor.ProtectionStatus = com.example.governor.ProtectionStatus(),
     onSetProtectFromKill: (Boolean) -> Unit = {},
@@ -781,6 +780,11 @@ fun TuningScreen(
                 }
             }
 
+            // v3.6.6 Charge sleep guard (Screen-off section)
+            if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.SCREEN_OFF) {
+                item { ChargeGuardCard() }
+            }
+
             // 2c. Overlay
             if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.OVERLAY) {
                 item {
@@ -1008,7 +1012,7 @@ fun TuningScreen(
                             fineHalfWindow = 100,
                             fineMode = fineOverlayControl,
                             onIntValueChange = {
-                                onUpdateOverlayPosition(it, null, false, isLandscape)
+                                onUpdateOverlayPosition(it, null, false)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_pos_x_slider"
@@ -1026,7 +1030,7 @@ fun TuningScreen(
                             fineHalfWindow = 100,
                             fineMode = fineOverlayControl,
                             onIntValueChange = {
-                                onUpdateOverlayPosition(null, it, false, isLandscape)
+                                onUpdateOverlayPosition(null, it, false)
                             },
                             enabled = config.overlayEnabled,
                             testTag = "overlay_pos_y_slider"
@@ -1034,7 +1038,7 @@ fun TuningScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         OutlinedButton(
-                            onClick = { onUpdateOverlayPosition(null, null, true, isLandscape) },
+                            onClick = { onUpdateOverlayPosition(null, null, true) },
                             enabled = config.overlayEnabled,
                             modifier = Modifier
                                 .fillMaxWidth()

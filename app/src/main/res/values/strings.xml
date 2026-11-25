@@ -682,9 +682,6 @@
     <string name="nifty_no_sensors">No supported motion sensors found on this device.</string>
     <string name="nifty_pause_off_title">Pause while the screen is off</string>
     <string name="nifty_pause_off_desc">Releases the sensors when the screen turns off and pins them again when it turns on. Saves battery.</string>
-    <string name="nifty_game_only_title">Only pin while in a game</string>
-    <string name="nifty_game_only_desc">Pins the sensors only while a game is detected and running (Game mode), and releases them otherwise. Cuts idle power use.</string>
-    <string name="nifty_status_game_wait">Waiting for a game. Sensors are not pinned right now.</string>
     <string name="nifty_status_active">ACTIVE</string>
     <string name="nifty_status_waiting">Waiting: starts when the governor starts.</string>
     <string name="nifty_status_paused">Paused (screen off) or no sensor could be registered. See the log.</string>
@@ -800,6 +797,10 @@
     <!-- Additional Helper Strings -->
     <string name="energy_est_vs_meas_val">%1$s W  vs  %2$s</string>
     <string name="batt_truth_diag">%1$s • R %2$d mΩ • sag %3$d mV • trust %4$d%%</string>
+    <string name="batt_charge_bands_session">Charged this session: %1$s</string>
+    <string name="batt_charge_bands_lifetime">Charged lifetime: %1$s</string>
+    <string name="batt_charge_voltage">Peak charge voltage: %1$s V (session) • %2$s V (lifetime)</string>
+    <string name="batt_charge_trust">Charge data trust: %1$d%% (fast charging counts less toward capacity)</string>
     <string name="batt_seg_line">• %1$s %2$d%%→%3$d%% (%4$dm): %5$s mAh / %6$s Wh</string>
     <string name="smart_override_light">Light</string>
     <string name="smart_override_moderate">Moderate</string>
@@ -879,12 +880,20 @@
         <item quantity="one">%1$d wakeup</item>
         <item quantity="other">%1$d wakeups</item>
     </plurals>
-    <string name="hunter_res_gov_thermal">Governor: heat limit</string>
-    <string name="hunter_res_gov_battery">Governor: battery limit</string>
-    <string name="hunter_action_line_governor">%1$s • %2$s → governor</string>
-    <string name="afterburn_toast_reduced_title">AFTERBURN REDUCED</string>
-    <string name="afterburn_toast_reduced_subtitle">%1$s • boost lowered</string>
-    <string name="afterburn_toast_stopped_title">AFTERBURN STOPPED</string>
-    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • blocked by heat</string>
-    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • blocked by battery</string>
+
+    <!-- v3.6.6 Charge sleep guard -->
+    <string name="cg_header">CHARGE SLEEP GUARD</string>
+    <string name="cg_enable">Charge sleep guard</string>
+    <string name="cg_enable_desc">While the screen is off and the phone is charging, stops background apps that wake the CPU and heat the phone. Needs root.</string>
+    <string name="cg_others">Stop all other user apps</string>
+    <string name="cg_others_desc">Also stops every installed user app that is not on the whitelist, every minute. Your launcher, keyboard and phone are always kept.</string>
+    <string name="cg_whitelist">Whitelist (never stopped)</string>
+    <string name="cg_whitelist_desc">Apps that must keep running, like messengers or alarms.</string>
+    <string name="cg_kill">Always stop list</string>
+    <string name="cg_kill_desc">Apps and system processes to stop every time the screen is off while charging.</string>
+    <string name="cg_choose">Choose apps (%1$d)</string>
+    <string name="cg_fast_wake">Fast wake boost</string>
+    <string name="cg_fast_wake_desc">Detects the power button while the screen is off and boosts clocks to maximum straight away, so unlocking is quicker.</string>
+    <string name="cg_search">Search apps</string>
+    <string name="cg_done">Done</string>
 </resources>

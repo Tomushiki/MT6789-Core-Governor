@@ -676,9 +676,6 @@
     <string name="nifty_no_sensors">Aucun capteur de mouvement compatible trouvé sur cet appareil.</string>
     <string name="nifty_pause_off_title">Pause quand l\'écran est éteint</string>
     <string name="nifty_pause_off_desc">Libère les capteurs à l\'extinction de l\'écran et les refixe au rallumage. Économise la batterie.</string>
-    <string name="nifty_game_only_title">Fixer uniquement en jeu</string>
-    <string name="nifty_game_only_desc">Ne fixe les capteurs que lorsqu\'un jeu est détecté et en cours (mode Jeu), et les libère sinon. Réduit la consommation au repos.</string>
-    <string name="nifty_status_game_wait">En attente d\'un jeu. Les capteurs ne sont pas fixés pour le moment.</string>
     <string name="nifty_status_active">ACTIF</string>
     <string name="nifty_status_waiting">En attente : démarre avec le gouverneur.</string>
     <string name="nifty_status_paused">En pause (écran éteint) ou aucun capteur enregistré. Voir le journal.</string>
@@ -794,6 +791,10 @@
     <!-- Additional Helper Strings -->
     <string name="energy_est_vs_meas_val">%1$s W  vs  %2$s</string>
     <string name="batt_truth_diag">%1$s • R %2$d mΩ • chute %3$d mV • conf. %4$d%%</string>
+    <string name="batt_charge_bands_session">Chargé cette session : %1$s</string>
+    <string name="batt_charge_bands_lifetime">Chargé au total : %1$s</string>
+    <string name="batt_charge_voltage">Tension de charge max. : %1$s V (session) • %2$s V (total)</string>
+    <string name="batt_charge_trust">Fiabilité des données de charge : %1$d%% (la charge rapide compte moins dans la capacité)</string>
     <string name="batt_seg_line">• %1$s %2$d%%→%3$d%% (%4$dm) : %5$s mAh / %6$s Wh</string>
     <string name="smart_override_light">Léger</string>
     <string name="smart_override_moderate">Modéré</string>
@@ -873,12 +874,20 @@
         <item quantity="one">%1$d réveil</item>
         <item quantity="other">%1$d réveils</item>
     </plurals>
-    <string name="hunter_res_gov_thermal">Gouverneur : limite thermique</string>
-    <string name="hunter_res_gov_battery">Gouverneur : limite batterie</string>
-    <string name="hunter_action_line_governor">%1$s • %2$s → gouverneur</string>
-    <string name="afterburn_toast_reduced_title">AFTERBURN RÉDUIT</string>
-    <string name="afterburn_toast_reduced_subtitle">%1$s • boost réduit</string>
-    <string name="afterburn_toast_stopped_title">AFTERBURN ARRÊTÉ</string>
-    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • bloqué par la chaleur</string>
-    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • bloqué par la batterie</string>
+
+    <!-- v3.6.6 Charge sleep guard -->
+    <string name="cg_header">GARDE DE VEILLE EN CHARGE</string>
+    <string name="cg_enable">Garde de veille en charge</string>
+    <string name="cg_enable_desc">Écran éteint et téléphone en charge, arrête les applications en arrière-plan qui réveillent le CPU et chauffent le téléphone. Nécessite le root.</string>
+    <string name="cg_others">Arrêter toutes les autres applications utilisateur</string>
+    <string name="cg_others_desc">Arrête aussi chaque minute toutes les applications installées absentes de la liste blanche. Votre lanceur, clavier et téléphone sont toujours conservés.</string>
+    <string name="cg_whitelist">Liste blanche (jamais arrêtées)</string>
+    <string name="cg_whitelist_desc">Applications à garder actives, comme la messagerie ou les alarmes.</string>
+    <string name="cg_kill">Liste d\'arrêt permanent</string>
+    <string name="cg_kill_desc">Applications et processus système à arrêter chaque fois que l\'écran s\'éteint pendant la charge.</string>
+    <string name="cg_choose">Choisir des apps (%1$d)</string>
+    <string name="cg_fast_wake">Boost de réveil rapide</string>
+    <string name="cg_fast_wake_desc">Détecte le bouton d\'alimentation écran éteint et monte aussitôt les fréquences au maximum, pour un déverrouillage plus rapide.</string>
+    <string name="cg_search">Rechercher des apps</string>
+    <string name="cg_done">Terminé</string>
 </resources>

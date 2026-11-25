@@ -6,40 +6,21 @@ All notable changes to **CoreGovernor** will be documented in this file.
 
 No changes yet.
 
-## [3.6.5] - 2026-11-24
-
-### Added
-- **Persian (فارسی) language.** The whole app, overlay and notifications are now available in Persian, with right-to-left layout. Choose it under Appearance > Language.
-
-## [3.6.4] - 2026-11-24
-
-### Added
-- **Pin sensors only in games.** New switch under Pin sensor refresh rate: "Only pin while in a game". The sensors are held at your chosen rate only while a game is detected and running (Game mode) and are released the rest of the time, which cuts idle power use. Works together with "Pause while the screen is off". Off by default, so existing behaviour is unchanged.
-
-## [3.6.3] - 2026-11-24
-
-### Changed
-- **Bigger overlay size range.** The overlay size sliders now go well past 100% in portrait (it used to stop around 73%) and further in landscape. The overlay is still limited so it always fits on screen.
-
-## [3.6.2] - 2026-11-24
+## [3.6.6] - 2026-11-25
 
 ### Fixed
-- **Landscape overlay.** The overlay, its size limit and the position sliders now share one screen size and orientation, taken from the system configuration instead of the display rotation (which could report portrait while rotated). This fixes the tiny size cap, the wrong position and the size flicker in landscape.
-
-## [3.6.1] - 2026-11-24
-
-### Added
-- **Stutter Hunter reports governor throttling.** When an FPS dip happens while the governor is actively limiting performance because of heat, or because of the battery/power limit (or Afterburn blocked by heat or battery), Stutter Hunter now says so in its actions list and log instead of blaming a background process. No process is investigated or stopped in that case. A low battery percentage alone is never reported as the cause.
-- **Afterburn ending toast.** A pill now also appears when Afterburn drops from boosting to reduced or blocked (heat or battery) while you are still in the game.
+- **Crash on launch ("Cannot create an instance of CoreGovernorViewModel").** The engine's log was created after the parts that write to it during startup, so if the saved rating data could not be read, the app crashed before opening. The log is now created first, so a bad or unreadable data file is logged as a warning and the app starts normally.
 
 ### Changed
-- **Afterburn toasts are selected-game only.** Start and ending toasts appear only for an app in your Games list that is also the foreground app. Apps that are only in the Afterburn list never show a toast, and leaving the game does not show an ending toast.
-- **Landscape overlay controls and remembered positions.** Landscape sizes and positions are saved separately from portrait for every overlay style, and fall back to the portrait values for older saved configs.
-
-### Fixed
-- **Overlay drag in landscape.** The overlay can now be dragged across the whole screen in landscape (screen size is taken from the physical display and current rotation) and uses the landscape position. Placement details are written to the log under "Overlay".
-- **Landscape position sliders.** The horizontal and vertical position sliders now save to the landscape slot while the phone is in landscape (they were saving to the portrait slot, so they looked stuck).
-- **Liquid glass text color.** Text inside liquid-glass cards now uses the theme's text color instead of turning black.
+- **Battery capacity and health now use the charging data.** Each charge segment records its average power, time spent at each power level (<5, 5-10, 10-15, 15-20, 20-25, 25+ W), highest voltage and peak current. Fast-charge segments count less toward capacity and health, because the fuel gauge runs ahead of the real charge at high power. The voltage lost inside the cell (current x resistance) also lowers a segment's weight once the resistance is learned.
+- Charge segments can no longer outweigh the discharge side by more than 1.5x, and the estimate's confidence now counts trust-weighted percent steps, so many fast-charge segments no longer inflate it.
+- **Time to full** now follows the learned charge-power curve per 10% of battery, so the slow taper near 100% is counted.
+- Battery card shows charge time per power band (session and lifetime), peak charge voltage, charge-data trust, and average W / peak V on each recent charge segment.
+- **Full-charge calibration feeds the capacity estimate.** The capacity read from a clean charge to 100% (scaled for the starting level) now joins the blend. A mostly slow charge (under 15 W) counts about three times more than a fast one, and a reading far from the design capacity is ignored.
+- **Real battery level now works while charging.** The charger's voltage rise (charge current x internal resistance) is taken back off, then the level is read from the same curve as when unplugged. It is only graded between 5% and 90% (before the constant-voltage taper), after the reading has settled, and never strays more than 10 points from the gauge; confidence is capped lower than the unplugged grade. Afterburn ignores this charge-side grade and keeps using the gauge while charging, because the charger inflates the voltage.
+- **Charge sleep guard (Tuning > Screen-off).** While the screen is off and the phone is charging, it stops background apps (through root) that wake the CPU and heat the phone, so charging stays cooler. Choose a whitelist of apps that are never stopped, an always-stop list of apps and system processes, or switch on "Stop all other user apps". Your launcher, keyboard, phone and CoreGovernor are never stopped, and nothing is stopped while music is playing. While the guard is on, the screen-off clock saving also applies while charging.
+- **Fast wake boost.** While the screen is off, the power button is detected straight away and the clocks go to maximum for a moment before the screen lights, so unlocking is quicker. Works for any wake, even when the guard is off.
+- Version 3.6.6 (versionCode 52).
 
 ## [3.6.0] - 2026-11-24
 

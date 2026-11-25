@@ -676,9 +676,6 @@
     <string name="nifty_no_sensors">Bu cihazda desteklenen hareket sensörü bulunamadı.</string>
     <string name="nifty_pause_off_title">Ekran kapalıyken duraklat</string>
     <string name="nifty_pause_off_desc">Ekran kapandığında sensörleri serbest bırakır ve açıldığında yeniden sabitler. Pil tasarrufu sağlar.</string>
-    <string name="nifty_game_only_title">Yalnızca oyundayken sabitle</string>
-    <string name="nifty_game_only_desc">Sensörleri yalnızca bir oyun algılanıp çalışırken (Oyun modu) sabitler, aksi halde serbest bırakır. Boştaki güç tüketimini azaltır.</string>
-    <string name="nifty_status_game_wait">Oyun bekleniyor. Sensörler şu anda sabitlenmiş değil.</string>
     <string name="nifty_status_active">AKTİF</string>
     <string name="nifty_status_waiting">Bekliyor: governor başladığında başlar.</string>
     <string name="nifty_status_paused">Duraklatıldı (ekran kapalı) veya sensör kaydedilemedi. Kayda bakın.</string>
@@ -794,6 +791,10 @@
     <!-- Additional Helper Strings -->
     <string name="energy_est_vs_meas_val">%1$s W  vs  %2$s</string>
     <string name="batt_truth_diag">%1$s • R %2$d mΩ • düşüş %3$d mV • güven %4$d%%</string>
+    <string name="batt_charge_bands_session">Bu oturumda şarj: %1$s</string>
+    <string name="batt_charge_bands_lifetime">Toplam şarj: %1$s</string>
+    <string name="batt_charge_voltage">En yüksek şarj voltajı: %1$s V (oturum) • %2$s V (toplam)</string>
+    <string name="batt_charge_trust">Şarj verisi güveni: %1$d%% (hızlı şarj kapasitede daha az sayılır)</string>
     <string name="batt_seg_line">• %1$s %2$d%%→%3$d%% (%4$ddk): %5$s mAh / %6$s Wh</string>
     <string name="smart_override_light">Hafif</string>
     <string name="smart_override_moderate">Orta</string>
@@ -873,12 +874,20 @@
         <item quantity="one">%1$d uyandırma</item>
         <item quantity="other">%1$d uyandırma</item>
     </plurals>
-    <string name="hunter_res_gov_thermal">Governor: ısı sınırı</string>
-    <string name="hunter_res_gov_battery">Governor: pil sınırı</string>
-    <string name="hunter_action_line_governor">%1$s • %2$s → governor</string>
-    <string name="afterburn_toast_reduced_title">AFTERBURN AZALTILDI</string>
-    <string name="afterburn_toast_reduced_subtitle">%1$s • boost düşürüldü</string>
-    <string name="afterburn_toast_stopped_title">AFTERBURN DURDU</string>
-    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • ısı nedeniyle engellendi</string>
-    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • pil nedeniyle engellendi</string>
+
+    <!-- v3.6.6 Charge sleep guard -->
+    <string name="cg_header">ŞARJ UYKU KORUMASI</string>
+    <string name="cg_enable">Şarj uyku koruması</string>
+    <string name="cg_enable_desc">Ekran kapalı ve telefon şarj olurken, CPU\'yu uyandırıp telefonu ısıtan arka plan uygulamalarını durdurur. Root gerekir.</string>
+    <string name="cg_others">Diğer tüm kullanıcı uygulamalarını durdur</string>
+    <string name="cg_others_desc">Beyaz listede olmayan tüm yüklü uygulamaları da her dakika durdurur. Ana ekran, klavye ve telefon her zaman korunur.</string>
+    <string name="cg_whitelist">Beyaz liste (asla durdurulmaz)</string>
+    <string name="cg_whitelist_desc">Çalışmaya devam etmesi gereken uygulamalar, örneğin mesajlaşma veya alarm.</string>
+    <string name="cg_kill">Her zaman durdur listesi</string>
+    <string name="cg_kill_desc">Şarj olurken ekran her kapandığında durdurulacak uygulamalar ve sistem işlemleri.</string>
+    <string name="cg_choose">Uygulama seç (%1$d)</string>
+    <string name="cg_fast_wake">Hızlı uyanma desteği</string>
+    <string name="cg_fast_wake_desc">Ekran kapalıyken güç düğmesini algılar ve saatleri hemen en yükseğe çıkarır, böylece kilit açma daha hızlı olur.</string>
+    <string name="cg_search">Uygulama ara</string>
+    <string name="cg_done">Bitti</string>
 </resources>

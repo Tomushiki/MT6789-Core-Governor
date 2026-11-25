@@ -676,9 +676,6 @@
     <string name="nifty_no_sensors">Tidak ada sensor gerak yang didukung di perangkat ini.</string>
     <string name="nifty_pause_off_title">Jeda saat layar mati</string>
     <string name="nifty_pause_off_desc">Melepas sensor saat layar mati dan menguncinya lagi saat menyala. Menghemat baterai.</string>
-    <string name="nifty_game_only_title">Kunci hanya saat bermain game</string>
-    <string name="nifty_game_only_desc">Mengunci sensor hanya saat game terdeteksi dan berjalan (mode Game), lalu melepasnya di luar itu. Mengurangi konsumsi daya saat diam.</string>
-    <string name="nifty_status_game_wait">Menunggu game. Sensor tidak dikunci saat ini.</string>
     <string name="nifty_status_active">AKTIF</string>
     <string name="nifty_status_waiting">Menunggu: mulai saat governor berjalan.</string>
     <string name="nifty_status_paused">Dijeda (layar mati) atau tidak ada sensor yang dapat didaftarkan. Lihat log.</string>
@@ -794,6 +791,10 @@
     <!-- Additional Helper Strings -->
     <string name="energy_est_vs_meas_val">%1$s W  vs  %2$s</string>
     <string name="batt_truth_diag">%1$s • R %2$d mΩ • sag %3$d mV • percaya %4$d%%</string>
+    <string name="batt_charge_bands_session">Pengisian sesi ini: %1$s</string>
+    <string name="batt_charge_bands_lifetime">Pengisian total: %1$s</string>
+    <string name="batt_charge_voltage">Tegangan pengisian tertinggi: %1$s V (sesi) • %2$s V (total)</string>
+    <string name="batt_charge_trust">Kepercayaan data pengisian: %1$d%% (pengisian cepat dihitung lebih kecil untuk kapasitas)</string>
     <string name="batt_seg_line">• %1$s %2$d%%→%3$d%% (%4$dm): %5$s mAh / %6$s Wh</string>
     <string name="smart_override_light">Ringan</string>
     <string name="smart_override_moderate">Sedang</string>
@@ -865,12 +866,20 @@
     <plurals name="plural_wakeups">
         <item quantity="other">%1$d kali bangun</item>
     </plurals>
-    <string name="hunter_res_gov_thermal">Governor: batas panas</string>
-    <string name="hunter_res_gov_battery">Governor: batas baterai</string>
-    <string name="hunter_action_line_governor">%1$s • %2$s → governor</string>
-    <string name="afterburn_toast_reduced_title">AFTERBURN DIKURANGI</string>
-    <string name="afterburn_toast_reduced_subtitle">%1$s • boost diturunkan</string>
-    <string name="afterburn_toast_stopped_title">AFTERBURN BERHENTI</string>
-    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • diblokir panas</string>
-    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • diblokir baterai</string>
+
+    <!-- v3.6.6 Charge sleep guard -->
+    <string name="cg_header">PENJAGA TIDUR SAAT CHARGING</string>
+    <string name="cg_enable">Penjaga tidur saat charging</string>
+    <string name="cg_enable_desc">Saat layar mati dan ponsel sedang di-charge, menghentikan aplikasi latar belakang yang membangunkan CPU dan memanaskan ponsel. Perlu root.</string>
+    <string name="cg_others">Hentikan semua aplikasi pengguna lain</string>
+    <string name="cg_others_desc">Juga menghentikan setiap aplikasi terpasang yang tidak ada di daftar putih, setiap menit. Launcher, keyboard, dan telepon selalu dipertahankan.</string>
+    <string name="cg_whitelist">Daftar putih (tidak pernah dihentikan)</string>
+    <string name="cg_whitelist_desc">Aplikasi yang harus tetap berjalan, seperti pesan atau alarm.</string>
+    <string name="cg_kill">Daftar selalu hentikan</string>
+    <string name="cg_kill_desc">Aplikasi dan proses sistem yang dihentikan setiap kali layar mati saat charging.</string>
+    <string name="cg_choose">Pilih aplikasi (%1$d)</string>
+    <string name="cg_fast_wake">Dorongan bangun cepat</string>
+    <string name="cg_fast_wake_desc">Mendeteksi tombol daya saat layar mati dan langsung menaikkan clock ke maksimum, agar buka kunci lebih cepat.</string>
+    <string name="cg_search">Cari aplikasi</string>
+    <string name="cg_done">Selesai</string>
 </resources>

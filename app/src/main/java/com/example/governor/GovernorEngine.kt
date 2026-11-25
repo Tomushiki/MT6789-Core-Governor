@@ -74,6 +74,12 @@ private val WHITESPACE_REGEX = Regex("\\s+")
  */
 class GovernorEngine(context: Context) {
 
+    // IMPORTANT: log state must be declared FIRST. Stores below (RatingStore, etc.) call log()
+    // from their constructors; if these were declared later they'd still be null -> crash on startup.
+    private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())
+    val logs: StateFlow<List<LogEntry>> = _logs.asStateFlow()
+    private val logIdSeq = AtomicLong(1L)
+
     private val appContext = context.applicationContext
     val storage = ConfigStorage(appContext)
     val rootShell = RootShell().apply {
@@ -134,6 +140,18 @@ class GovernorEngine(context: Context) {
     /** v2.7.1 Screen-off power analysis. */
     val screenOff = ScreenOffAnalyzer(appContext, rootShell, engineScope, { _config.value.screenOffAnalysisEnabled }) { l, t, m -> log(l, t, m) }
 
+    /** v3.6.6 Charge sleep guard (stops background apps while charging with the screen off) and fast wake. */
+    val chargeGuard = ChargeGuard(
+        ctx = appContext,
+        rootShell = rootShell,
+        scope = engineScope,
+        isCharging = { stableBatteryState.isPluggedOrCharging || isDeviceCharging() },
+        onWakeHint = { onWakeHint() }
+    ) { l, t, m -> log(l, t, m) }
+
+    @Volatile private var wakeBoostUntilMs = 0L
+    private val WAKE_BOOST_MS = 2500L
+
     /** v2.7.0 Adaptive refresh rate. */
     val refreshCtl = RefreshRateController(
         context = appContext,
@@ -168,13 +186,8 @@ class GovernorEngine(context: Context) {
     private val _telemetry = MutableStateFlow(TelemetryState(modeOverride = _config.value.modeOverride))
     val telemetry: StateFlow<TelemetryState> = _telemetry.asStateFlow()
 
-    private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())
-    val logs: StateFlow<List<LogEntry>> = _logs.asStateFlow()
-
     private val _afterburnEvents = MutableSharedFlow<com.example.service.AfterburnTransitionEvent>(extraBufferCapacity = 8)
     val afterburnEvents: SharedFlow<com.example.service.AfterburnTransitionEvent> = _afterburnEvents.asSharedFlow()
-
-    private val logIdSeq = AtomicLong(1L)
 
     // Loop internal state
     private var prevCpuTicks: Map<Int, CpuTickSnapshot> = emptyMap()
@@ -493,7 +506,6 @@ class GovernorEngine(context: Context) {
             } finally {
                 metrics.onStopped()
                 stopFpsSampler()
-                sensorPinner.setGameActive(false)
                 sensorPinner.setServiceRunning(false)
                 sleepWatcherJob?.cancel()
                 sleepWatcherJob = null
@@ -532,8 +544,16 @@ class GovernorEngine(context: Context) {
         }
     }
 
+    /** Power button seen while the screen is off: leave sleep saving and boost clocks before the screen lights. */
+    private fun onWakeHint() {
+        if (isScreenInteractive) return
+        wakeBoostUntilMs = System.currentTimeMillis() + WAKE_BOOST_MS
+        if (isSleepSaving) engineScope.launch { exitSleepSaving(SleepWakeReason.SCREEN_ON) }
+    }
+
     fun onScreenOff() {
         screenOff.onScreenOff()
+        chargeGuard.onScreenOff()
         interaction.setActive(false, false)
         appDemand.flush()
         isScreenInteractive = false
@@ -545,6 +565,10 @@ class GovernorEngine(context: Context) {
 
     fun onScreenOn() {
         isScreenInteractive = true
+        chargeGuard.onScreenOn()
+        if (ChargeGuardStore.load(appContext).fastWake) {
+            wakeBoostUntilMs = System.currentTimeMillis() + WAKE_BOOST_MS
+        }
         screenOff.onScreenOn()
         sensorPinner.setScreenInteractive(true)
         sleepWatcherJob?.cancel()
@@ -589,7 +613,10 @@ class GovernorEngine(context: Context) {
             val am = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
             if (am?.isMusicActive == true) return true
         }
-        if (cfg.screenOffExemptCharging && (stableBatteryState.isPluggedOrCharging || isDeviceCharging())) {
+        // The charge sleep guard replaces the "keep normal while charging" exemption while it is on.
+        if (cfg.screenOffExemptCharging && !ChargeGuardStore.load(appContext).enabled &&
+            (stableBatteryState.isPluggedOrCharging || isDeviceCharging())
+        ) {
             return true
         }
         return false
@@ -662,6 +689,7 @@ class GovernorEngine(context: Context) {
         sleepMutex.withLock {
             if (controlJob?.isActive != true) return@withLock
             if (isSleepSaving || isScreenInteractive) return@withLock
+            if (System.currentTimeMillis() < wakeBoostUntilMs) return@withLock
             val cfg = _config.value
             if (!cfg.screenOffSavingEnabled || isSleepExempt(cfg)) return@withLock
 
@@ -727,6 +755,7 @@ class GovernorEngine(context: Context) {
         batteryEstimator.flush()
         appDemand.flush()
         screenOff.stop()
+        chargeGuard.stop()
         appDemand.release()
         smartWasOn = false
         interaction.setActive(false, false)
@@ -877,7 +906,6 @@ class GovernorEngine(context: Context) {
             ModeOverride.AUTO -> if (fgPkg in cfg.gamePackages) GovernorMode.GAME else GovernorMode.NORMAL
         }
         val modeProfile = if (activeMode == GovernorMode.GAME) cfg.gameMode else cfg.normalMode
-        sensorPinner.setGameActive(activeMode == GovernorMode.GAME)
 
         // 2. CPU loads from /proc/stat
         val currTicks = SysfsParsers.parseProcStat(batch["/proc/stat"].orEmpty())
@@ -914,6 +942,8 @@ class GovernorEngine(context: Context) {
         } else {
             burstEndTimeMs = 0L
         }
+        // v3.6.6 fast wake: a power-button wake forces max clocks for a moment, whatever the burst setting is.
+        if (nowMs < wakeBoostUntilMs && burstEndTimeMs < wakeBoostUntilMs) burstEndTimeMs = wakeBoostUntilMs
         val burstActive = nowMs < burstEndTimeMs
         val burstRemaining = (burstEndTimeMs - nowMs).coerceAtLeast(0L)
 
@@ -1034,7 +1064,8 @@ class GovernorEngine(context: Context) {
             log(LogLevel.INFO, "Battery", "Battery calibration saved (full-charge ${batteryTruth.fullChargeMv.roundToInt()} mV).")
         }
         // Decisions use the voltage-graded level when it is trustworthy, otherwise the gauge.
-        val effBattPct = if (batteryTruth.valid && batteryTruth.confidencePct >= 50) {
+        // The charge-side grade (v3.6.6) is shown only: the charger inflates voltage, so Afterburn never uses it.
+        val effBattPct = if (batteryTruth.valid && !batteryTruth.charging && batteryTruth.confidencePct >= 50) {
             batteryTruth.truePct.roundToInt().coerceIn(0, 100)
         } else cachedBatteryPct
         val prevBoostState = afterburnDecision.state
@@ -1057,12 +1088,7 @@ class GovernorEngine(context: Context) {
                     newState = afterburnDecision.state,
                     strength = cfg.afterburn.strength,
                     toastEnabled = cfg.afterburn.toastEnabled,
-                    timestampMs = nowMs,
-                    inSelectedGame = com.example.service.AfterburnToastPolicy.isSelectedGameForeground(
-                        eventPkg = fgPkg,
-                        gamePackages = cfg.gamePackages,
-                        foregroundPkg = fgPkg
-                    )
+                    timestampMs = nowMs
                 )
             )
         }
@@ -1693,6 +1719,7 @@ class GovernorEngine(context: Context) {
             batteryState = stableBatteryState
         )
 
+        batteryEstimator.setCalibrationAnchor(batteryTruth.calCapacityMah, batteryTruth.calCapacitySlow)
         val estVoltMv = if (rawReading.voltageMv > 0f) rawReading.voltageMv else cachedBattVoltMv
         batteryEstimator.recordTick(
             nowMs = nowMs,
@@ -1703,7 +1730,8 @@ class GovernorEngine(context: Context) {
             chargeWatts = if (stableBatteryState == BatteryState.CHARGING) rawReading.chargeWatts else 0f,
             batteryPct = cachedBatteryPct,
             pollIntervalMs = cfg.pollIntervalMs,
-            estimationEnabled = cfg.batteryEstimationEnabled
+            estimationEnabled = cfg.batteryEstimationEnabled,
+            internalResistanceMohm = if (batteryTruth.resistanceSamples >= 3) batteryTruth.internalResistanceMohm else 0f
         )
 
         // 7b. Keep RAM at max & read DDR frequency if detailed overlay active

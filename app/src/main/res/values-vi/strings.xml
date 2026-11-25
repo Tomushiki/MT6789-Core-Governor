@@ -676,9 +676,6 @@
     <string name="nifty_no_sensors">Không tìm thấy cảm biến chuyển động hỗ trợ trên thiết bị này.</string>
     <string name="nifty_pause_off_title">Tạm dừng khi tắt màn hình</string>
     <string name="nifty_pause_off_desc">Giải phóng cảm biến khi tắt màn hình và ghim lại khi bật lên. Tiết kiệm pin.</string>
-    <string name="nifty_game_only_title">Chỉ ghim khi chơi game</string>
-    <string name="nifty_game_only_desc">Chỉ ghim cảm biến khi phát hiện và đang chạy game (chế độ Game), còn lại thì giải phóng. Giảm tiêu thụ điện khi nhàn rỗi.</string>
-    <string name="nifty_status_game_wait">Đang chờ game. Hiện chưa ghim cảm biến.</string>
     <string name="nifty_status_active">ĐANG BẬT</string>
     <string name="nifty_status_waiting">Đang chờ: bắt đầu khi bộ điều tốc khởi động.</string>
     <string name="nifty_status_paused">Đang tạm dừng (tắt màn) hoặc không đăng ký được cảm biến. Xem nhật ký.</string>
@@ -794,6 +791,10 @@
     <!-- Additional Helper Strings -->
     <string name="energy_est_vs_meas_val">%1$s W  so với  %2$s</string>
     <string name="batt_truth_diag">%1$s • R %2$d mΩ • sụt %3$d mV • tin cậy %4$d%%</string>
+    <string name="batt_charge_bands_session">Sạc trong phiên này: %1$s</string>
+    <string name="batt_charge_bands_lifetime">Tổng thời gian sạc: %1$s</string>
+    <string name="batt_charge_voltage">Điện áp sạc cao nhất: %1$s V (phiên) • %2$s V (tổng)</string>
+    <string name="batt_charge_trust">Độ tin cậy dữ liệu sạc: %1$d%% (sạc nhanh tính ít hơn vào dung lượng)</string>
     <string name="batt_seg_line">• %1$s %2$d%%→%3$d%% (%4$dp): %5$s mAh / %6$s Wh</string>
     <string name="smart_override_light">Nhẹ</string>
     <string name="smart_override_moderate">Vừa</string>
@@ -865,12 +866,20 @@
     <plurals name="plural_wakeups">
         <item quantity="other">%1$d lần đánh thức</item>
     </plurals>
-    <string name="hunter_res_gov_thermal">Governor: giới hạn nhiệt</string>
-    <string name="hunter_res_gov_battery">Governor: giới hạn pin</string>
-    <string name="hunter_action_line_governor">%1$s • %2$s → governor</string>
-    <string name="afterburn_toast_reduced_title">AFTERBURN GIẢM</string>
-    <string name="afterburn_toast_reduced_subtitle">%1$s • đã giảm tăng cường</string>
-    <string name="afterburn_toast_stopped_title">AFTERBURN DỪNG</string>
-    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • bị chặn do nhiệt</string>
-    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • bị chặn do pin</string>
+
+    <!-- v3.6.6 Charge sleep guard -->
+    <string name="cg_header">BẢO VỆ NGỦ KHI SẠC</string>
+    <string name="cg_enable">Bảo vệ ngủ khi sạc</string>
+    <string name="cg_enable_desc">Khi màn hình tắt và máy đang sạc, dừng các ứng dụng nền đánh thức CPU và làm máy nóng. Cần root.</string>
+    <string name="cg_others">Dừng tất cả ứng dụng người dùng khác</string>
+    <string name="cg_others_desc">Cũng dừng mọi ứng dụng đã cài không nằm trong danh sách trắng, mỗi phút. Launcher, bàn phím và điện thoại luôn được giữ lại.</string>
+    <string name="cg_whitelist">Danh sách trắng (không bao giờ bị dừng)</string>
+    <string name="cg_whitelist_desc">Các ứng dụng phải tiếp tục chạy, như nhắn tin hoặc báo thức.</string>
+    <string name="cg_kill">Danh sách luôn dừng</string>
+    <string name="cg_kill_desc">Ứng dụng và tiến trình hệ thống bị dừng mỗi khi màn hình tắt lúc đang sạc.</string>
+    <string name="cg_choose">Chọn ứng dụng (%1$d)</string>
+    <string name="cg_fast_wake">Tăng tốc đánh thức nhanh</string>
+    <string name="cg_fast_wake_desc">Phát hiện nút nguồn khi màn hình tắt và đẩy xung nhịp lên tối đa ngay, để mở khóa nhanh hơn.</string>
+    <string name="cg_search">Tìm ứng dụng</string>
+    <string name="cg_done">Xong</string>
 </resources>
