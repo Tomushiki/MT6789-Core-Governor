@@ -93,12 +93,27 @@ class RootShell {
         }
     }
 
-    suspend fun exec(command: String): ShellResult = mutex.withLock {
-        withContext(dispatcher) {
-            if (!ensureSessionLocked()) {
-                return@withContext ShellResult(-1, "", "Root shell unavailable (su failed)")
+    @Volatile private var lastSlowLogMs = 0L
+
+    suspend fun exec(command: String): ShellResult {
+        val queuedAt = android.os.SystemClock.elapsedRealtime()
+        return mutex.withLock {
+            val startedAt = android.os.SystemClock.elapsedRealtime()
+            val res = withContext(dispatcher) {
+                if (!ensureSessionLocked()) {
+                    return@withContext ShellResult(-1, "", "Root shell unavailable (su failed)")
+                }
+                execLocked(command)
             }
-            execLocked(command)
+            // v3.7.0: name whatever holds the shared root shell for long (it delays every power/frequency read).
+            val ranMs = android.os.SystemClock.elapsedRealtime() - startedAt
+            val waitedMs = startedAt - queuedAt
+            if ((ranMs >= 400L || waitedMs >= 600L) && startedAt - lastSlowLogMs >= 5_000L) {
+                lastSlowLogMs = startedAt
+                val what = command.replace('\n', ' ').take(70)
+                onLog?.invoke("Slow root command: ran ${ranMs}ms, waited ${waitedMs}ms: $what")
+            }
+            res
         }
     }
 

@@ -41,7 +41,11 @@ data class BatterySegmentRecord(
     val integratedWh: Float,
     val avgCurrentMa: Float,
     val estCapacityMah: Float,
-    val estCapacityWh: Float
+    val estCapacityWh: Float,
+    val avgWatts: Float = 0f,
+    val peakVoltageMv: Float = 0f,
+    val peakCurrentMa: Float = 0f,
+    val bandSec: List<Float> = emptyList()
 )
 
 data class BatteryEstimatorUiSnapshot(
@@ -86,6 +90,10 @@ data class BatteryEstimatorUiSnapshot(
     val neededPctToEstimate: Int = BatteryEstimatorMath.MIN_SEGMENT_DELTA_PCT,
     val activeSegmentDeltaPct: Int = 0,
     val activeSegmentState: BatteryState = BatteryState.UNKNOWN,
+    val chargeBandSessionSec: List<Float> = emptyList(),
+    val chargeBandLifetimeSec: List<Float> = emptyList(),
+    val peakChargeVoltageMv: Float = 0f,
+    val chargeTrustPct: Int = -1,
     val recentSegments: List<BatterySegmentRecord> = emptyList()
 )
 
@@ -94,7 +102,8 @@ data class DirectionEstimate(
     val capacityWh: Float = 0f,
     val totalWeight: Float = 0f,
     val totalDeltaPct: Int = 0,
-    val validCount: Int = 0
+    val validCount: Int = 0,
+    val trustedDeltaPct: Float = 0f
 )
 
 data class CombinedBatteryEstimate(
@@ -104,7 +113,8 @@ data class CombinedBatteryEstimate(
     val combinedWh: Float = 0f,
     val confidencePct: Int = 0,
     val disagreementPct: Float = 0f,
-    val hasDisagreement: Boolean = false
+    val hasDisagreement: Boolean = false,
+    val chargeTrustPct: Int = -1
 )
 
 object BatteryEstimatorMath {
@@ -112,6 +122,32 @@ object BatteryEstimatorMath {
     const val MIN_SEGMENT_DURATION_MS = 180_000L // 3 minutes
     const val MAX_SEGMENTS_PER_DIRECTION = 20
     const val DISAGREEMENT_THRESHOLD_PCT = 12f
+    const val CHARGE_TO_DISCHARGE_CAP = 1.5
+    const val BAND_COUNT = 6
+    private val BAND_EDGES_W = floatArrayOf(5f, 10f, 15f, 20f, 25f)
+
+    /** Charge power band: 0 = under 5 W, 1 = 5-10, 2 = 10-15, 3 = 15-20, 4 = 20-25, 5 = 25 W and up. */
+    fun bandIndex(watts: Float): Int {
+        for (i in BAND_EDGES_W.indices) if (watts < BAND_EDGES_W[i]) return i
+        return BAND_EDGES_W.size
+    }
+
+    /** The fuel gauge runs ahead of the real charge at high power, so fast-charge segments count less. */
+    fun chargeTrust(avgWatts: Float): Float {
+        if (avgWatts <= 0f) return 1f
+        return (1f / (1f + (avgWatts - 10f).coerceAtLeast(0f) / 20f)).coerceIn(0.25f, 1f)
+    }
+
+    /** Trust of one segment: charge power, and the voltage lost inside the cell once the resistance is known. */
+    fun trustFactor(seg: BatterySegmentRecord, resistanceMohm: Float): Float {
+        if (seg.direction != BatteryState.CHARGING) return 1f
+        var t = chargeTrust(seg.avgWatts)
+        if (resistanceMohm > 0f) {
+            val dropMv = seg.avgCurrentMa.coerceAtLeast(0f) * resistanceMohm / 1000f
+            t /= (1f + dropMv / 400f)
+        }
+        return t
+    }
 
     fun segmentWeight(deltaPct: Int, avgCurrentMa: Float): Float {
         if (deltaPct <= 0) return 0f
@@ -136,11 +172,14 @@ object BatteryEstimatorMath {
         return pairs.last().first
     }
 
-    fun estimateDirection(segments: List<BatterySegmentRecord>): DirectionEstimate {
+    fun estimateDirection(
+        segments: List<BatterySegmentRecord>,
+        resistanceMohm: Float = 0f
+    ): DirectionEstimate {
         if (segments.isEmpty()) return DirectionEstimate()
         val mahVals = segments.map { it.estCapacityMah }
         val whVals = segments.map { it.estCapacityWh }
-        val weights = segments.map { segmentWeight(it.deltaPct, it.avgCurrentMa) }
+        val weights = segments.map { segmentWeight(it.deltaPct, it.avgCurrentMa) * trustFactor(it, resistanceMohm) }
 
         val med = weightedMedian(mahVals, weights)
         val inliers = if (segments.size >= 3) {
@@ -170,21 +209,26 @@ object BatteryEstimatorMath {
             capacityWh = (whSum / wSum).toFloat(),
             totalWeight = wSum.toFloat(),
             totalDeltaPct = inliers.sumOf { segments[it].deltaPct },
-            validCount = segments.size
+            validCount = segments.size,
+            trustedDeltaPct = inliers.sumOf { (segments[it].deltaPct * trustFactor(segments[it], resistanceMohm)).toDouble() }.toFloat()
         )
     }
 
     fun combineDirections(
         dischargeSegments: List<BatterySegmentRecord>,
-        chargeSegments: List<BatterySegmentRecord>
+        chargeSegments: List<BatterySegmentRecord>,
+        resistanceMohm: Float = 0f,
+        anchorMah: Float = 0f,
+        anchorSlow: Boolean = false,
+        designMah: Float = 0f
     ): CombinedBatteryEstimate {
         val dis = estimateDirection(dischargeSegments)
-        val chg = estimateDirection(chargeSegments)
+        val chg = estimateDirection(chargeSegments, resistanceMohm)
         val hasD = dis.validCount > 0 && dis.capacityMah > 0f
         val hasC = chg.validCount > 0 && chg.capacityMah > 0f
 
-        val combinedMah: Float
-        val combinedWh: Float
+        var combinedMah: Float
+        var combinedWh: Float
         var disagreementPct = 0f
         var hasDisagreement = false
 
@@ -192,7 +236,7 @@ object BatteryEstimatorMath {
             hasD && hasC -> {
                 // Slightly favor discharge segments (1.15x) over battery-side charge segments.
                 val wd = dis.totalWeight.toDouble() * 1.15
-                val wc = chg.totalWeight.toDouble()
+                val wc = min(chg.totalWeight.toDouble(), dis.totalWeight.toDouble() * CHARGE_TO_DISCHARGE_CAP)
                 val tot = (wd + wc).coerceAtLeast(1e-4)
                 combinedMah = ((dis.capacityMah * wd + chg.capacityMah * wc) / tot).toFloat()
                 combinedWh = ((dis.capacityWh * wd + chg.capacityWh * wc) / tot).toFloat()
@@ -214,8 +258,26 @@ object BatteryEstimatorMath {
             }
         }
 
+        // A clean full charge (Battery truth calibration) joins the blend. A mostly slow charge counts
+        // about 3x more than a fast one; a reading far from the design capacity is ignored.
+        if (anchorMah > 0f) {
+            val plausible = designMah <= 0f || (anchorMah in designMah * 0.5f..designMah * 1.3f)
+            if (plausible) {
+                val wa = if (anchorSlow) 180.0 else 60.0
+                if (combinedMah > 0f) {
+                    val wBase = (dis.totalWeight + chg.totalWeight).toDouble().coerceAtLeast(1e-4)
+                    val tot = wBase + wa
+                    val ratio = combinedWh / combinedMah
+                    combinedMah = ((combinedMah * wBase + anchorMah * wa) / tot).toFloat()
+                    if (ratio > 0f) combinedWh = combinedMah * ratio
+                } else {
+                    combinedMah = anchorMah
+                }
+            }
+        }
+
         val totalSegments = dis.validCount + chg.validCount
-        val totalDeltaPct = dis.totalDeltaPct + chg.totalDeltaPct
+        val totalDeltaPct = dis.totalDeltaPct + chg.trustedDeltaPct
         val confidence = if (totalSegments == 0) {
             0
         } else {
@@ -237,7 +299,12 @@ object BatteryEstimatorMath {
             combinedWh = combinedWh,
             confidencePct = confidence,
             disagreementPct = disagreementPct,
-            hasDisagreement = hasDisagreement
+            hasDisagreement = hasDisagreement,
+            chargeTrustPct = if (chargeSegments.isEmpty()) -1 else {
+                val td = chargeSegments.sumOf { it.deltaPct }.coerceAtLeast(1)
+                ((chargeSegments.sumOf { (it.deltaPct * trustFactor(it, resistanceMohm)).toDouble() } / td) * 100.0)
+                    .roundToInt().coerceIn(0, 100)
+            }
         )
     }
 }
@@ -256,6 +323,7 @@ class BatteryEstimator(
         const val SCHEMA_VERSION = 1
         const val AUTO_SAVE_INTERVAL_MS = 5 * 60 * 1000L
         private const val RATE_EMA_TAU_SEC = 120.0
+        private const val CURVE_ALPHA = 0.05f
     }
 
     private enum class SegPhase {
@@ -282,6 +350,17 @@ class BatteryEstimator(
 
     // Live diagnostics & OS/sysfs properties
     private var enabled = true
+    private val sessionChgBandSec = DoubleArray(BatteryEstimatorMath.BAND_COUNT)
+    private val lifetimeChgBandSec = DoubleArray(BatteryEstimatorMath.BAND_COUNT)
+    private var peakChargeMv = 0f
+    /** Learned charge power (W) for each 10% slice of battery (0-10 ... 90-100); 0 = not learned yet. */
+    private val chgCurveW = FloatArray(10)
+    private val segBandSec = DoubleArray(BatteryEstimatorMath.BAND_COUNT)
+    private var segPeakMv = 0f
+    private var segPeakMa = 0f
+    @Volatile private var calAnchorMah = 0f
+    @Volatile private var calAnchorSlow = false
+    @Volatile private var internalResistanceMohm = 0f
     private var designOverrideMah = 0
     private var sysfsDesignCapacityMah = 0
     private var sysfsFullCapacityMah = 0
@@ -311,6 +390,12 @@ class BatteryEstimator(
     private var segAccumMah = 0.0
     private var segAccumWh = 0.0
     private var segIntegrationMs = 0L
+
+    private fun resetSegExtrasLocked() {
+        segBandSec.fill(0.0)
+        segPeakMv = 0f
+        segPeakMa = 0f
+    }
 
     private var lastLoggedCombinedMah = 0f
     private var dirty = false
@@ -351,6 +436,7 @@ class BatteryEstimator(
             sessionWhIn = 0.0
             sessionMahOut = 0.0
             sessionMahIn = 0.0
+            sessionChgBandSec.fill(0.0)
             lastTickMs = 0L
             discardInFlightLocked()
         }
@@ -398,6 +484,12 @@ class BatteryEstimator(
         if (changed && uiVisible) pushSnapshotNow()
     }
 
+    /** Capacity read from a clean full charge (0 = none) and whether that charge was mostly slow. */
+    fun setCalibrationAnchor(mah: Float, slow: Boolean) {
+        calAnchorMah = mah
+        calAnchorSlow = slow
+    }
+
     /**
      * Called once per governor control tick. Allocation-free on the hot path; persists only in background.
      */
@@ -410,8 +502,10 @@ class BatteryEstimator(
         chargeWatts: Float,
         batteryPct: Int,
         pollIntervalMs: Long,
-        estimationEnabled: Boolean
+        estimationEnabled: Boolean,
+        internalResistanceMohm: Float = 0f
     ) {
+        this.internalResistanceMohm = internalResistanceMohm
         var completedLog: String? = null
         var deltaLog: String? = null
         var jsonToSave: String? = null
@@ -478,6 +572,19 @@ class BatteryEstimator(
                         lifetimeWhIn += dWh
                         sessionMahIn += dMah
                         sessionWhIn += dWh
+                        val bi = BatteryEstimatorMath.bandIndex(effWatts.toFloat())
+                        sessionChgBandSec[bi] += dtSec
+                        lifetimeChgBandSec[bi] += dtSec
+                        segBandSec[bi] += dtSec
+                        if (voltageMv > peakChargeMv) peakChargeMv = voltageMv
+                        if (voltageMv > segPeakMv) segPeakMv = voltageMv
+                        if (absCurrentMa > segPeakMa) segPeakMa = absCurrentMa
+                        if (effWatts > 0.5 && batteryPct in 0..99) {
+                            val bin = (batteryPct / 10).coerceIn(0, 9)
+                            val prevW = chgCurveW[bin]
+                            chgCurveW[bin] = if (prevW <= 0f) effWatts.toFloat()
+                            else prevW + (effWatts.toFloat() - prevW) * CURVE_ALPHA
+                        }
                         if (effWatts > 0.1) {
                             val alpha = (1.0 - exp(-dtSec / RATE_EMA_TAU_SEC)).toFloat()
                             emaChargeWatts = if (emaChargeWatts <= 0f) effWatts.toFloat()
@@ -543,6 +650,7 @@ class BatteryEstimator(
         segLastPct = -1
         segStartTimeMs = 0L
         segAccumMah = 0.0
+        resetSegExtrasLocked()
         segAccumWh = 0.0
         segIntegrationMs = 0L
     }
@@ -564,6 +672,7 @@ class BatteryEstimator(
             segState = batteryState
             waitingInitialPct = batteryPct
             segAccumMah = 0.0
+            resetSegExtrasLocked()
             segAccumWh = 0.0
             segIntegrationMs = 0L
             return null
@@ -581,6 +690,7 @@ class BatteryEstimator(
                 segLastPct = batteryPct
                 segStartTimeMs = nowMs
                 segAccumMah = 0.0
+                resetSegExtrasLocked()
                 segAccumWh = 0.0
                 segIntegrationMs = 0L
             } else if (batteryPct != waitingInitialPct) {
@@ -617,6 +727,10 @@ class BatteryEstimator(
                     val estMah = (segAccumMah / (deltaPct / 100.0)).toFloat()
                     val estWh = (segAccumWh / (deltaPct / 100.0)).toFloat()
                     val avgCurMa = (segAccumMah / (segIntegrationMs / 3_600_000.0)).toFloat()
+                    val segAvgW = (segAccumWh / (segIntegrationMs / 3_600_000.0)).toFloat()
+                    val segPkMv = segPeakMv
+                    val segPkMa = segPeakMa
+                    val segBands = segBandSec.map { it.toFloat() }
 
                     val startPctSaved = segStartPct
                     // Next segment starts cleanly from this exact percent boundary.
@@ -624,6 +738,7 @@ class BatteryEstimator(
                     segLastPct = batteryPct
                     segStartTimeMs = nowMs
                     segAccumMah = 0.0
+                    resetSegExtrasLocked()
                     segAccumWh = 0.0
                     segIntegrationMs = 0L
 
@@ -639,14 +754,21 @@ class BatteryEstimator(
                             integratedWh = segAccumWhSnapshot(estWh, deltaPct),
                             avgCurrentMa = avgCurMa,
                             estCapacityMah = estMah,
-                            estCapacityWh = estWh
+                            estCapacityWh = estWh,
+                            avgWatts = segAvgW,
+                            peakVoltageMv = segPkMv,
+                            peakCurrentMa = segPkMa,
+                            bandSec = if (batteryState == BatteryState.CHARGING) segBands else emptyList()
                         )
                         val targetList = if (batteryState == BatteryState.DISCHARGING) dischargeSegments else chargeSegments
                         targetList.add(rec)
                         while (targetList.size > BatteryEstimatorMath.MAX_SEGMENTS_PER_DIRECTION) {
                             targetList.removeAt(0)
                         }
-                        combined = BatteryEstimatorMath.combineDirections(dischargeSegments, chargeSegments)
+                        combined = BatteryEstimatorMath.combineDirections(
+                            dischargeSegments, chargeSegments,
+                            internalResistanceMohm, calAnchorMah, calAnchorSlow, estimateDesignMahLocked()
+                        )
                         dirty = true
 
                         val dirLabel = if (batteryState == BatteryState.DISCHARGING) "disch" else "chg"
@@ -735,6 +857,34 @@ class BatteryEstimator(
     }
 
     /** Some kernels report the design capacity 10x too small (516 instead of 5160). Fix it when the full capacity proves it. */
+    /**
+     * Time to full from the learned charge-power curve, one slice per 10% of battery, so the slow
+     * taper near 100% is counted. The slice being charged now uses the live power; slices not learned
+     * yet use the live power, reduced near the top where charging always slows.
+     */
+    private fun chargeHoursToFullLocked(totalWh: Float): Double {
+        var hours = 0.0
+        val startBin = (lastBatteryPct / 10).coerceIn(0, 9)
+        for (bin in startBin..9) {
+            val from = kotlin.math.max(lastBatteryPct, bin * 10)
+            val frac = ((bin + 1) * 10 - from) / 100f
+            if (frac <= 0f) continue
+            val learned = chgCurveW[bin]
+            val w = when {
+                bin == startBin -> emaChargeWatts
+                learned > 0.5f -> learned
+                bin >= 9 -> emaChargeWatts * 0.35f
+                bin >= 8 -> emaChargeWatts * 0.6f
+                else -> emaChargeWatts
+            }.coerceAtLeast(0.5f)
+            hours += (totalWh * frac).toDouble() / w
+        }
+        return hours
+    }
+
+    private fun estimateDesignMahLocked(): Float =
+        (if (designOverrideMah > 0) designOverrideMah else plausibleDesignMah(sysfsDesignCapacityMah, sysfsFullCapacityMah)).toFloat()
+
     private fun plausibleDesignMah(design: Int, fullMah: Int): Int {
         if (design <= 0 || fullMah <= 0) return design
         val ratio = fullMah.toFloat() / design.toFloat()
@@ -771,8 +921,7 @@ class BatteryEstimator(
             val timeFullMin = if (lastBatteryState == BatteryState.CHARGING &&
                 combWh > 0f && lastBatteryPct in 0..99 && emaChargeWatts > 0.15f && combined.confidencePct >= 15
             ) {
-                val whNeeded = combWh * ((100 - lastBatteryPct) / 100f)
-                ((whNeeded / emaChargeWatts) * 60f).roundToInt().coerceIn(0, 99_999)
+                (chargeHoursToFullLocked(combWh) * 60.0).roundToInt().coerceIn(0, 99_999)
             } else -1
 
             val counterEst = if (lastChargeCounterMah > 0f && lastBatteryPct >= 5) {
@@ -831,6 +980,10 @@ class BatteryEstimator(
                 neededPctToEstimate = BatteryEstimatorMath.MIN_SEGMENT_DELTA_PCT,
                 activeSegmentDeltaPct = activeDelta,
                 activeSegmentState = segState,
+                chargeBandSessionSec = sessionChgBandSec.map { it.toFloat() },
+                chargeBandLifetimeSec = lifetimeChgBandSec.map { it.toFloat() },
+                peakChargeVoltageMv = peakChargeMv,
+                chargeTrustPct = combined.chargeTrustPct,
                 recentSegments = recent
             )
         }
@@ -883,6 +1036,12 @@ class BatteryEstimator(
             append(",\"avgCurMa\":").append(safeNum(s.avgCurrentMa.toDouble()))
             append(",\"estMah\":").append(safeNum(s.estCapacityMah.toDouble()))
             append(",\"estWh\":").append(safeNum(s.estCapacityWh.toDouble()))
+            append(",\"avgW\":").append(safeNum(s.avgWatts.toDouble()))
+            append(",\"pkMv\":").append(safeNum(s.peakVoltageMv.toDouble()))
+            append(",\"pkMa\":").append(safeNum(s.peakCurrentMa.toDouble()))
+            append(",\"bands\":[")
+            s.bandSec.forEachIndexed { i, v -> if (i > 0) append(','); append(safeNum(v.toDouble())) }
+            append(']')
             append('}')
         }
 
@@ -896,6 +1055,12 @@ class BatteryEstimator(
         sb.append(",\"sysfsDesignCapacityMah\":").append(sysfsDesignCapacityMah)
         sb.append(",\"sysfsFullCapacityMah\":").append(sysfsFullCapacityMah)
         sb.append(",\"sysfsCycleCount\":").append(sysfsCycleCount)
+        sb.append(",\"peakChargeMv\":").append(safeNum(peakChargeMv.toDouble()))
+        sb.append(",\"chgBandLife\":[")
+        lifetimeChgBandSec.forEachIndexed { i, v -> if (i > 0) sb.append(','); sb.append(safeNum(v)) }
+        sb.append("],\"chgCurveW\":[")
+        chgCurveW.forEachIndexed { i, v -> if (i > 0) sb.append(','); sb.append(safeNum(v.toDouble())) }
+        sb.append(']')
         sb.append(",\"dischargeSegments\":[")
         dischargeSegments.forEachIndexed { idx, s ->
             if (idx > 0) sb.append(',')
@@ -945,7 +1110,11 @@ class BatteryEstimator(
                             integratedWh = o["wh"].asDouble(0.0).toFloat(),
                             avgCurrentMa = o["avgCurMa"].asDouble(0.0).toFloat(),
                             estCapacityMah = estMah,
-                            estCapacityWh = estWh
+                            estCapacityWh = estWh,
+                            avgWatts = o["avgW"].asDouble(0.0).toFloat(),
+                            peakVoltageMv = o["pkMv"].asDouble(0.0).toFloat(),
+                            peakCurrentMa = o["pkMa"].asDouble(0.0).toFloat(),
+                            bandSec = (o["bands"] as? List<*>)?.map { it.asDouble(0.0).toFloat() } ?: emptyList()
                         )
                     )
                 }
@@ -958,6 +1127,13 @@ class BatteryEstimator(
             lifetimeWhIn = root["lifetimeWhIn"].asDouble(0.0).coerceAtLeast(0.0)
             lifetimeMahOut = root["lifetimeMahOut"].asDouble(0.0).coerceAtLeast(0.0)
             lifetimeMahIn = root["lifetimeMahIn"].asDouble(0.0).coerceAtLeast(0.0)
+            peakChargeMv = root["peakChargeMv"].asDouble(0.0).toFloat().coerceAtLeast(0f)
+            (root["chgBandLife"] as? List<*>)?.forEachIndexed { i, v ->
+                if (i < lifetimeChgBandSec.size) lifetimeChgBandSec[i] = v.asDouble(0.0).coerceAtLeast(0.0)
+            }
+            (root["chgCurveW"] as? List<*>)?.forEachIndexed { i, v ->
+                if (i < chgCurveW.size) chgCurveW[i] = v.asDouble(0.0).toFloat().coerceAtLeast(0f)
+            }
             sysfsDesignCapacityMah = root["sysfsDesignCapacityMah"].asInt(0).coerceAtLeast(0)
             sysfsFullCapacityMah = root["sysfsFullCapacityMah"].asInt(0).coerceAtLeast(0)
             sysfsCycleCount = root["sysfsCycleCount"].asInt(-1)
@@ -967,7 +1143,10 @@ class BatteryEstimator(
             chargeSegments.clear()
             chargeSegments.addAll(parseList(root["chargeSegments"], BatteryState.CHARGING))
 
-            combined = BatteryEstimatorMath.combineDirections(dischargeSegments, chargeSegments)
+            combined = BatteryEstimatorMath.combineDirections(
+                            dischargeSegments, chargeSegments,
+                            internalResistanceMohm, calAnchorMah, calAnchorSlow, estimateDesignMahLocked()
+                        )
             lastLoggedCombinedMah = combined.combinedMah
             // Never resume an in-flight segment after restart
             discardInFlightLocked()

@@ -18,6 +18,7 @@ package com.example.governor
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
 import android.os.BatteryManager
@@ -32,6 +33,7 @@ import com.example.model.BatteryState
 import com.example.model.ClusterLiveState
 import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
+import com.example.model.boostStrengthFor
 import com.example.model.GpuLiveState
 import com.example.model.HardwareSpec
 import com.example.model.AfterburnState
@@ -68,16 +70,53 @@ import kotlin.math.roundToInt
 
 private val WHITESPACE_REGEX = Regex("\\s+")
 
+/** How long the Afterburn app stays counted as in front after the foreground package briefly changes. */
+private const val BOOST_FG_GRACE_MS = 3_000L
+
+/** How long a power reading may be reused when a fresh one cannot be read. */
+private const val STALE_POWER_REUSE_MS = 2_500L
+
+/** v3.8.1: weight of the newest power sample in the overlay's live watts (higher = faster, noisier). */
+private const val LIVE_WATTS_ALPHA = 0.6f
+
+/** v3.8.2: how often the overlay's own power reader samples the battery nodes. */
+private const val LIVE_SAMPLER_PERIOD_MS = 120L
+
+/** v3.8.2: while the overlay's own reader has published this recently, the control tick leaves liveWatts alone. */
+private const val LIVE_SAMPLER_FRESH_MS = 600L
+
 /**
  * Single authoritative governor controller for CoreGovernor v2.
  * GPU control operates solely via real OPP indexes written to /proc/gpufreqv2/fix_target_opp_index.
  */
 class GovernorEngine(context: Context) {
 
+    // IMPORTANT: log state must be declared FIRST. Stores below (RatingStore, etc.) call log()
+    // from their constructors; if these were declared later they'd still be null -> crash on startup.
+    private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())
+    val logs: StateFlow<List<LogEntry>> = _logs.asStateFlow()
+    private val logIdSeq = AtomicLong(1L)
+
     private val appContext = context.applicationContext
     val storage = ConfigStorage(appContext)
     val rootShell = RootShell().apply {
         onLog = { msg -> log(LogLevel.INFO, "RootShell", msg) }
+    }
+
+    /**
+     * v3.7.0 second root shell for slow, occasional jobs (thread scan, process scans, FPS dumpsys), so they
+     * can never queue in front of the control loop's power/frequency reads. Writes stay on [rootShell].
+     */
+    val bgShell = RootShell().apply {
+        onLog = { msg -> log(LogLevel.INFO, "RootShell(bg)", msg) }
+    }
+
+    /**
+     * v3.7.0 third root shell: process scans (Stutter Hunter, System tab) get their own lane so they can
+     * never queue behind the thread scan or the FPS dumpsys on [bgShell]. Read-only; writes stay on [rootShell].
+     */
+    val scanShell = RootShell().apply {
+        onLog = { msg -> log(LogLevel.INFO, "RootShell(scan)", msg) }
     }
     private val discovery = HardwareDiscovery(rootShell)
     private val foregroundDetector = ForegroundDetector(appContext, rootShell)
@@ -134,6 +173,18 @@ class GovernorEngine(context: Context) {
     /** v2.7.1 Screen-off power analysis. */
     val screenOff = ScreenOffAnalyzer(appContext, rootShell, engineScope, { _config.value.screenOffAnalysisEnabled }) { l, t, m -> log(l, t, m) }
 
+    /** v3.6.6 Charge sleep guard (stops background apps while charging with the screen off) and fast wake. */
+    val chargeGuard = ChargeGuard(
+        ctx = appContext,
+        rootShell = rootShell,
+        scope = engineScope,
+        isCharging = { stableBatteryState.isPluggedOrCharging || isDeviceCharging() },
+        onWakeHint = { onWakeHint() }
+    ) { l, t, m -> log(l, t, m) }
+
+    @Volatile private var wakeBoostUntilMs = 0L
+    private val WAKE_BOOST_MS = 2500L
+
     /** v2.7.0 Adaptive refresh rate. */
     val refreshCtl = RefreshRateController(
         context = appContext,
@@ -151,9 +202,76 @@ class GovernorEngine(context: Context) {
     private val smartRatio = FloatArray(4)
     private var smartWasOn = false
 
+    private val configUpdateLock = Any()
+
+    /** v3.6.7/3.6.8 Game Thread Controller: thread-level taskset CPU affinity in Game mode & thread history. */
+    val gameThreadRuntime = GameThreadRuntime(
+        shellExec = { cmd -> bgShell.exec(cmd) },
+        log = { l, t, m -> log(l, t, m) },
+        onThreadsObserved = { pkg, procName, observedAtMs, threads ->
+            recordObservedGameThreads(pkg, procName, observedAtMs, threads)
+        }
+    )
+
     fun setSmartUiVisible(visible: Boolean) {
         appDemand.uiActive = visible
         refreshCtl.uiActive = visible
+    }
+
+    private fun resolveAppDisplayName(packageName: String): String {
+        val clean = packageName.trim()
+        if (clean.isEmpty()) return ""
+        return try {
+            val pm = appContext.packageManager ?: return ""
+            val appInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.getApplicationInfo(clean, PackageManager.ApplicationInfoFlags.of(0L))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getApplicationInfo(clean, 0)
+            }
+            pm.getApplicationLabel(appInfo)?.toString()?.trim().orEmpty()
+        } catch (_: Throwable) {
+            ""
+        }
+    }
+
+    private fun recordObservedGameThreads(
+        packageName: String,
+        processName: String,
+        observedAtMs: Long,
+        threads: List<LiveThreadInfo>
+    ) {
+        val cleanPkg = packageName.trim()
+        if (cleanPkg.isEmpty() || threads.isEmpty()) return
+        val displayName = resolveAppDisplayName(cleanPkg)
+        val cpuCount = GameThreadLogic.availableCpuCount(_hardwareSpec.value)
+        updateConfig { cfg ->
+            val updatedGtc = GameThreadHistoryLogic.mergeObservation(
+                config = cfg.gameThreadController,
+                packageName = cleanPkg,
+                displayName = displayName,
+                processName = processName,
+                observedThreads = threads,
+                observedAtMs = observedAtMs,
+                availableCpuCount = cpuCount
+            )
+            if (updatedGtc == cfg.gameThreadController) cfg else cfg.copy(gameThreadController = updatedGtc)
+        }
+    }
+
+    suspend fun inspectForegroundGameThreads(nowMs: Long = System.currentTimeMillis()): GameThreadInspectionResult {
+        val rootOk = rootShell.ensureSession()
+        val fgPkg = foregroundDetector.detectForegroundPackage(nowMs)
+        val cfg = _config.value
+        val cpuCount = GameThreadLogic.availableCpuCount(_hardwareSpec.value)
+        return gameThreadRuntime.inspectForegroundGame(
+            nowMs = nowMs,
+            fgPkg = fgPkg,
+            gamePackages = cfg.gamePackages,
+            rootAvailable = rootOk,
+            availableCpuCount = cpuCount,
+            config = cfg.gameThreadController
+        )
     }
 
     private val _hardwareSpec = MutableStateFlow(HardwareSpec())
@@ -168,13 +286,8 @@ class GovernorEngine(context: Context) {
     private val _telemetry = MutableStateFlow(TelemetryState(modeOverride = _config.value.modeOverride))
     val telemetry: StateFlow<TelemetryState> = _telemetry.asStateFlow()
 
-    private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())
-    val logs: StateFlow<List<LogEntry>> = _logs.asStateFlow()
-
     private val _afterburnEvents = MutableSharedFlow<com.example.service.AfterburnTransitionEvent>(extraBufferCapacity = 8)
     val afterburnEvents: SharedFlow<com.example.service.AfterburnTransitionEvent> = _afterburnEvents.asSharedFlow()
-
-    private val logIdSeq = AtomicLong(1L)
 
     // Loop internal state
     private var prevCpuTicks: Map<Int, CpuTickSnapshot> = emptyMap()
@@ -206,7 +319,7 @@ class GovernorEngine(context: Context) {
     private val driftCount = mutableMapOf<Int, Int>()
     private val policyPinState = mutableMapOf<Int, PolicyPinState>()
     private var lastWrittenGpuOppIndex: Int? = null
-    private val failedWriteCooldownUntil = mutableMapOf<String, Long>()
+    private val failedWriteCooldownUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     // v2.7.4 adaptive polling state (written by the control tick, read by the control loop)
     private var pollState = PollPolicy.State()
@@ -241,6 +354,11 @@ class GovernorEngine(context: Context) {
 
     // v3.0.0 Afterburn state
     private var afterburnDecision = AfterburnDecision(0f, AfterburnState.OFF)
+    private var boostSelectedUntilMs = 0L
+    private var lastBoostPkg = ""
+    private var smoothedSagMv = 0f
+    private var lastSagSampleMs = 0L
+    private var lastAfterburnWhyMs = 0L
     private val batteryTruthModel = BatteryTruthModel().also {
         it.load(appContext.getSharedPreferences("battery_truth", 0).getString("profile", null))
     }
@@ -248,12 +366,160 @@ class GovernorEngine(context: Context) {
 
     // Power throttle state
     private val wattWindow = ArrayDeque<Float>()
+    // v3.8.1: fast watts for the overlay (EMA over the raw samples), 0 = no sample yet.
+    private var liveWattsEma = 0f
+
+    // v3.8.2: the overlay's own power reader. It runs on its own timer, so a slow control tick in a game
+    // (many frequency writes through the root shell) no longer slows the live watts.
+    private var liveSamplerJob: Job? = null
+    @Volatile private var liveSamplerPublishedAtMs = 0L
     private var overPowerSinceMs: Long? = null
+    private var lastPowerStepMs = 0L
+    private var lastPowerOverMs = 0L
     private var currentPowerCapPct = 100f
     private var gpuShareSmoothed = 0.5f
     private val smoothedClusterShare = mutableMapOf<Int, Float>()
     private var lastPowerSplitLogMs = 0L
     private var lastDominantComponent: String? = null
+
+    // v3.8.0 smooth power limit state
+    private val smoothTrim = SmoothPowerLimiter.Trim()
+    private val smoothSched = java.util.concurrent.ConcurrentHashMap<String, SmoothPowerLimiter.DutyScheduler>()
+    private val fastPlans = java.util.concurrent.ConcurrentHashMap<String, FastPlan>()
+    private val fastOwnedPrev = HashSet<String>()
+    private var fastJob: Job? = null
+    private val FAST_TICK_MS = 20L
+    private val FAST_PLAN_STALE_MS = 1500L
+
+    /** What the fast switcher needs to alternate one component between two steps on its own timer. */
+    private class FastPlan(
+        val isGpu: Boolean,
+        val path: String,
+        val lowKhz: Long,
+        val highKhz: Long,
+        val duty: Float,
+        val desiredKhz: Long,
+        val maxOnly: Boolean,
+        val gpuOppByFreq: Map<Long, Int>,
+        val stampMs: Long
+    )
+
+    private class SmoothStep(val lowKhz: Long, val highKhz: Long, val duty: Float)
+    private val smoothPlanText = HashMap<String, String>()
+    private val smoothClusterPowerOnlyCap = HashMap<Int, Float>()
+    private var smoothActive = false
+    private var smoothGateReason: String? = null
+    private var smoothDisabledUntilMs = 0L
+    private var smoothLastTickMs = 0L
+    private var smoothTickGapMs = 0f
+    private var smoothLastLogMs = 0L
+    private var smoothLastGateLogMs = 0L
+    private var smoothTrimValue = 0f
+
+    private fun resetSmoothPowerLimit() {
+        smoothTrim.reset()
+        smoothSched.values.forEach { it.reset() }
+        smoothPlanText.clear()
+        smoothClusterPowerOnlyCap.clear()
+        smoothActive = false
+        smoothTrimValue = 0f
+        fastPlans.clear()
+        fastJob?.cancel()
+        fastJob = null
+    }
+
+    private fun fastPick(plan: FastPlan, high: Boolean): Long =
+        if (plan.desiredKhz <= plan.lowKhz) plan.desiredKhz
+        else if (high && plan.desiredKhz >= plan.highKhz) plan.highKhz
+        else plan.lowKhz
+
+    /**
+     * v3.8.0 fast switcher: its own 20 ms timer that only flips a component between two adjacent steps, so the
+     * switch speed does not depend on how long a full control tick takes. The control loop publishes a plan
+     * about every tick; a plan older than FAST_PLAN_STALE_MS is ignored and the loop writes again as usual.
+     */
+    private suspend fun fastSwitchLoop() {
+        val lastWritten = HashMap<String, Long>()
+        var idleSinceMs = 0L
+        while (engineScope.isActive && controlJob?.isActive == true) {
+            val now = System.currentTimeMillis()
+            var anyFresh = false
+            for ((id, plan) in fastPlans) {
+                if (now - plan.stampMs > FAST_PLAN_STALE_MS) {
+                    lastWritten.remove(id)
+                    continue
+                }
+                anyFresh = true
+                val sched = smoothSched.getOrPut(id) { SmoothPowerLimiter.DutyScheduler() }
+                val high = if (plan.desiredKhz <= plan.lowKhz) {
+                    sched.reset()
+                    false
+                } else {
+                    sched.update(now, plan.duty)
+                }
+                val f = fastPick(plan, high)
+                if (lastWritten[id] == f) continue
+                val ok = if (plan.isGpu) {
+                    val idx = plan.gpuOppByFreq[f]
+                    idx != null && safeWriteSysfs(plan.path, idx.toString())
+                } else if (plan.maxOnly) {
+                    safeWriteSysfs("${plan.path}/scaling_max_freq", f.toString())
+                } else {
+                    writeCpuPinnedFreq(plan.path, f, f >= (lastWritten[id] ?: 0L))
+                }
+                if (ok) lastWritten[id] = f else lastWritten.remove(id)
+            }
+            if (anyFresh) {
+                idleSinceMs = 0L
+                delay(FAST_TICK_MS)
+            } else {
+                if (idleSinceMs == 0L) idleSinceMs = now
+                if (now - idleSinceMs > 5_000L) break
+                delay(100L)
+            }
+        }
+        fastJob = null
+    }
+
+    /**
+     * Plans the two adjacent steps for one component from model-predicted power, or null for the plain
+     * behaviour. The control loop treats [SmoothStep.lowKhz] as the cap; the fast switcher does the alternating.
+     */
+    private fun smoothCapStep(
+        compId: String,
+        stepsKhz: List<Long>,
+        capPct: Float,
+        utilPct: Float,
+        curKhz: Long,
+        scenarioKey: String,
+        minConfidencePct: Float,
+        trim: Float
+    ): SmoothStep? {
+        if (stepsKhz.size < 2) {
+            smoothSched[compId]?.reset()
+            return null
+        }
+        val steps = ArrayList<SmoothPowerLimiter.Step>(stepsKhz.size)
+        for (f in stepsKhz) {
+            // Same work at another frequency means another utilisation.
+            val util = if (curKhz > 0L) (utilPct * curKhz.toFloat() / f.toFloat()).coerceIn(1f, 100f) else utilPct.coerceIn(1f, 100f)
+            val (mw, conf) = powerModel.predictPowerMw(compId, (f / 1000L).toInt(), util, scenarioKey)
+            steps.add(SmoothPowerLimiter.Step(f, mw, conf))
+        }
+        val plan = SmoothPowerLimiter.plan(steps, capPct / 100f, minConfidencePct, trim)
+        if (!plan.smooth) {
+            smoothSched[compId]?.reset()
+            smoothPlanText[compId] = "plain (${plan.reason})"
+            return null
+        }
+        val twoSteps = plan.highIdx > plan.lowIdx
+        smoothPlanText[compId] = if (twoSteps) {
+            "${steps[plan.lowIdx].freqKhz / 1000}/${steps[plan.highIdx].freqKhz / 1000}MHz ${(plan.duty * 100f).roundToInt()}%"
+        } else {
+            "${steps[plan.lowIdx].freqKhz / 1000}MHz"
+        }
+        return SmoothStep(steps[plan.lowIdx].freqKhz, steps[plan.highIdx].freqKhz, if (twoSteps) plan.duty else 0f)
+    }
 
     // RAM pin state
     private var ramPinned = false
@@ -275,19 +541,27 @@ class GovernorEngine(context: Context) {
     private var cachedBatteryPct = -1
     private var lastBatteryCheckMs = 0L
     private var lastSlowBattSysfsReadMs = 0L
-    private var cachedBmStatus = -1
-    private var cachedBmPlugged = -1
+    @Volatile private var cachedBmStatus = -1
+    @Volatile private var cachedBmPlugged = -1
     private var cachedBattTempC = 0f
     private var cachedBattVoltMv = 0f
     private var cachedBattHealthLabel = "n/a"
     private var cachedChargeCounterMah = -1f
     private var cachedCycleCount = -1
-    private var stableBatteryState = BatteryState.UNKNOWN
+    @Volatile private var stableBatteryState = BatteryState.UNKNOWN
     private var candidateBatteryState = BatteryState.UNKNOWN
     private var candidateBatterySinceMs = 0L
-    private var learnedDischargeSign = 0
+    @Volatile private var learnedDischargeSign = 0
     private var dischargeSignScore = 0
     private var smoothedChargeWatts = 0f
+    private var lastGoodPowerReading: PowerReading? = null
+    private var lastGoodPowerAtMs = 0L
+
+    private fun readSysfsDirect(path: String): Long? = try {
+        java.io.File(path).readText().trim().toLongOrNull()
+    } catch (_: Throwable) {
+        null
+    }
     private val displayRefreshHz: Float =
         (appContext.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
             ?.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate?.takeIf { it >= 30f } ?: 60f
@@ -461,6 +735,7 @@ class GovernorEngine(context: Context) {
                 scheduleScreenOffWatcher()
             }
             startFpsSampler()
+            startLiveWattsSampler()
             sensorPinner.setScreenInteractive(isScreenInteractive)
             sensorPinner.setServiceRunning(true)
 
@@ -492,7 +767,12 @@ class GovernorEngine(context: Context) {
                 }
             } finally {
                 metrics.onStopped()
+                fastPlans.clear()
+                fastJob?.cancel()
+                fastJob = null
                 stopFpsSampler()
+                stopLiveWattsSampler()
+                sensorPinner.setGameActive(false)
                 sensorPinner.setServiceRunning(false)
                 sleepWatcherJob?.cancel()
                 sleepWatcherJob = null
@@ -531,8 +811,16 @@ class GovernorEngine(context: Context) {
         }
     }
 
+    /** Power button seen while the screen is off: leave sleep saving and boost clocks before the screen lights. */
+    private fun onWakeHint() {
+        if (isScreenInteractive) return
+        wakeBoostUntilMs = System.currentTimeMillis() + WAKE_BOOST_MS
+        if (isSleepSaving) engineScope.launch { exitSleepSaving(SleepWakeReason.SCREEN_ON) }
+    }
+
     fun onScreenOff() {
         screenOff.onScreenOff()
+        chargeGuard.onScreenOff()
         interaction.setActive(false, false)
         appDemand.flush()
         isScreenInteractive = false
@@ -544,6 +832,10 @@ class GovernorEngine(context: Context) {
 
     fun onScreenOn() {
         isScreenInteractive = true
+        chargeGuard.onScreenOn()
+        if (ChargeGuardStore.load(appContext).fastWake) {
+            wakeBoostUntilMs = System.currentTimeMillis() + WAKE_BOOST_MS
+        }
         screenOff.onScreenOn()
         sensorPinner.setScreenInteractive(true)
         sleepWatcherJob?.cancel()
@@ -588,7 +880,10 @@ class GovernorEngine(context: Context) {
             val am = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
             if (am?.isMusicActive == true) return true
         }
-        if (cfg.screenOffExemptCharging && (stableBatteryState.isPluggedOrCharging || isDeviceCharging())) {
+        // The charge sleep guard replaces the "keep normal while charging" exemption while it is on.
+        if (cfg.screenOffExemptCharging && !ChargeGuardStore.load(appContext).enabled &&
+            (stableBatteryState.isPluggedOrCharging || isDeviceCharging())
+        ) {
             return true
         }
         return false
@@ -661,6 +956,7 @@ class GovernorEngine(context: Context) {
         sleepMutex.withLock {
             if (controlJob?.isActive != true) return@withLock
             if (isSleepSaving || isScreenInteractive) return@withLock
+            if (System.currentTimeMillis() < wakeBoostUntilMs) return@withLock
             val cfg = _config.value
             if (!cfg.screenOffSavingEnabled || isSleepExempt(cfg)) return@withLock
 
@@ -726,12 +1022,15 @@ class GovernorEngine(context: Context) {
         batteryEstimator.flush()
         appDemand.flush()
         screenOff.stop()
+        chargeGuard.stop()
         appDemand.release()
         smartWasOn = false
         interaction.setActive(false, false)
         refreshCtl.shutdown()
+        gameThreadRuntime.reset()
         metrics.onStopped()
         stopFpsSampler()
+        stopLiveWattsSampler()
         sensorPinner.setServiceRunning(false)
         sleepWatcherJob?.cancel()
         sleepWatcherJob = null
@@ -876,6 +1175,7 @@ class GovernorEngine(context: Context) {
             ModeOverride.AUTO -> if (fgPkg in cfg.gamePackages) GovernorMode.GAME else GovernorMode.NORMAL
         }
         val modeProfile = if (activeMode == GovernorMode.GAME) cfg.gameMode else cfg.normalMode
+        sensorPinner.setGameActive(activeMode == GovernorMode.GAME)
 
         // 2. CPU loads from /proc/stat
         val currTicks = SysfsParsers.parseProcStat(batch["/proc/stat"].orEmpty())
@@ -912,13 +1212,30 @@ class GovernorEngine(context: Context) {
         } else {
             burstEndTimeMs = 0L
         }
+        // v3.6.6 fast wake: a power-button wake forces max clocks for a moment, whatever the burst setting is.
+        if (nowMs < wakeBoostUntilMs && burstEndTimeMs < wakeBoostUntilMs) burstEndTimeMs = wakeBoostUntilMs
         val burstActive = nowMs < burstEndTimeMs
         val burstRemaining = (burstEndTimeMs - nowMs).coerceAtLeast(0L)
 
         // 5. Power & Battery State (with 3s hysteresis)
-        val rawCurrent = hw.batteryPower.currentPath?.let { batch[it]?.toLongOrNull() } ?: 0L
-        val rawVoltage = hw.batteryPower.voltagePath?.let { batch[it]?.toLongOrNull() } ?: 0L
-        val rawReading = if (hw.batteryPower.currentPath != null && hw.batteryPower.voltagePath != null) {
+        // v3.7.0: when the root read lacks the battery nodes, read them directly (no shell, so it cannot
+        // queue behind a busy root shell). Falls back to nothing if the app is not allowed to read them.
+        val rawCurrentOrNull = hw.batteryPower.currentPath?.let { path ->
+            batch[path]?.trim()?.toLongOrNull() ?: readSysfsDirect(path)
+        }
+        val rawVoltageOrNull = hw.batteryPower.voltagePath?.let { path ->
+            batch[path]?.trim()?.toLongOrNull() ?: readSysfsDirect(path)
+        }
+        // A failed/empty read (busy root shell in games) must not count as a 0 W sample: reuse the last good
+        // reading, but only briefly. A frozen value used to stay on screen (and drive the cap) indefinitely.
+        val readMissing = hw.batteryPower.currentPath != null && hw.batteryPower.voltagePath != null &&
+            (rawCurrentOrNull == null || rawVoltageOrNull == null) && lastGoodPowerReading != null &&
+            nowMs - lastGoodPowerAtMs < STALE_POWER_REUSE_MS
+        val rawCurrent = rawCurrentOrNull ?: 0L
+        val rawVoltage = rawVoltageOrNull ?: 0L
+        val rawReading = if (readMissing) {
+            lastGoodPowerReading!!
+        } else if (hw.batteryPower.currentPath != null && hw.batteryPower.voltagePath != null) {
             SysfsParsers.computePowerReading(
                 rawCurrent = rawCurrent,
                 rawVoltage = rawVoltage,
@@ -944,6 +1261,11 @@ class GovernorEngine(context: Context) {
                 currentMa = 0f,
                 voltageMv = cachedBattVoltMv
             )
+        }
+
+        if (!readMissing && rawCurrentOrNull != null && rawVoltageOrNull != null) {
+            lastGoodPowerReading = rawReading
+            lastGoodPowerAtMs = nowMs
         }
 
         // Learn AUTO_ABS sign from clear BatteryManager status vs raw current
@@ -981,6 +1303,7 @@ class GovernorEngine(context: Context) {
                     val prevState = stableBatteryState
                     stableBatteryState = rawState
                     wattWindow.clear()
+                    liveWattsEma = 0f
                     overPowerSinceMs = null
                     lastDominantComponent = null
                     if (rawState != BatteryState.DISCHARGING) {
@@ -1032,20 +1355,49 @@ class GovernorEngine(context: Context) {
             log(LogLevel.INFO, "Battery", "Battery calibration saved (full-charge ${batteryTruth.fullChargeMv.roundToInt()} mV).")
         }
         // Decisions use the voltage-graded level when it is trustworthy, otherwise the gauge.
-        val effBattPct = if (batteryTruth.valid && batteryTruth.confidencePct >= 50) {
-            batteryTruth.truePct.roundToInt().coerceIn(0, 100)
+        // The charge-side grade (v3.6.6) is shown only: the charger inflates voltage, so Afterburn never uses it.
+        // v3.7.0: the voltage-graded level may sit at most 10 points under the gauge, so one sag-distorted
+        // estimate can never push a healthy phone into the low-battery rules or the 5% cutoff.
+        val effBattPct = if (batteryTruth.valid && !batteryTruth.charging && batteryTruth.confidencePct >= 50) {
+            batteryTruth.truePct.roundToInt().coerceIn(0, 100).coerceAtLeast((cachedBatteryPct - 10).coerceAtLeast(0))
         } else cachedBatteryPct
         val prevBoostState = afterburnDecision.state
+        // v3.7.0: a game that briefly shows another package (login page, WebView, overlay, shade) must not drop
+        // the boost: the selected app counts as still in front for a short grace period.
+        if (fgPkg in cfg.boostPackages) {
+            boostSelectedUntilMs = nowMs + BOOST_FG_GRACE_MS
+            lastBoostPkg = fgPkg
+        }
+        // v3.7.2: the app being boosted (also during the grace period) decides the strength.
+        val boostPkg = if (fgPkg in cfg.boostPackages) fgPkg else lastBoostPkg
+        val boostStrength = cfg.boostStrengthFor(boostPkg)
+        val boostAppSelected = fgPkg in cfg.boostPackages || nowMs < boostSelectedUntilMs
+        // v3.7.0: one load spike must not trip the voltage-sag cut: judge the sag on a ~2 s average.
+        val sagDt = (nowMs - lastSagSampleMs).coerceIn(0L, 2_000L)
+        lastSagSampleMs = nowMs
+        val sagAlpha = (sagDt / 2_000f).coerceIn(0.05f, 1f)
+        smoothedSagMv += (batteryTruth.sagMv - smoothedSagMv) * sagAlpha
         afterburnDecision = AfterburnLogic.decide(
-            cfg = cfg.afterburn,
-            appSelected = fgPkg in cfg.boostPackages,
+            cfg = cfg.afterburn.copy(strength = boostStrength),
+            appSelected = boostAppSelected,
             tempC = tempC,
             throttleStartC = cfg.tempThrottle.startTempC,
             batteryPct = effBattPct,
             pluggedOrCharging = stableBatteryState.isPluggedOrCharging,
             wasActive = afterburnDecision.active,
-            sagMv = batteryTruth.sagMv
+            sagMv = smoothedSagMv
         )
+        // v3.7.0: say why it is not boosting (the state log skips IDLE, so a missed foreground match was invisible).
+        if (cfg.afterburn.enabled && fgPkg in cfg.boostPackages && !afterburnDecision.active &&
+            nowMs - lastAfterburnWhyMs >= 10_000L
+        ) {
+            lastAfterburnWhyMs = nowMs
+            log(
+                LogLevel.INFO,
+                "Afterburn",
+                "Afterburn waiting (${afterburnDecision.state.label}): ${"%.1f".format(Locale.US, tempC)}C vs start ${"%.1f".format(Locale.US, cfg.tempThrottle.startTempC)}C (needs ${"%.1f".format(Locale.US, cfg.afterburn.thermalMarginC)}C margin), batt ${effBattPct}% (gauge ${cachedBatteryPct}%), sag ${smoothedSagMv.roundToInt()}mV"
+            )
+        }
         val boostLevel = afterburnDecision.level
         if (afterburnDecision.state != prevBoostState) {
             _afterburnEvents.tryEmit(
@@ -1053,9 +1405,16 @@ class GovernorEngine(context: Context) {
                     packageName = fgPkg,
                     prevState = prevBoostState,
                     newState = afterburnDecision.state,
-                    strength = cfg.afterburn.strength,
+                    strength = boostStrength,
                     toastEnabled = cfg.afterburn.toastEnabled,
-                    timestampMs = nowMs
+                    timestampMs = nowMs,
+                    // v3.7.1: any boosted app (Games or Boost list) gets the pill, not only Games-list apps.
+                    inSelectedGame = com.example.service.AfterburnToastPolicy.isBoostedAppForeground(
+                        eventPkg = fgPkg,
+                        gamePackages = cfg.gamePackages,
+                        boostPackages = cfg.boostPackages,
+                        foregroundPkg = fgPkg
+                    )
                 )
             )
         }
@@ -1080,30 +1439,27 @@ class GovernorEngine(context: Context) {
             avgWatts = if (wattWindow.isNotEmpty()) wattWindow.average().toFloat() else rawReading.dischargeWatts
             smoothedChargeWatts = 0f
             if (cfg.powerThrottle.enabled) {
-                if (avgWatts > cfg.powerThrottle.limitWatts && boostLevel > 0f) {
-                    // Afterburn is bypassing the cap: hold the stored cap so it does not sink while boosting.
-                    overPowerSinceMs = null
-                } else if (avgWatts > cfg.powerThrottle.limitWatts) {
-                    val startOver = overPowerSinceMs ?: nowMs.also { overPowerSinceMs = it }
-                    if (nowMs - startOver >= cfg.powerThrottle.sustainMs) {
-                        val prevCap = currentPowerCapPct
-                        currentPowerCapPct = (currentPowerCapPct - cfg.powerThrottle.stepPct)
-                            .coerceIn(cfg.safetyFloorPct, 100f)
-                        if (prevCap >= 99.5f && currentPowerCapPct < 99.5f) {
-                            log(
-                                LogLevel.WARN,
-                                "PowerCap",
-                                "Power draw ${"%.2f".format(avgWatts)}W > ${cfg.powerThrottle.limitWatts}W limit; stepping cap down."
-                            )
-                        }
-                        overPowerSinceMs = nowMs - (cfg.powerThrottle.sustainMs / 2L)
-                    }
-                } else {
-                    overPowerSinceMs = null
-                    if (avgWatts < cfg.powerThrottle.limitWatts * 0.92f && currentPowerCapPct < 100f) {
-                        currentPowerCapPct = (currentPowerCapPct + cfg.powerThrottle.releaseStepPct)
-                            .coerceIn(cfg.safetyFloorPct, 100f)
-                    }
+                val fastWatts = if (wattWindow.isNotEmpty()) wattWindow.toList().takeLast(3).average().toFloat() else avgWatts
+                val prevCap = currentPowerCapPct
+                val st = PowerCapController.step(
+                    prev = PowerCapController.State(currentPowerCapPct, overPowerSinceMs ?: -1L, lastPowerStepMs, lastPowerOverMs),
+                    nowMs = nowMs,
+                    avgWatts = avgWatts,
+                    fastWatts = fastWatts,
+                    cfg = cfg.powerThrottle,
+                    floorPct = cfg.safetyFloorPct,
+                    bypassed = boostLevel > 0f
+                )
+                currentPowerCapPct = st.capPct
+                overPowerSinceMs = st.overSinceMs.takeIf { it >= 0L }
+                lastPowerStepMs = st.lastStepMs
+                lastPowerOverMs = st.lastOverMs
+                if (prevCap >= 99.5f && currentPowerCapPct < 99.5f) {
+                    log(
+                        LogLevel.WARN,
+                        "PowerCap",
+                        "Power draw ${"%.2f".format(avgWatts)}W > ${cfg.powerThrottle.limitWatts}W limit; stepping cap down."
+                    )
                 }
             } else {
                 overPowerSinceMs = null
@@ -1111,6 +1467,7 @@ class GovernorEngine(context: Context) {
             }
         } else {
             wattWindow.clear()
+            liveWattsEma = 0f
             overPowerSinceMs = null
             currentPowerCapPct = 100f
             avgWatts = 0f
@@ -1123,6 +1480,89 @@ class GovernorEngine(context: Context) {
         }
         val powerThrottleActive = stableBatteryState == BatteryState.DISCHARGING &&
             cfg.powerThrottle.enabled && currentPowerCapPct < 99.5f
+
+        // 5c. v3.8.0 smooth power limit gate (OFF by default; falls back to the plain cap on any doubt)
+        run {
+            // Gaps over 1 s are a pause (screen off, idle), not loop speed: ignore them. Faster average so one slow tick
+            // does not keep the limiter paused for seconds.
+            val gapRaw = if (smoothLastTickMs > 0L) nowMs - smoothLastTickMs else 0L
+            smoothLastTickMs = nowMs
+            if (gapRaw in 1L..1000L) {
+                val gap = gapRaw.toFloat()
+                smoothTickGapMs = if (smoothTickGapMs <= 0f) gap else smoothTickGapMs * 0.7f + gap * 0.3f
+            }
+            val thermalCapActive = currentTempCpuCapPct < 99.5f || currentTempGpuCapPct < 99.5f
+            val wanted = cfg.powerThrottle.smoothPowerLimit && (powerThrottleActive || thermalCapActive)
+            var reason: String? = null
+            if (wanted) {
+                val rate = smoothSched.values.maxOfOrNull { it.switchesPerSec(nowMs) } ?: 0f
+                if (rate > SmoothPowerLimiter.MAX_SWITCHES_PER_SEC * 2f) {
+                    smoothDisabledUntilMs = nowMs + SmoothPowerLimiter.BACKOFF_MS
+                }
+                // Too many writes: make phases longer; relax again when calm.
+                val floorPhase = SmoothPowerLimiter.MIN_PHASE_MS
+                for (sc in smoothSched.values) {
+                    sc.minPhaseMs = when {
+                        rate > SmoothPowerLimiter.MAX_SWITCHES_PER_SEC -> (sc.minPhaseMs * 2).coerceAtMost(SmoothPowerLimiter.MAX_PHASE_MS)
+                        rate < SmoothPowerLimiter.MAX_SWITCHES_PER_SEC / 2f -> (sc.minPhaseMs - 10L).coerceAtLeast(floorPhase)
+                        else -> sc.minPhaseMs.coerceAtLeast(floorPhase)
+                    }
+                }
+                reason = SmoothPowerLimiter.gate(
+                    pollMs = cfg.pollIntervalMs,
+                    avgTickGapMs = smoothTickGapMs,
+                    switchesPerSec = rate,
+                    nowMs = nowMs,
+                    disabledUntilMs = smoothDisabledUntilMs
+                )
+            }
+            val nowActive = wanted && reason == null
+            if (nowActive) {
+                val settled = nowMs - lastPowerStepMs >= 1000L
+                // Watt-based trim only follows the power limit; thermal-only runs get no trim.
+                smoothTrimValue = smoothTrim.update(nowMs, avgWatts, cfg.powerThrottle.limitWatts, powerThrottleActive, settled)
+            } else {
+                resetSmoothPowerLimit()
+                smoothActive = false
+            }
+            if (wanted) {
+                // Same cause = one line (the numbers in the text change every tick); repeat at most every 10 s.
+                val key = reason?.filterNot { it.isDigit() }
+                if (key != smoothGateReason) {
+                    val wasPaused = smoothGateReason != null
+                    smoothGateReason = key
+                    if (reason != null) {
+                        smoothLastGateLogMs = nowMs
+                        log(LogLevel.WARN, "SmoothLimit", "Smooth power limit paused: $reason (poll ${cfg.pollIntervalMs}ms). Using the normal cap.")
+                    } else if (wasPaused) {
+                        log(LogLevel.INFO, "SmoothLimit", "Smooth power limit resumed (${smoothTickGapMs.roundToInt()}ms per tick).")
+                    }
+                } else if (reason != null && nowMs - smoothLastGateLogMs >= 10_000L) {
+                    smoothLastGateLogMs = nowMs
+                    log(LogLevel.WARN, "SmoothLimit", "Still paused: $reason (poll ${cfg.pollIntervalMs}ms).")
+                }
+            } else {
+                smoothGateReason = null
+            }
+            if (nowActive && !smoothActive) {
+                log(LogLevel.INFO, "SmoothLimit", "Smooth power limit active (poll ${cfg.pollIntervalMs}ms).")
+            }
+            if (nowActive) smoothActive = true
+            if (nowActive && fastJob?.isActive != true) {
+                fastJob = engineScope.launch { fastSwitchLoop() }
+            }
+            if (nowActive && nowMs - smoothLastLogMs >= 5_000L && smoothPlanText.isNotEmpty()) {
+                smoothLastLogMs = nowMs
+                val rate = smoothSched.values.maxOfOrNull { it.switchesPerSec(nowMs) } ?: 0f
+                val plans = smoothPlanText.entries.sortedBy { it.key }.joinToString("; ") { "${it.key} ${it.value}" }
+                log(
+                    LogLevel.INFO,
+                    "SmoothLimit",
+                    "$plans | ${"%.2f".format(Locale.US, avgWatts)}W of ${"%.1f".format(Locale.US, cfg.powerThrottle.limitWatts)}W | " +
+                        "tick ${smoothTickGapMs.roundToInt()}ms | ${"%.1f".format(Locale.US, rate)} switches/s | trim ${"%+.2f".format(Locale.US, smoothTrimValue)}"
+                )
+            }
+        }
 
         val prevTelemetry = _telemetry.value
         val prevGpu = prevTelemetry.gpu
@@ -1191,6 +1631,7 @@ class GovernorEngine(context: Context) {
                 1.0f
             }
             val clusterPowerCap = (100f - cpuBaseCut * factor).coerceIn(cfg.safetyFloorPct, 100f)
+            smoothClusterPowerOnlyCap[p.policyId] = clusterPowerCap
             clusterCapPct[p.policyId] = GovernorMath.combineCaps(currentTempCpuCapPct, clusterPowerCap, cfg.safetyFloorPct)
         }
 
@@ -1316,7 +1757,7 @@ class GovernorEngine(context: Context) {
                 }
             }
 
-            val (stdTargetFreq, cappedMax) = GovernorMath.selectFrequency(
+            var (stdTargetFreq, cappedMax) = GovernorMath.selectFrequency(
                 availableFreqsKhz = p.availableFreqsKhz,
                 allowedMinKhz = smartMin,
                 allowedMaxKhz = allowedMax,
@@ -1324,6 +1765,34 @@ class GovernorEngine(context: Context) {
                 loadPct = smoothed,
                 forceMaxDuringBurst = burstActive
             )
+            var smoothStep: SmoothStep? = null
+            if (smoothActive && !burstActive && smartCapPct < 99.5f && smartCapPct == baseCapPct) {
+                val cPowerTighter = (smoothClusterPowerOnlyCap[p.policyId] ?: 100f) <= currentTempCpuCapPct + 0.01f
+                val ladder = p.availableFreqsKhz.sorted().filter { it in smartMin..allowedMax }
+                smoothStep = smoothCapStep(
+                    compId = "cpu_${p.policyId}",
+                    stepsKhz = ladder,
+                    capPct = smartCapPct,
+                    utilPct = rawLoad,
+                    curKhz = batch["${p.path}/scaling_cur_freq"]?.trim()?.toLongOrNull() ?: 0L,
+                    scenarioKey = scenarioKey,
+                    minConfidencePct = cfg.minConfidencePct.toFloat(),
+                    trim = if (cPowerTighter) smoothTrimValue else 0f
+                )
+                val ss = smoothStep
+                if (ss != null && ss.lowKhz != cappedMax) {
+                    val re = GovernorMath.selectFrequency(
+                        availableFreqsKhz = p.availableFreqsKhz,
+                        allowedMinKhz = smartMin,
+                        allowedMaxKhz = ss.lowKhz,
+                        capPct = 100f,
+                        loadPct = smoothed,
+                        forceMaxDuringBurst = false
+                    )
+                    stdTargetFreq = re.first
+                    cappedMax = re.second
+                }
+            }
             val preActualFreq = batch["${p.path}/scaling_cur_freq"]?.toLongOrNull() ?: stdTargetFreq
             val targetFreq = if (cfg.efficiencyLearningEnabled) {
                 powerModel.selectEfficientCpuFreqKhz(
@@ -1482,7 +1951,35 @@ class GovernorEngine(context: Context) {
                     pinState.perfStickFailCount = 0
                 }
             }
-            if (targetFreq > 0L && (targetFreq != prevWritten || reassertDue || justSwitchedToPerf)) {
+            // v3.8.0: hand the component to the fast switcher while it alternates two steps.
+            val fastId = "cpu_${p.policyId}"
+            var fastOwned = false
+            val ssNow = smoothStep
+            if (ssNow != null && ssNow.highKhz > ssNow.lowKhz && fastJob?.isActive == true) {
+                val desiredHigh = GovernorMath.selectFrequency(
+                    availableFreqsKhz = p.availableFreqsKhz,
+                    allowedMinKhz = smartMin,
+                    allowedMaxKhz = ssNow.highKhz,
+                    capPct = 100f,
+                    loadPct = smoothed,
+                    forceMaxDuringBurst = false
+                ).first
+                if (desiredHigh > ssNow.lowKhz) {
+                    fastPlans[fastId] = FastPlan(
+                        isGpu = false, path = p.path, lowKhz = ssNow.lowKhz, highKhz = ssNow.highKhz,
+                        duty = ssNow.duty, desiredKhz = desiredHigh, maxOnly = writeMaxOnly,
+                        gpuOppByFreq = emptyMap(), stampMs = nowMs
+                    )
+                    fastOwned = true
+                }
+            }
+            if (!fastOwned) fastPlans.remove(fastId)
+            if (fastOwned) {
+                fastOwnedPrev.add(fastId)
+            } else if (fastOwnedPrev.remove(fastId)) {
+                lastWrittenCpuFreq.remove(p.policyId) // the fast switcher moved it; make the loop write again
+            }
+            if (!fastOwned && targetFreq > 0L && (targetFreq != prevWritten || reassertDue || justSwitchedToPerf)) {
                 if (reassertDue) {
                     lastReassertMs[p.policyId] = nowMs
                     // The kernel/system overriding the limits now and then is normal and is fixed on the spot, so it is
@@ -1582,7 +2079,7 @@ class GovernorEngine(context: Context) {
                     if (ff > gAllowedMin) gSmartMin = ff.coerceIn(gAllowedMin, gAllowedMax)
                 }
             }
-            val selection = GovernorMath.selectGpuOppPosition(
+            var selection = GovernorMath.selectGpuOppPosition(
                 sortedOpps = gpuSpec.oppTable,
                 allowedMinKhz = gSmartMin,
                 allowedMaxKhz = gAllowedMax,
@@ -1590,6 +2087,62 @@ class GovernorEngine(context: Context) {
                 loadPct = smoothedGpuLoad,
                 forceMaxDuringBurst = burstActive
             )
+            var gSmoothStep: SmoothStep? = null
+            if (selection != null && smoothActive && !burstActive && gSmartCap < 99.5f && gSmartCap == effectiveGpuCapPct) {
+                val gPowerTighter = gpuPowerCap <= currentTempGpuCapPct + 0.01f
+                val gLadder = gpuSpec.oppTable.map { it.freqKhz }.distinct().sorted().filter { it in gSmartMin..gAllowedMax }
+                gSmoothStep = smoothCapStep(
+                    compId = "gpu",
+                    stepsKhz = gLadder,
+                    capPct = gSmartCap,
+                    utilPct = rawGpuLoad,
+                    curKhz = statusParsed.freqKhz ?: selection.targetOpp.freqKhz,
+                    scenarioKey = scenarioKey,
+                    minConfidencePct = cfg.minConfidencePct.toFloat(),
+                    trim = if (gPowerTighter) smoothTrimValue else 0f
+                )
+                val gss = gSmoothStep
+                if (gss != null && gss.lowKhz != selection.cappedMaxKhz) {
+                    selection = GovernorMath.selectGpuOppPosition(
+                        sortedOpps = gpuSpec.oppTable,
+                        allowedMinKhz = gSmartMin,
+                        allowedMaxKhz = gss.lowKhz,
+                        capPct = 100f,
+                        loadPct = smoothedGpuLoad,
+                        forceMaxDuringBurst = false
+                    ) ?: selection
+                }
+            }
+            // v3.8.0: hand the GPU to the fast switcher while it alternates two steps.
+            var gpuFastOwned = false
+            val gssNow = gSmoothStep
+            val gFixPath = gpuSpec.gpufreqFixOppPath
+            if (gssNow != null && gssNow.highKhz > gssNow.lowKhz && gFixPath != null && fastJob?.isActive == true) {
+                val desiredHigh = GovernorMath.selectGpuOppPosition(
+                    sortedOpps = gpuSpec.oppTable,
+                    allowedMinKhz = gSmartMin,
+                    allowedMaxKhz = gssNow.highKhz,
+                    capPct = 100f,
+                    loadPct = smoothedGpuLoad,
+                    forceMaxDuringBurst = false
+                )?.targetOpp?.freqKhz ?: 0L
+                if (desiredHigh > gssNow.lowKhz) {
+                    val oppMap = HashMap<Long, Int>()
+                    for (o in gpuSpec.oppTable) oppMap.putIfAbsent(o.freqKhz, o.oppIndex)
+                    fastPlans["gpu"] = FastPlan(
+                        isGpu = true, path = gFixPath, lowKhz = gssNow.lowKhz, highKhz = gssNow.highKhz,
+                        duty = gssNow.duty, desiredKhz = desiredHigh, maxOnly = false,
+                        gpuOppByFreq = oppMap, stampMs = nowMs
+                    )
+                    gpuFastOwned = true
+                }
+            }
+            if (!gpuFastOwned) fastPlans.remove("gpu")
+            if (gpuFastOwned) {
+                fastOwnedPrev.add("gpu")
+            } else if (fastOwnedPrev.remove("gpu")) {
+                lastWrittenGpuOppIndex = null
+            }
 
             if (selection != null) {
                 val chosenPos = if (cfg.efficiencyLearningEnabled) {
@@ -1621,7 +2174,7 @@ class GovernorEngine(context: Context) {
                 val targetOppIdx = chosenOpp.oppIndex
                 val targetFreqKhz = chosenOpp.freqKhz
 
-                if (targetOppIdx != lastWrittenGpuOppIndex) {
+                if (!gpuFastOwned && targetOppIdx != lastWrittenGpuOppIndex) {
                     val fixPath = gpuSpec.gpufreqFixOppPath
                     if (fixPath != null) {
                         val writeAttempted = shouldAttemptWrite(fixPath, nowMs)
@@ -1686,6 +2239,7 @@ class GovernorEngine(context: Context) {
             batteryState = stableBatteryState
         )
 
+        batteryEstimator.setCalibrationAnchor(batteryTruth.calCapacityMah, batteryTruth.calCapacitySlow)
         val estVoltMv = if (rawReading.voltageMv > 0f) rawReading.voltageMv else cachedBattVoltMv
         batteryEstimator.recordTick(
             nowMs = nowMs,
@@ -1696,7 +2250,8 @@ class GovernorEngine(context: Context) {
             chargeWatts = if (stableBatteryState == BatteryState.CHARGING) rawReading.chargeWatts else 0f,
             batteryPct = cachedBatteryPct,
             pollIntervalMs = cfg.pollIntervalMs,
-            estimationEnabled = cfg.batteryEstimationEnabled
+            estimationEnabled = cfg.batteryEstimationEnabled,
+            internalResistanceMohm = if (batteryTruth.resistanceSamples >= 3) batteryTruth.internalResistanceMohm else 0f
         )
 
         // 7b. Keep RAM at max & read DDR frequency if detailed overlay active
@@ -1735,6 +2290,19 @@ class GovernorEngine(context: Context) {
             (batch[ddrSpec.curFreqPath]?.trim()?.toLongOrNull() ?: 0L) / 1_000_000L
         } else {
             0L
+        }
+
+        // v3.8.1: live watts for the overlay. The averaged value above (10 samples by default) lags by about a
+        // second and a half, which hides spikes; this one follows the raw samples closely.
+        val liveWatts: Float = if (stableBatteryState == BatteryState.DISCHARGING) {
+            if (rawState == BatteryState.DISCHARGING && !readMissing) {
+                val raw = rawReading.dischargeWatts
+                liveWattsEma = if (liveWattsEma <= 0f) raw else liveWattsEma + (raw - liveWattsEma) * LIVE_WATTS_ALPHA
+            }
+            if (liveWattsEma > 0f) liveWattsEma else avgWatts
+        } else {
+            liveWattsEma = 0f
+            0f
         }
 
         val signedWattsOut = when (stableBatteryState) {
@@ -1776,6 +2344,11 @@ class GovernorEngine(context: Context) {
                 temperatureC = tempC,
                 tempSensorLabel = tempSensor?.label ?: "Unassigned",
                 watts = avgWatts,
+                // v3.8.2: keep the overlay reader's fresher value when it is running; otherwise use the tick's own.
+                liveWatts = if (liveSamplerPublishedAtMs > 0L &&
+                    System.currentTimeMillis() - liveSamplerPublishedAtMs < LIVE_SAMPLER_FRESH_MS &&
+                    prev.liveWatts > 0f
+                ) prev.liveWatts else liveWatts,
                 chargeWatts = smoothedChargeWatts,
                 signedWatts = signedWattsOut,
                 batteryState = stableBatteryState,
@@ -1813,6 +2386,18 @@ class GovernorEngine(context: Context) {
         }
         metrics.onTelemetry(_telemetry.value, nowMs)
 
+        // 8b. v3.6.7 Game Thread Controller (runs >= 2s apart, only when enabled, Game mode, configured game foreground)
+        gameThreadRuntime.onControlTick(
+            nowMs = nowMs,
+            config = cfg.gameThreadController,
+            activeMode = activeMode,
+            fgPkg = fgPkg,
+            gamePackages = cfg.gamePackages,
+            rootAvailable = rootShell.isRootAvailable,
+            availableCpuCount = GameThreadLogic.availableCpuCount(hw),
+            isSleepSaving = isSleepSaving
+        )
+
         // 9. v2.7.4 adaptive polling: decide how long the loop may sleep before the next tick.
         val pollBase = cfg.pollIntervalMs.coerceIn(50L, 1000L)
         val pollDecision = PollPolicy.decide(
@@ -1830,7 +2415,9 @@ class GovernorEngine(context: Context) {
                 maxLoadSpikePct = maxLoadSpike,
                 lastTouchMs = interaction.lastTouchMs,
                 screenInteractive = isScreenInteractive,
-                foregroundChanged = fgPkg.isNotBlank() && prevFg.isNotBlank() && fgPkg != prevFg
+                foregroundChanged = fgPkg.isNotBlank() && prevFg.isNotBlank() && fgPkg != prevFg,
+                // v3.8.1: a visible overlay wants live watts, so the loop is never stretched while it is on.
+                overlayLive = cfg.overlayEnabled
             )
         )
         pollState = pollDecision.state
@@ -1848,6 +2435,85 @@ class GovernorEngine(context: Context) {
                 }
             )
         }
+    }
+
+    /**
+     * v3.8.2: reads the battery current and voltage on its own timer while the overlay is showing, so the
+     * overlay's watts follow the phone even when a game makes the control tick slow. It reads the nodes
+     * directly (no shell); if the app may not read them, it uses its own small root shell, never the main one.
+     * Only the overlay's [TelemetryState.liveWatts] is written here; the limiter, history, logs and
+     * notification keep using the control loop's averaged value.
+     */
+    private fun startLiveWattsSampler() {
+        if (liveSamplerJob?.isActive == true) return
+        liveSamplerJob = engineScope.launch {
+            var directFails = 0
+            var liveShell: RootShell? = null
+            var ema = 0f
+            try {
+                while (isActive) {
+                    val cfg = _config.value
+                    val bp = _hardwareSpec.value.batteryPower
+                    val curPath = bp.currentPath
+                    val voltPath = bp.voltagePath
+                    val wanted = cfg.overlayEnabled && isScreenInteractive && !isSleepSaving &&
+                        stableBatteryState == BatteryState.DISCHARGING && curPath != null && voltPath != null
+                    if (!wanted) {
+                        ema = 0f
+                        liveSamplerPublishedAtMs = 0L
+                        delay(400L)
+                        continue
+                    }
+                    var cur: Long? = null
+                    var volt: Long? = null
+                    if (directFails < 3) {
+                        withContext(Dispatchers.IO) {
+                            cur = readSysfsDirect(curPath!!)
+                            volt = readSysfsDirect(voltPath!!)
+                        }
+                        if (cur == null || volt == null) directFails++ else directFails = 0
+                    }
+                    if ((cur == null || volt == null) && directFails >= 3 && rootShell.isRootAvailable) {
+                        val sh = liveShell ?: RootShell().also { liveShell = it }
+                        val m = sh.readFilesBatch(listOf(curPath!!, voltPath!!))
+                        cur = m[curPath]?.trim()?.toLongOrNull()
+                        volt = m[voltPath]?.trim()?.toLongOrNull()
+                    }
+                    val c = cur
+                    val v = volt
+                    if (c != null && v != null) {
+                        val r = SysfsParsers.computePowerReading(
+                            rawCurrent = c,
+                            rawVoltage = v,
+                            unitScale = cfg.powerThrottle.unitScale,
+                            polarity = cfg.powerThrottle.polarity,
+                            bmStatus = cachedBmStatus,
+                            bmPlugged = cachedBmPlugged,
+                            learnedDischargeSign = learnedDischargeSign
+                        )
+                        if (r.state == BatteryState.DISCHARGING && r.dischargeWatts > 0f) {
+                            ema = if (ema <= 0f) r.dischargeWatts else ema + (r.dischargeWatts - ema) * LIVE_WATTS_ALPHA
+                            liveSamplerPublishedAtMs = System.currentTimeMillis()
+                            val out = ema
+                            _telemetry.update { it.copy(liveWatts = out) }
+                        }
+                    }
+                    delay(LIVE_SAMPLER_PERIOD_MS)
+                }
+            } finally {
+                liveSamplerPublishedAtMs = 0L
+                try {
+                    withContext(NonCancellable) { liveShell?.close() }
+                } catch (_: Throwable) {
+                }
+            }
+        }
+    }
+
+    private fun stopLiveWattsSampler() {
+        liveSamplerJob?.cancel()
+        liveSamplerJob = null
+        liveSamplerPublishedAtMs = 0L
     }
 
     private fun startFpsSampler() {
@@ -1916,7 +2582,7 @@ class GovernorEngine(context: Context) {
                 }
             }
             val path = kernelPath ?: return null
-            val r = rootShell.exec("cat $path 2>/dev/null")
+            val r = bgShell.exec("cat $path 2>/dev/null")
             if (r.stdout.isBlank()) return null
             val trimmedOut = r.stdout.trim()
             val parts = trimmedOut.split(WHITESPACE_REGEX)
@@ -1927,7 +2593,7 @@ class GovernorEngine(context: Context) {
         // Method B (VTools-style): SurfaceFlinger global frame counter (binder transaction 1013)
         suspend fun sampleServiceCall(): Float? {
             if (sfUnsupported) return null
-            val r = rootShell.exec("service call SurfaceFlinger 1013 2>/dev/null")
+            val r = bgShell.exec("service call SurfaceFlinger 1013 2>/dev/null")
             val text = r.stdout
             val idx = text.indexOf("(")
             if (!text.contains("Parcel") || idx < 0 || text.length < idx + 9) {
@@ -1954,10 +2620,10 @@ class GovernorEngine(context: Context) {
         // so the counters of all entries with the same layer name are added together.
         suspend fun sampleTimestats(pkg: String): Float? {
             if (!timestatsEnabled) {
-                rootShell.exec("dumpsys SurfaceFlinger --timestats -enable")
+                bgShell.exec("dumpsys SurfaceFlinger --timestats -enable")
                 timestatsEnabled = true
             }
-            val res = rootShell.exec("dumpsys SurfaceFlinger --timestats -dump | grep -E '^layerName|^totalFrames'")
+            val res = bgShell.exec("dumpsys SurfaceFlinger --timestats -dump | grep -E '^layerName|^totalFrames'")
             if (res.stdout.isBlank()) return null
             val currentLayers = mutableMapOf<String, Long>()
             var currentLayer: String? = null
@@ -2211,10 +2877,15 @@ class GovernorEngine(context: Context) {
     }
 
     fun updateConfig(transform: (GovernorConfig) -> GovernorConfig) {
-        val prev = _config.value
-        val next = transform(prev)
-        _config.value = next
-        storage.saveConfigDebounced(next)
+        val prev: GovernorConfig
+        val next: GovernorConfig
+        synchronized(configUpdateLock) {
+            prev = _config.value
+            next = transform(prev)
+            if (prev == next) return
+            _config.value = next
+            storage.saveConfigDebounced(next)
+        }
         _telemetry.update { it.copy(modeOverride = next.modeOverride) }
 
         if (prev.batteryEstimationEnabled != next.batteryEstimationEnabled ||
@@ -2232,6 +2903,10 @@ class GovernorEngine(context: Context) {
                     if (next.efficiencyLearningEnabled) "Efficiency governor ENABLED (mode=${next.efficiencyMode.name})" else "Efficiency governor DISABLED (standard scaling)"
                 )
             }
+        }
+
+        if (prev.gameThreadController.enabled && !next.gameThreadController.enabled) {
+            gameThreadRuntime.reset()
         }
 
         if (controlJob?.isActive == true) {
@@ -2398,8 +3073,10 @@ class GovernorEngine(context: Context) {
         gedChangedByPath.clear()
         lockedGedLoadPath = null
         wattWindow.clear()
+        liveWattsEma = 0f
         overPowerSinceMs = null
         currentPowerCapPct = 100f
+        resetSmoothPowerLimit()
         gpuShareSmoothed = 0.5f
         smoothedClusterShare.clear()
         lastPowerSplitLogMs = 0L
@@ -2409,6 +3086,11 @@ class GovernorEngine(context: Context) {
         lastRamReassertMs = 0L
         latchedPeakTempC = 0f
         afterburnDecision = AfterburnDecision(0f, AfterburnState.OFF)
+        boostSelectedUntilMs = 0L
+        smoothedSagMv = 0f
+        lastSagSampleMs = 0L
+        lastPowerStepMs = 0L
+        lastPowerOverMs = 0L
         batteryTruthModel.reset()
         currentTempCpuCapPct = 100f
         currentTempGpuCapPct = 100f
@@ -2421,6 +3103,7 @@ class GovernorEngine(context: Context) {
         smoothedChargeWatts = 0f
         lastSlowBattSysfsReadMs = 0L
         lastBatteryCheckMs = 0L
+        gameThreadRuntime.reset()
     }
 
     private fun installCrashRestoreHook() {

@@ -76,6 +76,8 @@ A small always-visible strip showing CPU, GPU, temperature and power. It is off 
 
 - Enable overlay: turns it on.
 - The compact strip shows CPU, GPU, FPS, temperature and power. Tap it to cycle to the medium and detailed styles.
+- Quick Settings tile: add the Overlay tile from the tile editor in the Quick Settings panel. Each tap goes Off, Compact, Expanded, Detailed, Off. It works even with Click-through on.
+- The power reading on the overlay is a fast live value (it follows the newest samples). The averaged value is still what the power limit uses.
 - Click-through: touches pass through the overlay. Use the Unlock overlay button in the notification to move it again.
 - Show only in Game mode: hides it in Normal mode.
 - Opacity, Compact size and Expanded size: change how it looks. Portrait and landscape each keep their own overlay sizes (as well as positions), and the sliders automatically edit the orientation you are currently holding. The overlay always stays on screen.
@@ -87,6 +89,7 @@ A small always-visible strip showing CPU, GPU, temperature and power. It is off 
 Some phones read the gyroscope slowly until an app asks for faster data. This option keeps the chosen sensors (gyroscope by default) running at a fast, fixed rate for every app, so aiming and tilt controls respond quicker. It needs no root.
 
 - Pin sensor refresh rate: turns it on. It runs while the governor service is running.
+- Only pin while in a game: holds the sensors at the chosen rate only while a game (Game mode) is running, and releases them otherwise to save idle power.
 - Rate: Max asks for the sensor's fastest rate. Lower rates use less battery.
 - Sensors: pick which motion sensors to pin. At least one stays selected.
 - Pause while the screen is off: releases the sensors when the screen turns off. On by default.
@@ -147,7 +150,7 @@ If the governor does not stay running for a minute after an automatic start at b
 
 - **Protect from being killed (root).** Tuning > Control. On by default. Keeps CoreGovernor and its root helper from being killed by the system and restarts the service if it dies while the governor is meant to be running. The status line shows what is applied (for example oom_score_adj, whitelisted, standby, phantom killer, watchdog). Switching it off restores the system settings it changed. If your phone still kills the app, also allow background activity in the app's system settings.
 - **Afterburn toast.** A short pill at the top of the screen when Afterburn starts boosting a selected app. It never takes touches. Needs the overlay permission. Switch: Tuning > Afterburn > Afterburn toast.
-- **Language.** System tab > Appearance > Language. Changes apply at once.
+- **Language.** System tab > Appearance > Language (includes Persian, right-to-left). Changes apply at once.
 - **Updates.** Turn on "Include pre-releases" if you want test versions. If GitHub says you are rate limited, the message tells you when to try again.
 - **Dimensity 8300 preset.** In Tuning > Presets, only on matching phones. It changes the CPU/GPU maximums and the temperature throttle and leaves everything else as it is.
 

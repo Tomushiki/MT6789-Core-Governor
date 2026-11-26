@@ -187,4 +187,18 @@ class PollPolicyTest {
         assertFalse(d.stretched)
         assertEquals(150L, d.intervalMs)
     }
+
+    @Test
+    fun visibleOverlayKeepsBaseIntervalEvenWhenCalm() {
+        var state = PollPolicy.State()
+        var t = 10_000L
+        var d = PollPolicy.decide(state, inputs(t).copy(overlayLive = true))
+        while (t < 10_000L + PollPolicy.CALM_HOLD_MS + 600L) {
+            state = d.state
+            t += 150L
+            d = PollPolicy.decide(state, inputs(t).copy(overlayLive = true))
+        }
+        assertFalse(d.stretched)
+        assertEquals(150L, d.intervalMs)
+    }
 }

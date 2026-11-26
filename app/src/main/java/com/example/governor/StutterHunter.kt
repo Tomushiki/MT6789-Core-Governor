@@ -21,6 +21,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.telecom.TelecomManager
+import com.example.model.AfterburnState
 import com.example.model.LogLevel
 import com.example.model.StutterHunterConfig
 import com.example.model.StutterHunterMode
@@ -70,7 +71,12 @@ enum class HunterPhase {
     STOPPED
 }
 
+/** Why the governor itself (not a background process) is holding performance down. */
+enum class GovernorThrottleCause { NONE, THERMAL, BATTERY }
+
 enum class HunterActionResult {
+    GOVERNOR_THERMAL,
+    GOVERNOR_BATTERY,
     REPORTED,
     STOPPED_CHECKING,
     RECOVERED,
@@ -121,8 +127,59 @@ object StutterLogic {
 
     data class CulpritCandidate(
         val packageName: String,
-        val avgCpuPct: Float
+        val avgCpuPct: Float,
+        /** Set (> 0) when the app was picked for the RAM it holds under memory pressure, not for CPU. */
+        val ramMb: Float = 0f
     )
+
+    /** Memory state read with the process list. psiSomeAvg10 < 0 means the kernel has no pressure info. */
+    data class MemInfo(val totalMb: Float, val availableMb: Float, val psiSomeAvg10: Float = -1f) {
+        val availablePct: Float get() = if (totalMb > 0f) availableMb / totalMb * 100f else 100f
+        /** Real pressure: little RAM left, or the kernel reports tasks stalling on memory. */
+        val underPressure: Boolean get() = availablePct < LOW_AVAILABLE_PCT || psiSomeAvg10 >= PSI_STALL_PCT
+    }
+
+    const val LOW_AVAILABLE_PCT = 12f
+    const val PSI_STALL_PCT = 8f
+    const val MEM_HOG_MIN_MB = 350f
+    const val MEM_HOG_MIN_SHARE = 0.06f
+
+    /**
+     * Second-chance pick for when nothing is burning CPU: under real memory pressure, the biggest background
+     * app (same safety filters as the CPU pick) that holds a large share of RAM in every sample.
+     * Without pressure, or without a clearly big holder, nothing is picked.
+     */
+    fun pickMemoryHog(
+        deltaSnapshots: List<List<ProcRow>>,
+        mem: MemInfo?,
+        foregroundGame: String,
+        ownPackage: String,
+        protectedPackages: Set<String>,
+        systemPackages: Set<String>,
+        whitelist: Set<String>,
+        excludedInSession: Set<String> = emptySet()
+    ): CulpritCandidate? {
+        if (mem == null || !mem.underPressure || deltaSnapshots.isEmpty()) return null
+        val minMb = maxOf(MEM_HOG_MIN_MB, mem.totalMb * MEM_HOG_MIN_SHARE)
+        val lowestMb = HashMap<String, Float>()
+        val cpu = HashMap<String, Float>()
+        val seenCount = HashMap<String, Int>()
+        for (snapshot in deltaSnapshots) {
+            for (row in snapshot) {
+                val pkg = row.key
+                if (pkg.isBlank() || !row.isApp || !ProcessMonitor.PACKAGE_RE.matches(pkg)) continue
+                if (pkg == foregroundGame || row.foreground) continue
+                if (pkg == ownPackage || pkg in protectedPackages || row.protectedReason != null) continue
+                if (pkg in systemPackages || pkg in whitelist || pkg in excludedInSession) continue
+                seenCount[pkg] = (seenCount[pkg] ?: 0) + 1
+                lowestMb[pkg] = minOf(lowestMb[pkg] ?: Float.MAX_VALUE, row.ramMb)
+                cpu[pkg] = (cpu[pkg] ?: 0f) + row.cpuPct.coerceAtLeast(0f)
+            }
+        }
+        // An app missing from any sample is not a steady holder: only count apps present in every sample.
+        val best = lowestMb.filter { it.value >= minMb && seenCount[it.key] == deltaSnapshots.size }.maxByOrNull { it.value } ?: return null
+        return CulpritCandidate(best.key, (cpu[best.key] ?: 0f) / deltaSnapshots.size, ramMb = best.value)
+    }
 
     fun percentile75(values: Collection<Float>): Float {
         if (values.isEmpty()) return 0f
@@ -204,10 +261,30 @@ object StutterLogic {
         }
     }
 
+    /**
+     * Governor-caused throttling only. Requires an actual active cap or Afterburn block;
+     * a low battery percentage alone never counts.
+     */
+    fun classifyThrottle(
+        tempThrottleActive: Boolean,
+        powerThrottleActive: Boolean,
+        afterburnState: AfterburnState = AfterburnState.OFF
+    ): GovernorThrottleCause = when {
+        tempThrottleActive || afterburnState == AfterburnState.BLOCKED_THERMAL -> GovernorThrottleCause.THERMAL
+        powerThrottleActive || afterburnState == AfterburnState.BLOCKED_BATTERY -> GovernorThrottleCause.BATTERY
+        else -> GovernorThrottleCause.NONE
+    }
+
     class StutterDetector {
         private var consecutiveDips = 0
         private val window = ArrayDeque<Boolean>()
         private var lastThrottleMs: Long? = null
+        private var lastThermalMs: Long? = null
+        private var lastBatteryMs: Long? = null
+
+        /** Set when the last triggered stutter was attributed to governor throttling. */
+        var lastSuppressedCause: GovernorThrottleCause = GovernorThrottleCause.NONE
+            private set
 
         fun recordTick(
             nowMs: Long,
@@ -217,11 +294,18 @@ object StutterLogic {
             dipPct: Int,
             tempThrottleActive: Boolean,
             powerThrottleActive: Boolean,
-            gpuLoadPct: Float
+            gpuLoadPct: Float,
+            afterburnState: AfterburnState = AfterburnState.OFF
         ): Boolean {
-            if (tempThrottleActive || powerThrottleActive) {
-                lastThrottleMs = nowMs
+            when (classifyThrottle(tempThrottleActive, powerThrottleActive, afterburnState)) {
+                GovernorThrottleCause.THERMAL -> { lastThrottleMs = nowMs; lastThermalMs = nowMs }
+                GovernorThrottleCause.BATTERY -> { lastThrottleMs = nowMs; lastBatteryMs = nowMs }
+                GovernorThrottleCause.NONE -> Unit
             }
+            // Keep the old behavior for the plain flags even if both were set.
+            if (powerThrottleActive) { lastThrottleMs = nowMs; lastBatteryMs = nowMs }
+            if (tempThrottleActive) { lastThrottleMs = nowMs; lastThermalMs = nowMs }
+            lastSuppressedCause = GovernorThrottleCause.NONE
             if (!baselineReady || baselineFps <= 0f || fps <= 0f) return false
 
             val threshold = baselineFps * (dipPct.coerceIn(60, 90) / 100f)
@@ -236,7 +320,22 @@ object StutterLogic {
 
             consecutiveDips = 0
             window.clear()
+            lastSuppressedCause = governorCause(nowMs)
             return !isNonProcessCause(nowMs, gpuLoadPct)
+        }
+
+        /** Most recent governor throttle cause inside the cooldown window (thermal wins ties). */
+        fun governorCause(nowMs: Long): GovernorThrottleCause {
+            val t = lastThermalMs
+            val b = lastBatteryMs
+            val thermalRecent = t != null && nowMs - t <= THROTTLE_COOLDOWN_MS
+            val batteryRecent = b != null && nowMs - b <= THROTTLE_COOLDOWN_MS
+            return when {
+                thermalRecent && batteryRecent -> if (t!! >= b!!) GovernorThrottleCause.THERMAL else GovernorThrottleCause.BATTERY
+                thermalRecent -> GovernorThrottleCause.THERMAL
+                batteryRecent -> GovernorThrottleCause.BATTERY
+                else -> GovernorThrottleCause.NONE
+            }
         }
 
         fun isNonProcessCause(nowMs: Long, gpuLoadPct: Float): Boolean {
@@ -249,6 +348,9 @@ object StutterLogic {
             consecutiveDips = 0
             window.clear()
             lastThrottleMs = null
+            lastThermalMs = null
+            lastBatteryMs = null
+            lastSuppressedCause = GovernorThrottleCause.NONE
         }
     }
 
@@ -297,6 +399,7 @@ object StutterLogic {
         private var totalStops = 0
         private val ignoredPackages = HashSet<String>()
 
+        @Synchronized
         fun canStop(pkg: String, nowMs: Long): Boolean {
             if (totalStops >= MAX_STOPS_PER_SESSION) return false
             if ((stopCounts[pkg] ?: 0) >= MAX_STOPS_PER_PACKAGE) return false
@@ -306,16 +409,19 @@ object StutterLogic {
             return true
         }
 
+        @Synchronized
         fun recordStop(pkg: String, nowMs: Long) {
             lastStopMs = nowMs
             totalStops++
             stopCounts[pkg] = (stopCounts[pkg] ?: 0) + 1
         }
 
+        @Synchronized
         fun markDidNotHelp(pkg: String) {
             ignoredPackages.add(pkg)
         }
 
+        @Synchronized
         fun excludedForStop(): Set<String> {
             val out = HashSet<String>(ignoredPackages)
             for ((pkg, count) in stopCounts) {
@@ -324,6 +430,7 @@ object StutterLogic {
             return out
         }
 
+        @Synchronized
         fun reset() {
             lastStopMs = null
             stopCounts.clear()
@@ -345,11 +452,14 @@ class StutterHunterRunner(
 ) {
     private val baselineFile = File(context.filesDir, "stutter_baseline.json")
     private val ioLock = Any()
-    private val baselines = HashMap<String, StutterLogic.BaselineTracker>()
+    // v3.7.0: onStop() is called from the service (main thread) while run() works on a background thread.
+    private val stateLock = Any()
+    private val baselines = ConcurrentHashMap<String, StutterLogic.BaselineTracker>()
     private val systemAppCache = ConcurrentHashMap<String, Boolean>()
     private val detector = StutterLogic.StutterDetector()
     private val brakes = StutterLogic.SessionBrakes()
-    private val lastNotifyByPkgMs = HashMap<String, Long>()
+    private val lastNotifyByPkgMs = ConcurrentHashMap<String, Long>()
+    @Volatile private var lastMem: StutterLogic.MemInfo? = null
 
     private var activeGamePkg: String = ""
     private var gameEnteredAtMs: Long = 0L
@@ -389,36 +499,48 @@ class StutterHunterRunner(
                 }
 
                 val nowMs = System.currentTimeMillis()
-                if (fg != activeGamePkg) {
-                    endGameSessionIfNeeded()
-                    activeGamePkg = fg
-                    gameEnteredAtMs = nowMs
-                    lastBaselineSaveMs = nowMs
+                val shouldHunt: Boolean
+                val suppressedCause: GovernorThrottleCause
+                val tracker: StutterLogic.BaselineTracker
+                synchronized(stateLock) {
+                    if (fg != activeGamePkg) {
+                        endGameSessionIfNeeded()
+                        activeGamePkg = fg
+                        gameEnteredAtMs = nowMs
+                        lastBaselineSaveMs = nowMs
+                    }
+
+                    tracker = baselines.getOrPut(fg) { StutterLogic.BaselineTracker() }
+                    val elapsedInGameMs = nowMs - gameEnteredAtMs
+                    tracker.onSample(tel.fps, hunterCfg.dipPct, elapsedInGameMs)
+                    if (tracker.dirty) anyDirty = true
+
+                    if (anyDirty && (nowMs - lastBaselineSaveMs) >= SAVE_INTERVAL_MS) {
+                        saveBaselines()
+                        lastBaselineSaveMs = nowMs
+                    }
+
+                    val readyToAct = tracker.isReady && elapsedInGameMs >= StutterLogic.WARMUP_MS
+                    updateWatchingOrLearningStatus(fg, tracker)
+
+                    shouldHunt = detector.recordTick(
+                        nowMs = nowMs,
+                        fps = tel.fps,
+                        baselineFps = tracker.baselineFps,
+                        baselineReady = readyToAct,
+                        dipPct = hunterCfg.dipPct,
+                        tempThrottleActive = tel.tempThrottleActive,
+                        powerThrottleActive = tel.powerThrottleActive,
+                        gpuLoadPct = tel.gpu.loadPct,
+                        afterburnState = tel.afterburnState
+                    )
+                    // Read under the same lock: onStop() resets the detector from the main thread.
+                    suppressedCause = detector.lastSuppressedCause
                 }
 
-                val tracker = baselines.getOrPut(fg) { StutterLogic.BaselineTracker() }
-                val elapsedInGameMs = nowMs - gameEnteredAtMs
-                tracker.onSample(tel.fps, hunterCfg.dipPct, elapsedInGameMs)
-                if (tracker.dirty) anyDirty = true
-
-                if (anyDirty && (nowMs - lastBaselineSaveMs) >= SAVE_INTERVAL_MS) {
-                    saveBaselines()
-                    lastBaselineSaveMs = nowMs
+                if (!shouldHunt && suppressedCause != GovernorThrottleCause.NONE) {
+                    reportGovernorThrottle(fg, suppressedCause, tel.fps.roundToInt().coerceAtLeast(0), nowMs)
                 }
-
-                val readyToAct = tracker.isReady && elapsedInGameMs >= StutterLogic.WARMUP_MS
-                updateWatchingOrLearningStatus(fg, tracker)
-
-                val shouldHunt = detector.recordTick(
-                    nowMs = nowMs,
-                    fps = tel.fps,
-                    baselineFps = tracker.baselineFps,
-                    baselineReady = readyToAct,
-                    dipPct = hunterCfg.dipPct,
-                    tempThrottleActive = tel.tempThrottleActive,
-                    powerThrottleActive = tel.powerThrottleActive,
-                    gpuLoadPct = tel.gpu.loadPct
-                )
 
                 if (shouldHunt) {
                     investigateAndAct(
@@ -442,7 +564,7 @@ class StutterHunterRunner(
         updateUiPhase(HunterPhase.OFF)
     }
 
-    private fun endGameSessionIfNeeded() {
+    private fun endGameSessionIfNeeded(): Unit = synchronized(stateLock) {
         if (activeGamePkg.isNotEmpty()) {
             baselines[activeGamePkg]?.resetSession()
             activeGamePkg = ""
@@ -477,6 +599,27 @@ class StutterHunterRunner(
             remaining -= step
         }
         return scope.isActive && isStillActiveFor(gamePkg)
+    }
+
+    /** Stutter caused by the governor itself: report the reason, never investigate or stop a process. */
+    private fun reportGovernorThrottle(gamePkg: String, cause: GovernorThrottleCause, fps: Int, nowMs: Long) {
+        val thermal = cause == GovernorThrottleCause.THERMAL
+        engine.log(
+            LogLevel.INFO,
+            TAG,
+            "FPS dip during $gamePkg (~$fps FPS) caused by governor ${if (thermal) "thermal" else "battery/power"} throttling; no process blamed"
+        )
+        recordAction(
+            HunterActionEntry(
+                id = actionSeq.getAndIncrement(),
+                timestampMs = nowMs,
+                gamePackage = gamePkg,
+                culpritPackage = "",
+                cpuPct = 0f,
+                result = if (thermal) HunterActionResult.GOVERNOR_THERMAL else HunterActionResult.GOVERNOR_BATTERY,
+                fpsBefore = fps
+            )
+        )
     }
 
     private suspend fun investigateAndAct(
@@ -542,10 +685,20 @@ class StutterHunterRunner(
             whitelist = hunterCfg.whitelist,
             cpuThresholdPct = hunterCfg.cpuThresholdPct,
             excludedInSession = excluded
+        ) ?: StutterLogic.pickMemoryHog(
+            deltaSnapshots = groupedSnapshots,
+            mem = lastMem,
+            foregroundGame = gamePkg,
+            ownPackage = context.packageName,
+            protectedPackages = extraProtected,
+            systemPackages = systemPkgs,
+            whitelist = hunterCfg.whitelist,
+            excludedInSession = excluded
         ) ?: return
 
         val nowMs = System.currentTimeMillis()
         val avgCpuInt = culprit.avgCpuPct.roundToInt()
+        val usage = if (culprit.ramMb > 0f) "${culprit.ramMb.roundToInt()} MB RAM while memory is low" else "$avgCpuInt% CPU"
 
         if (hunterCfg.mode == StutterHunterMode.NOTIFY) {
             val lastNotified = lastNotifyByPkgMs[culprit.packageName]
@@ -556,7 +709,7 @@ class StutterHunterRunner(
             engine.log(
                 LogLevel.INFO,
                 TAG,
-                "FPS dip during $gamePkg (~$fpsBefore FPS, normal ${tracker.baselineFps.roundToInt()}): ${culprit.packageName} using $avgCpuInt% CPU"
+                "FPS dip during $gamePkg (~$fpsBefore FPS, normal ${tracker.baselineFps.roundToInt()}): ${culprit.packageName} using $usage"
             )
             recordAction(
                 HunterActionEntry(
@@ -608,7 +761,7 @@ class StutterHunterRunner(
         engine.log(
             LogLevel.INFO,
             TAG,
-            "Stopped ${culprit.packageName} ($avgCpuInt% CPU) during $gamePkg dip ($fpsBefore FPS)"
+            "Stopped ${culprit.packageName} ($usage) during $gamePkg dip ($fpsBefore FPS)"
         )
         recordAction(
             HunterActionEntry(
@@ -651,11 +804,12 @@ class StutterHunterRunner(
 
     private suspend fun sampleProcessesOnce(): Triple<Map<Int, Long>, Long, List<ProcSnap>>? {
         return try {
-            val res = engine.rootShell.exec(ProcessMonitor.COMMAND)
+            val res = engine.scanShell.exec(ProcessMonitor.COMMAND)
             if (!res.isSuccess || res.stdout.isBlank()) return null
             val now = System.currentTimeMillis()
             val procs = ProcessMonitor.parse(res.stdout)
             if (procs.isEmpty()) return null
+            lastMem = ProcessMonitor.parseMem(res.stdout)
             Triple(procs.associate { it.pid to it.ticks }, now, procs)
         } catch (_: Throwable) {
             null

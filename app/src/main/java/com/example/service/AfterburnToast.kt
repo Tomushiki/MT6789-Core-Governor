@@ -58,21 +58,53 @@ data class AfterburnTransitionEvent(
     val newState: AfterburnState,
     val strength: BoostStrength,
     val toastEnabled: Boolean,
-    val timestampMs: Long
+    val timestampMs: Long,
+    /** True only when [packageName] is a configured game AND is the foreground app right now. */
+    val inSelectedGame: Boolean
 )
 
 /**
  * Pure policy for deciding when to display the Afterburn Active pill toast.
- * Shows once per boost session for an app, with >= 20s debounce, and only on
- * transitions into [AfterburnState.BOOSTING].
+ * Shows once per boost session for a selected game, with >= 20s debounce, on transitions
+ * into [AfterburnState.BOOSTING], plus one ending toast when BOOSTING drops to REDUCED or
+ * BLOCKED while still in that game. Never shows outside a selected, foreground game.
  */
 object AfterburnToastPolicy {
     const val DEFAULT_DEBOUNCE_MS = 20_000L
 
     data class State(
         val lastToastMs: Long = Long.MIN_VALUE / 2,
-        val activeSessionPkg: String? = null
+        val activeSessionPkg: String? = null,
+        val endedToastShown: Boolean = false
     )
+
+    /**
+     * v3.7.1: the pill is shown for any app Afterburn is allowed to boost: the foreground package must be in the
+     * Games list or in the Boost apps list. Afterburn itself only ever looks at the Boost list, so a Boost-only
+     * app used to be boosted without any pill.
+     */
+    fun isBoostedAppForeground(
+        eventPkg: String,
+        gamePackages: Set<String>,
+        boostPackages: Set<String>,
+        foregroundPkg: String
+    ): Boolean = eventPkg.isNotBlank() && eventPkg == foregroundPkg &&
+        (eventPkg in gamePackages || eventPkg in boostPackages)
+
+    /** Strict game-only gate: a configured game that is also the current foreground package (Games list only). */
+    fun isSelectedGameForeground(
+        eventPkg: String,
+        gamePackages: Set<String>,
+        foregroundPkg: String
+    ): Boolean = eventPkg.isNotBlank() && eventPkg in gamePackages && eventPkg == foregroundPkg
+
+    /** BOOSTING dropping to a state where the boost is reduced or blocked (not IDLE/OFF, which mean "left the game"). */
+    fun isEndingTransition(event: AfterburnTransitionEvent): Boolean =
+        event.prevState == AfterburnState.BOOSTING && (
+            event.newState == AfterburnState.REDUCED ||
+                event.newState == AfterburnState.BLOCKED_THERMAL ||
+                event.newState == AfterburnState.BLOCKED_BATTERY
+            )
 
     fun evaluate(
         current: State,
@@ -85,17 +117,33 @@ object AfterburnToastPolicy {
             else -> current.activeSessionPkg
         }
 
-        if (!event.toastEnabled || event.packageName.isBlank()) {
-            return false to current.copy(activeSessionPkg = nextSessionPkg)
+        val endedShown = if (nextSessionPkg == null) false else current.endedToastShown
+        val unchanged = current.copy(activeSessionPkg = nextSessionPkg, endedToastShown = endedShown)
+
+        if (!event.toastEnabled || event.packageName.isBlank() || !event.inSelectedGame) {
+            return false to unchanged
+        }
+        if (isEndingTransition(event)) {
+            // Only for a session whose start toast was shown, and only once per session.
+            val show = nextSessionPkg == event.packageName && !endedShown
+            return if (show) {
+                true to current.copy(
+                    lastToastMs = event.timestampMs,
+                    activeSessionPkg = nextSessionPkg,
+                    endedToastShown = true
+                )
+            } else {
+                false to unchanged
+            }
         }
         if (event.newState != AfterburnState.BOOSTING || event.prevState == AfterburnState.BOOSTING) {
-            return false to current.copy(activeSessionPkg = nextSessionPkg)
+            return false to unchanged
         }
         if (nextSessionPkg == event.packageName) {
-            return false to current.copy(activeSessionPkg = nextSessionPkg)
+            return false to unchanged
         }
         if (event.timestampMs - current.lastToastMs < debounceMs) {
-            return false to current.copy(activeSessionPkg = nextSessionPkg)
+            return false to unchanged
         }
 
         return true to State(
@@ -129,7 +177,7 @@ class AfterburnToastController(
 
         scope.launch {
             val appLabel = resolveAppLabel(event.packageName)
-            showOverlayPill(appLabel, event.strength)
+            showOverlayPill(appLabel, event.strength, if (AfterburnToastPolicy.isEndingTransition(event)) event.newState else null)
         }
     }
 
@@ -161,7 +209,8 @@ class AfterburnToastController(
         return resolved
     }
 
-    private fun showOverlayPill(appLabel: String, strength: BoostStrength) {
+    /** [endState] is null for the "boost started" pill, or the REDUCED/BLOCKED state for the ending pill. */
+    private fun showOverlayPill(appLabel: String, strength: BoostStrength, endState: AfterburnState? = null) {
         if (!Settings.canDrawOverlays(appContext)) return
         dismissJob?.cancel()
         removeViewSafe(currentView)
@@ -179,8 +228,26 @@ class AfterburnToastController(
             BoostStrength.MEDIUM -> localizedCtx.getString(R.string.boost_strength_medium)
             BoostStrength.MAX -> localizedCtx.getString(R.string.boost_strength_max)
         }
-        val headlineText = localizedCtx.getString(R.string.afterburn_toast_title)
-        val subText = localizedCtx.getString(R.string.afterburn_toast_subtitle, appLabel, strengthText)
+        val headlineText: String
+        val subText: String
+        when (endState) {
+            null -> {
+                headlineText = localizedCtx.getString(R.string.afterburn_toast_title)
+                subText = localizedCtx.getString(R.string.afterburn_toast_subtitle, appLabel, strengthText)
+            }
+            AfterburnState.REDUCED -> {
+                headlineText = localizedCtx.getString(R.string.afterburn_toast_reduced_title)
+                subText = localizedCtx.getString(R.string.afterburn_toast_reduced_subtitle, appLabel)
+            }
+            AfterburnState.BLOCKED_BATTERY -> {
+                headlineText = localizedCtx.getString(R.string.afterburn_toast_stopped_title)
+                subText = localizedCtx.getString(R.string.afterburn_toast_stopped_battery_subtitle, appLabel)
+            }
+            else -> {
+                headlineText = localizedCtx.getString(R.string.afterburn_toast_stopped_title)
+                subText = localizedCtx.getString(R.string.afterburn_toast_stopped_heat_subtitle, appLabel)
+            }
+        }
 
         val container = NeonGlassPillLayout(localizedCtx, density).apply {
             val hPad = (16f * density).toInt()

@@ -6,6 +6,168 @@ All notable changes to **CoreGovernor** will be documented in this file.
 
 No changes yet.
 
+## [3.8.3] - 2026-11-26
+
+### Changed
+- **Smooth power limit also runs when the thermal cap is the tighter one.** Before, thermal caps parked on a single step. Now the limiter alternates between the two steps either side of the thermal cap too (also while charging). Thermal runs get no watt-based trim, since the trim is tied to the power limit; the trim is applied only to components where the power cap is the tighter one.
+- **Smooth power limit is no longer labelled "experimental" and is ON by default for fresh installs only.** Existing saved configs keep whatever they have saved (old configs without the field still load as off).
+- Version 3.8.3 (versionCode 66).
+
+## [3.8.2] - 2026-11-26
+
+### Fixed
+- **Live watts on the overlay slowed down in games.** In 3.8.1 the overlay's watts were only refreshed when a full control tick finished. In a game each tick takes much longer (every frequency write goes through the root shell while the game uses the CPU), so the overlay fell back to a slow update. The overlay now has its own power reader: while the overlay is showing, the screen is on and the phone is discharging, it reads the battery current and voltage every 120 ms on its own timer, directly from the system files (no root shell). If the app is not allowed to read them directly, it uses its own small root shell, never the main one that the control loop uses. The control loop no longer overwrites this value while the reader is running.
+  - Unchanged: the averaged watts used by the power limit, the history graphs, the notification and the logs, and the overlay's 150 ms redraw limit.
+  - Limit: the battery gauge itself usually refreshes about once a second on many phones, so very short spikes can still be flattened by the hardware. Other overlay values (CPU and GPU load and clocks, temperature) still update once per control tick.
+
+### Changed
+- Version 3.8.2 (versionCode 65).
+
+## [3.8.1] - 2026-11-26
+
+### Added
+- **Quick Settings tile "Overlay".** Add it from the tile editor (pencil icon in the Quick Settings panel). Each tap goes to the next step: Off, Compact, Expanded, Detailed, then Off again. The tile shows the current style, works even when Click-through is on, and turns the overlay on (and starts the governor if it is not running). If the overlay permission is missing it tries to grant it with root, otherwise it opens the Android permission screen. Tapping the overlay itself still cycles Compact, Expanded, Detailed as before; the tile follows along.
+
+### Changed
+- **Faster live watts on the overlay.** Three things were slowing it down: the overlay redrew at most once per second (now every 150 ms), the value was a 10-sample average (about 1.5 s of lag; the overlay now shows a fast reading that mostly follows the newest samples), and the control loop slowed down when the phone looked calm (it now stays at your poll interval while the overlay is on). The averaged value is unchanged for the power limit, the history graphs, the notification and the logs, so limiter behaviour does not change. Limit: the battery gauge itself usually refreshes about once a second on many phones, so very short spikes can still be flattened by the hardware.
+- Version 3.8.1 (versionCode 64).
+
+## [3.8.0] - 2026-11-26
+
+### Added
+- **Smooth power limit (`Tuning > Power`, experimental, OFF by default).** Instead of parking a CPU cluster or the GPU on one frequency step, the limiter switches between the two steps either side of the target so the *average* power lands on the limit (example: 5 W at 2.5 GHz, 3.5 W at 2.4 GHz, limit 4 W = about 1/3 of the time on 2.5 and 2/3 on 2.4). It uses the power model to pick the two steps and the share of time, reads the cap as a share of the power range, and applies a slow correction from measured watts if the model is off (limited to +/-15%). Phases are at least 50 ms. If frequency writes pass 14 per second it lengthens the phases, and if they stay far above that it pauses for 30 s.
+  - Switching runs on its own 20 ms timer (a "fast switcher"), so it no longer depends on how long a full control tick takes. The control loop only publishes the plan (two steps and the share of time) about once per tick; the fast switcher alternates the steps. While it owns a component, the control loop does not write that component's frequency.
+  - Falls back to the normal cap when: the poll interval is above 500 ms, the control loop is slower than 700 ms per tick (the plan would go stale), the model is not confident enough (uses the existing minimum confidence setting), or the model looks flat or broken. A plan older than 1.5 s is ignored and the normal loop takes over again. Also not used during Afterburn/burst, or when the thermal cap is the tighter one.
+  - Log tag `SmoothLimit`: when it starts or pauses (with the reason), and every 5 s the step pair and duty per component, measured watts, switches per second and trim.
+  - Limits: while it alternates, the efficiency governor does not pick the frequency for that component (it stays between the two planned steps, never above the load-based target); some kernels fight max-frequency writes (the existing drift re-assert still applies); needs testing on a device. The thermal limit is not smoothed yet.
+  - New config field `powerThrottle.smoothPowerLimit` (old configs load with it off). New pure class `SmoothPowerLimiter` with its own tests.
+- **Text size per overlay style (`Tuning > Overlay`).** Compact, Expanded and Detailed each get a Text size slider (70-160%). It scales labels, values, the ring captions and the Detailed rows (including their line height); the figure in the middle of the rings keeps its size. Measuring, the Size slider limit and drawing all use the same multiplier, so the overlay never gets cut off. New config fields `overlayCompactTextScalePct`, `overlayExpandedTextScalePct`, `overlayDetailedTextScalePct` (100 by default, so nothing changes until you move a slider).
+
+### Fixed
+- Unit test `maxScalePct...` was out of date: it expected per-style caps (60%/45% width, 35% height) but the code uses one cap for all styles (85% width, 50% height). The test now matches the code; app behaviour is unchanged.
+
+### Changed
+- Smooth power limit: the "paused" log line now appears once per cause (it used to repeat every tick), says when it resumes, and the loop-speed average reacts faster and ignores idle pauses. The active log line now shows the real time per control tick.
+- New English texts for the two features above; other languages fall back to English until translated.
+
+## [3.7.2] - 2026-11-26
+
+### Added
+- **Afterburn strength per app (`Tuning > Power > Afterburn`).** Every app in the Boost apps list gets its own Default / Light / Medium / Max choice, so a heavy game can use Max and a lighter app Light. Default follows the main Boost strength. The pill and the Afterburn decision use the strength of the app being boosted (also during the 3 s grace period). Removing an app from the Boost list forgets its strength. New config field `boostStrengthByPkg` (old configs load unchanged).
+
+### Changed
+- Version 3.7.2 (versionCode 62).
+
+## [3.7.1] - 2026-11-26
+
+First release of the 3.7 series (3.7.0 was never published; everything is listed here).
+
+### Added
+- **Independent controls for each overlay style (`Tuning > Overlay`).** Compact, Expanded and Detailed each have their own Size, Horizontal and Vertical sliders (separately for portrait and landscape) and their own "Reset position" button. All three are always editable, not only the one currently showing, and the live one is marked "(showing now)". The Fine chip and the - / + stepping work on every slider. New helpers (`overlayScaleFor`, `withOverlayScalePctFor`, `overlayPosPmFor`, `withOverlayPosPmFor`, `withOverlayPositionResetFor`) and a `updateOverlayStyle` ViewModel action back this.
+- **Afterburn status dot on the overlay.** A small dot in the top-right corner of every overlay style shows what Afterburn is doing for the app in front: green = boosting, amber = reduced, red = blocked (heat or battery). Nothing shows while Afterburn is off or idle. It sits inside the padding, so overlay sizes do not change.
+- **Per-style background opacity.** Compact, Expanded and Detailed each have their own Background opacity slider. Moving the main background opacity slider still sets all three; adjust a style afterwards to fine-tune it. Old configs follow the main value (new fields `overlayCompactBgOpacityPct`, `overlayExpandedBgOpacityPct`, `overlayDetailedBgOpacityPct`, -1 = follow main).
+- **Own size for the Detailed overlay.** Detailed no longer shares its size with Expanded. Until you change it, it keeps following the Expanded size (sentinel `-1`), so existing setups look exactly the same. Landscape falls back to the Detailed portrait size, then to Expanded. New config fields: `overlayDetailedScalePct` and `overlayDetailedScalePctL` (old config files load unchanged).
+- **New power-cap controller (`PowerCapController`, pure and unit tested).** Replaces the old fixed-step loop that sawtoothed around the limit:
+  - steps the cap down in proportion to how far the draw is over the limit (1x to 4x the step);
+  - once engaged, keeps stepping every 350 ms instead of waiting for the sustain time again;
+  - judges the draw on a short window while engaged, so it reacts to what the last step did;
+  - skips half the sustain wait for a big spike (more than 35% over the limit);
+  - only releases after the draw has stayed under 95% of the limit for 1.5 s, so it settles instead of bouncing across the limit;
+  - never goes below the safety floor, and holds the stored cap while Afterburn is bypassing it.
+- **Three root shells.** The control loop's power and frequency reads keep the main shell. Slow, occasional jobs (thread scan, FPS dumpsys) use a second background shell, and process scans (Stutter Hunter, System tab) use a third, so none of them can queue in front of the control loop or each other. Writes stay on the main shell.
+- **Slow root command log.** When a root command runs 400 ms or more, or waits 600 ms or more for the shell, the Log tab names the command (at most one line every 5 s).
+- **Afterburn "waiting" reason.** While a boost app is in front but Afterburn is not boosting, the log says why every 10 s (state, temperature against the throttle start and needed margin, battery level against the gauge, smoothed voltage sag).
+- **Memory-pressure handling in Stutter Hunter and the System tab.** The process scan also reads total and available RAM and the kernel's memory-stall figure, so memory pressure can be told apart from CPU hogs. Covered by new unit tests (`MemoryHogTest`).
+
+### Changed
+- **Battery power reads no longer stall or read as 0 W.** If the root read lacks the battery current or voltage nodes, they are read directly (no shell). A failed or empty read is no longer counted as a 0 W sample: the last good reading is reused for at most 2.5 s, so a frozen value can no longer sit on screen and drive the cap.
+- **Afterburn is steadier in games.**
+  - A game that briefly shows another package (login page, WebView, overlay, notification shade) keeps its boost for a 3 s grace period.
+  - The voltage-sag cut is judged on a roughly 2 s average, so one load spike cannot trip it.
+  - The voltage-graded battery level may sit at most 10 points under the gauge, so one sag-distorted estimate cannot push a healthy phone into the low-battery rules or the 5% cutoff.
+- **Faster game thread scan.** Thread names are read with the shell builtin `read` instead of one `cat` and `tr` per thread, so a game with hundreds of threads no longer holds the root shell for seconds on every scan.
+- **Switching overlay style refreshes the numbers at once** (the per-core rows no longer wait up to a second).
+- Version 3.7.1 (versionCode 61).
+
+### Fixed
+- **Afterburn pill for Boost-list apps.** The "Afterburn engaged" pill was shown only for apps in the Games list, while Afterburn itself only looks at the Boost apps list. An app that was only in the Boost list was boosted with no pill, which looked like Afterburn was not engaging. Any app Afterburn boosts (Games list or Boost apps list) now shows the pill.
+- **Charge sleep guard.** `onScreenOff`, `onScreenOn` and `stop` are now serialized, since they are called from the screen receiver and from the engine's stop, so no kill job or `getevent` process can leak. A power-button listener cancelled while its `su` process was still starting is now destroyed instead of lingering until the next key event.
+- **Stutter Hunter.** `onStop()` (main thread) and the hunting loop (background thread) now share one lock for game-session state, baselines and the detector. The throttle cause reported for an FPS dip is read under that lock, so a stop during a tick can no longer report a wrong or empty cause.
+
+## [3.6.8] - 2026-11-25
+
+### Added
+- **Persistent per-game thread history (`Tuning > Game Threads`).** Observed live threads are merged and saved per game inside `core_governor_config.json` (`threadHistory` and `lastObservedGamePackage`), recording game package, display name, last process name, thread name (`comm`), last observed timestamp, observation count, and session `lastKnownTid`.
+- **Thread History UI section.** Distinguishes **LIVE** threads (with current TIDs and latest observation time) from **HISTORICAL** threads (with last known TID, last seen time, observation count, and mapped CPU status), allows switching games, using or assigning/editing Exact or Pattern CPU mappings directly from any historical thread name, removing individual historical entries, and clearing history per game or across all games.
+- **Background-game and history fallback handling.** Opening CoreGovernor while a game is running keeps the selected/last-observed game target intact, refreshes live threads if the game process still has an active PID (`BACKGROUND_LIVE`), or displays saved history with `"Game is not currently active or live threads are unavailable. Showing saved thread history."` (`SHOWING_HISTORY`).
+
+### Changed
+- **Live-TID-only `taskset` enforcement.** Custom mappings created from historical threads always key on the thread name or pattern rather than stale TIDs, and runtime `taskset` pinning continues to target only currently live TIDs while the selected game is active in the foreground.
+- **Backward-compatible config persistence.** Existing configuration files without thread history fields load cleanly with empty history, and history pruning prioritizes custom-mapped and most-recently-observed threads.
+- Version 3.6.8 (versionCode 58).
+
+## [3.6.7] - 2026-11-25
+
+### Added
+- **Game Thread Controller (Tuning > Game Threads, off by default).** Inspects the foreground game's PID and live `/proc/[pid]/task/[tid]/comm` threads via `RootShell` (`TID — thread name` with manual Refresh and safe handling if processes or threads exit), and enforces per-thread CPU affinity using `taskset -p` in Game mode.
+- **Core assignment, matching & presets.** Multi-select CPU core chips (`Core 0`–`Core 7`, bounded safely by detected CPU count), Linux hexadecimal affinity mask conversion, readable core-range labels (`0-2`, `3-5`, `6-7`), quick presets (`Big 6-7`, `Mid 3-5`, `Little 0-2`), both Pattern matching and Exact thread-name matching, plus Edit and Remove actions for saved mappings.
+- **Auto-classify threads fallback.** Optional conservative fallback (off by default) that assigns `Main`/`Render` threads to `Big 6-7` and `Worker` threads to `Mid 3-5` only when no custom mappings exist, never overriding user mappings or guessing unknown threads.
+- **Persistence & runtime safety.** Saved inside `core_governor_config.json` (`gameThreadController` with `enabled`, `autoClassify`, `selectedGamePackage`, `mappings`, and `threadMaskMap`), running in `GovernorEngine` at most once every 2 seconds strictly in Game mode for a selected foreground game, caching unchanged `(pid, thread, mask)` state, and ignoring individual `taskset` failures safely.
+
+### Changed
+- Version 3.6.7 (versionCode 57).
+
+## [3.6.6] - 2026-11-25
+
+### Fixed
+- **Crash on launch ("Cannot create an instance of CoreGovernorViewModel").** The engine's log was created after the parts that write to it during startup, so if the saved rating data could not be read, the app crashed before opening. The log is now created first, so a bad or unreadable data file is logged as a warning and the app starts normally.
+
+### Changed
+- **Real battery level now works while charging.** The charger's voltage rise (charge current x internal resistance) is taken back off, then the level is read from the same curve as when unplugged. It is only graded between 5% and 90% (before the constant-voltage taper), after the reading has settled, and never strays more than 10 points from the gauge; confidence is capped lower than the unplugged grade. Afterburn ignores this charge-side grade and keeps using the gauge while charging, because the charger inflates the voltage.
+- **Full-charge calibration feeds the capacity estimate.** The capacity read from a clean charge to 100% now joins the blend. A mostly slow charge (under 15 W) counts about three times more than a fast one, and a reading far from the design capacity is ignored.
+- **Battery capacity and health now use the charging data.** Each charge segment records its average power, time spent at each power level (<5, 5-10, 10-15, 15-20, 20-25, 25+ W), highest voltage and peak current. Fast-charge segments count less toward capacity and health, because the fuel gauge runs ahead of the real charge at high power. The voltage lost inside the cell (current x resistance) also lowers a segment's weight once the resistance is learned.
+- Charge segments can no longer outweigh the discharge side by more than 1.5x, and the estimate's confidence now counts trust-weighted percent steps, so many fast-charge segments no longer inflate it.
+- **Time to full** now follows the learned charge-power curve per 10% of battery, so the slow taper near 100% is counted.
+- Battery card shows charge time per power band (session and lifetime), peak charge voltage, charge-data trust, and average W / peak V on each recent charge segment.
+- **Charge sleep guard (Tuning > Screen-off).** While the screen is off and the phone is charging, it stops background apps (through root) that wake the CPU and heat the phone, so charging stays cooler. Choose a whitelist of apps that are never stopped, an always-stop list of apps and system processes, or switch on "Stop all other user apps". Your launcher, keyboard, phone and CoreGovernor are never stopped, and nothing is stopped while music is playing. While the guard is on, the screen-off clock saving also applies while charging.
+- **Fast wake boost.** While the screen is off, the power button is detected straight away and the clocks go to maximum for a moment before the screen lights, so unlocking is quicker. Works for any wake, even when the guard is off.
+- Version 3.6.6 (versionCode 56).
+
+## [3.6.5] - 2026-11-24
+
+### Added
+- **Persian (فارسی) language.** The whole app, overlay and notifications are now available in Persian, with right-to-left layout. Choose it under Appearance > Language.
+
+## [3.6.4] - 2026-11-24
+
+### Added
+- **Pin sensors only in games.** New switch under Pin sensor refresh rate: "Only pin while in a game". The sensors are held at your chosen rate only while a game is detected and running (Game mode) and are released the rest of the time, which cuts idle power use. Works together with "Pause while the screen is off". Off by default, so existing behaviour is unchanged.
+
+## [3.6.3] - 2026-11-24
+
+### Changed
+- **Bigger overlay size range.** The overlay size sliders now go well past 100% in portrait (it used to stop around 73%) and further in landscape. The overlay is still limited so it always fits on screen.
+
+## [3.6.2] - 2026-11-24
+
+### Fixed
+- **Landscape overlay.** The overlay, its size limit and the position sliders now share one screen size and orientation, taken from the system configuration instead of the display rotation (which could report portrait while rotated). This fixes the tiny size cap, the wrong position and the size flicker in landscape.
+
+## [3.6.1] - 2026-11-24
+
+### Added
+- **Stutter Hunter reports governor throttling.** When an FPS dip happens while the governor is actively limiting performance because of heat, or because of the battery/power limit (or Afterburn blocked by heat or battery), Stutter Hunter now says so in its actions list and log instead of blaming a background process. No process is investigated or stopped in that case. A low battery percentage alone is never reported as the cause.
+- **Afterburn ending toast.** A pill now also appears when Afterburn drops from boosting to reduced or blocked (heat or battery) while you are still in the game.
+
+### Changed
+- **Afterburn toasts are selected-game only.** Start and ending toasts appear only for an app in your Games list that is also the foreground app. Apps that are only in the Afterburn list never show a toast, and leaving the game does not show an ending toast.
+- **Landscape overlay controls and remembered positions.** Landscape sizes and positions are saved separately from portrait for every overlay style, and fall back to the portrait values for older saved configs.
+
+### Fixed
+- **Overlay drag in landscape.** The overlay can now be dragged across the whole screen in landscape (screen size is taken from the physical display and current rotation) and uses the landscape position. Placement details are written to the log under "Overlay".
+- **Landscape position sliders.** The horizontal and vertical position sliders now save to the landscape slot while the phone is in landscape (they were saving to the portrait slot, so they looked stuck).
+- **Liquid glass text color.** Text inside liquid-glass cards now uses the theme's text color instead of turning black.
+
 ## [3.6.0] - 2026-11-24
 
 ### Added

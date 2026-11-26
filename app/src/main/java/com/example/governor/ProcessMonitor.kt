@@ -37,7 +37,9 @@ data class ProcRow(
 /** Parsing, grouping and protection rules for the System tab. Pure. */
 object ProcessMonitor {
     const val STAT_MARK = "===STAT==="
-    const val COMMAND = "ps -A -o PID,UID,RSS,ARGS 2>/dev/null; echo ===STAT===; cat /proc/[0-9]*/stat 2>/dev/null"
+    const val MEM_MARK = "===MEM==="
+    const val COMMAND = "ps -A -o PID,UID,RSS,ARGS 2>/dev/null; echo ===STAT===; cat /proc/[0-9]*/stat 2>/dev/null; " +
+        "echo ===MEM===; head -n 3 /proc/meminfo 2>/dev/null; cat /proc/pressure/memory 2>/dev/null"
 
     val PACKAGE_RE = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
     private val PS_LINE = Regex("^\\s*(\\d+)\\s+(\\S+)\\s+(\\d+)\\s+(.+)$")
@@ -84,10 +86,30 @@ object ProcessMonitor {
         return out
     }
 
+    /** Total/available RAM and the kernel's memory-stall figure, from the tail of [COMMAND]'s output. */
+    fun parseMem(output: String): StutterLogic.MemInfo? {
+        val i = output.indexOf(MEM_MARK)
+        if (i < 0) return null
+        var total = 0f
+        var avail = 0f
+        var psi = -1f
+        for (line in output.substring(i + MEM_MARK.length).lineSequence()) {
+            val l = line.trim()
+            when {
+                l.startsWith("MemTotal:") -> total = (l.split(Regex("\\s+")).getOrNull(1)?.toFloatOrNull() ?: 0f) / 1024f
+                l.startsWith("MemAvailable:") -> avail = (l.split(Regex("\\s+")).getOrNull(1)?.toFloatOrNull() ?: 0f) / 1024f
+                l.startsWith("some ") -> psi = Regex("avg10=([0-9.]+)").find(l)?.groupValues?.get(1)?.toFloatOrNull() ?: -1f
+            }
+        }
+        return if (total > 0f && avail > 0f) StutterLogic.MemInfo(total, avail, psi) else null
+    }
+
     fun parse(output: String): List<ProcSnap> {
         val idx = output.indexOf(STAT_MARK)
         val psPart = if (idx >= 0) output.substring(0, idx) else output
-        val statPart = if (idx >= 0) output.substring(idx + STAT_MARK.length) else ""
+        val memIdx = output.indexOf(MEM_MARK)
+        val statEnd = if (memIdx >= 0 && memIdx > idx) memIdx else output.length
+        val statPart = if (idx >= 0) output.substring(idx + STAT_MARK.length, statEnd) else ""
         val ticks = parseStat(statPart)
         val res = ArrayList<ProcSnap>()
         for (line in psPart.lineSequence()) {

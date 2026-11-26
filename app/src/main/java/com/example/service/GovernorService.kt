@@ -439,6 +439,9 @@ class GovernorService : Service() {
             }
         }
 
+        /** v3.8.1: true while the service is alive (used by the Quick Settings tile). */
+        fun isRunning(): Boolean = isRunningFlag
+
         fun stop(context: Context) {
             val intent = Intent(context, GovernorService::class.java).apply { action = ACTION_STOP }
             context.startService(intent)

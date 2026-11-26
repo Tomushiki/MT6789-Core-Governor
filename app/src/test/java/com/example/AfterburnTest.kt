@@ -136,3 +136,13 @@ class BatteryCalibrationTest {
         assertEquals(null, m.takeDirtySerialized())
     }
 }
+
+class AfterburnSagTest {
+    private val cfg = AfterburnConfig(enabled = true, strength = BoostStrength.MAX)
+
+    @Test fun moderateSagScalesBoostDownButKeepsItOn() {
+        val d = AfterburnLogic.decide(cfg, true, 30f, 42f, 80, false, false, sagMv = 250f)
+        assertTrue(d.active)
+        assertTrue(d.level < 1f)
+    }
+}

@@ -305,7 +305,8 @@ fun PowerThrottleSection(
         unitScale: PowerUnitScale?,
         polarity: PowerPolarity?,
         componentAware: Boolean?
-    ) -> Unit
+    ) -> Unit,
+    onSetSmoothPowerLimit: (Boolean) -> Unit
 ) {
     val telemetry by telemetryFlow.collectAsStateWithLifecycle()
     val ext = LocalExtendedColors.current
@@ -355,6 +356,16 @@ fun PowerThrottleSection(
             checked = p.componentAware,
             onCheckedChange = { onUpdatePowerThrottle(null, null, null, null, null, null, null, null, it) },
             testTag = "power_component_aware_switch"
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        SettingSwitchRow(
+            title = stringResource(R.string.power_smooth),
+            explanation = stringResource(R.string.power_smooth_desc),
+            checked = p.smoothPowerLimit,
+            onCheckedChange = { onSetSmoothPowerLimit(it) },
+            testTag = "power_smooth_switch"
         )
 
         Spacer(modifier = Modifier.height(12.dp))

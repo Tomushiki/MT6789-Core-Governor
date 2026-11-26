@@ -31,6 +31,7 @@ import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
@@ -39,8 +40,12 @@ import com.example.data.LocaleHelper
 import com.example.governor.GovernorEngine
 import com.example.model.BatteryState
 import com.example.model.GovernorConfig
+import com.example.model.LogLevel
 import com.example.model.GovernorMode
+import com.example.model.AfterburnState
+import com.example.model.overlayActiveBgOpacityPct
 import com.example.model.overlayCompactScaleFor
+import com.example.model.overlayDetailedScaleFor
 import com.example.model.overlayExpandedScaleFor
 import com.example.model.overlayPosPm
 import com.example.model.withOverlayPosPm
@@ -58,6 +63,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
@@ -66,6 +72,9 @@ enum class OverlayStyle {
     EXPANDED,
     DETAILED
 }
+
+/** v3.8.1: the overlay redraws at most this often (it used to be once per second). */
+private const val OVERLAY_REFRESH_MS = 150L
 
 object OverlaySizing {
     const val MIN_SCALE_PCT = 25
@@ -124,16 +133,31 @@ object OverlaySizing {
         }
     }
 
+    /** Pure: orders the physical sides as (width, height) for the given orientation. */
+    fun orderScreenSides(sideA: Int, sideB: Int, landscape: Boolean): Pair<Int, Int> {
+        val longSide = max(sideA, sideB)
+        val shortSide = min(sideA, sideB)
+        return if (landscape) longSide to shortSide else shortSide to longSide
+    }
+
+    /**
+     * Single source of truth for the overlay's screen size and orientation. Display.rotation can lag
+     * or be wrong on some builds (GSI), so the orientation comes from the system configuration, the
+     * same value the Compose UI uses, and only the rotation-independent long/short sides come from
+     * the display. Use the second value of this pair's ordering as "landscape = width > height".
+     */
     fun getScreenSizePx(windowManager: WindowManager): Pair<Int, Int> {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = windowManager.currentWindowMetrics.bounds
-            bounds.width() to bounds.height()
-        } else {
-            val dm = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(dm)
-            dm.widthPixels to dm.heightPixels
+        @Suppress("DEPRECATION")
+        val display = windowManager.defaultDisplay
+        val dm = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        display.getRealMetrics(dm)
+        val landscape = when (android.content.res.Resources.getSystem().configuration.orientation) {
+            Configuration.ORIENTATION_LANDSCAPE -> true
+            Configuration.ORIENTATION_PORTRAIT -> false
+            else -> display.rotation == Surface.ROTATION_90 || display.rotation == Surface.ROTATION_270
         }
+        return orderScreenSides(dm.widthPixels, dm.heightPixels, landscape)
     }
 
     fun measureNaturalSizeAtScaleOne(
@@ -141,9 +165,11 @@ object OverlaySizing {
         style: OverlayStyle,
         detailedRowCount: Int = DEFAULT_DETAILED_ROW_COUNT,
         extraRightColWidthAt1: Float = 0f,
-        strings: OverlayStrings = OverlayStrings()
+        strings: OverlayStrings = OverlayStrings(),
+        textScalePct: Int = 100
     ): Pair<Float, Float> {
         val d = density.coerceAtLeast(0.5f)
+        val tm = textScalePct.coerceIn(70, 160) / 100f
         synchronized(measureLock) {
             return when (style) {
                 OverlayStyle.COMPACT -> {
@@ -153,8 +179,8 @@ object OverlaySizing {
                     val dotGap = 4f * d
                     val labelGap = 3f * d
                     val itemGap = 10f * d
-                    compactLabelPaint.textSize = 9f * d
-                    compactTextPaint.textSize = 11.5f * d
+                    compactLabelPaint.textSize = 9f * d * tm
+                    compactTextPaint.textSize = 11.5f * d * tm
                     val cpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("CPU") + labelGap + compactTextPaint.measureText("100%")
                     val gpuItemW = dotR * 2f + dotGap + compactLabelPaint.measureText("GPU") + labelGap + compactTextPaint.measureText("100%")
                     val tempItemW = dotR * 2f + dotGap + compactTextPaint.measureText("100°")
@@ -178,8 +204,8 @@ object OverlaySizing {
                     val cellGap = 8f * d
                     val labelGap = 6f * d
                     val subGap = 2f * d
-                    ringLabelPaint.textSize = 10f * d
-                    ringSubPaint.textSize = 9.5f * d
+                    ringLabelPaint.textSize = 10f * d * tm
+                    ringSubPaint.textSize = 9.5f * d * tm
                     val widestLabel = maxOf(
                         ringLabelPaint.measureText("CPU"),
                         ringLabelPaint.measureText("GPU"),
@@ -203,9 +229,9 @@ object OverlaySizing {
                     val vPad = 14f * d
                     val leftColW = 78f * d
                     val colGap = 16f * d
-                    ringSubPaint.textSize = 12f * d
-                    detailedTextPaint.textSize = 14.5f * d
-                    detailedBoldPaint.textSize = 14.5f * d
+                    ringSubPaint.textSize = 12f * d * tm
+                    detailedTextPaint.textSize = 14.5f * d * tm
+                    detailedBoldPaint.textSize = 14.5f * d * tm
                     val refRightW = maxOf(
                         detailedTextPaint.measureText("DDR  4266 MHz"),
                         detailedBoldPaint.measureText("#0~5  2000MHz"),
@@ -221,7 +247,7 @@ object OverlaySizing {
                     val subH = subFm.descent - subFm.ascent
                     val slotH = 66f * d + 4f * d + subH
                     val minLeftColH = 3f * slotH + 2f * (12f * d)
-                    val rightColH = detailedRowCount.coerceAtLeast(1) * (14.5f * d * 1.5f)
+                    val rightColH = detailedRowCount.coerceAtLeast(1) * (14.5f * d * tm * 1.5f)
                     val contentH = maxOf(minLeftColH, rightColH)
                     val w = hPad * 2f + leftColW + colGap + rightW
                     val h = vPad * 2f + contentH
@@ -239,8 +265,8 @@ object OverlaySizing {
         naturalHAt1: Float
     ): Int {
         if (screenW <= 0 || screenH <= 0) return MIN_SCALE_PCT
-        val wFactor = if (style == OverlayStyle.COMPACT) 0.60f else 0.45f
-        val hFactor = 0.35f
+        val wFactor = 0.85f
+        val hFactor = 0.50f
         val allowedW = screenW.toFloat() * wFactor
         val allowedH = screenH.toFloat() * hFactor
         val ratio = minOf(
@@ -350,6 +376,7 @@ class OverlayController(
         val ddrMhz: Long = 0L,
         val fps: Float = -1f,
         val refreshHz: Int = 60,
+        val afterburn: AfterburnState = AfterburnState.OFF,
         val clusters: List<ClusterDisplay> = emptyList()
     )
 
@@ -419,11 +446,14 @@ class OverlayController(
                 compactPortraitPct = cfg.overlayCompactScaleFor(false),
                 expandedPortraitPct = cfg.overlayExpandedScaleFor(false),
                 compactLandscapePct = cfg.overlayCompactScaleFor(true),
-                expandedLandscapePct = cfg.overlayExpandedScaleFor(true)
+                expandedLandscapePct = cfg.overlayExpandedScaleFor(true),
+                detailedPortraitPct = cfg.overlayDetailedScaleFor(false),
+                detailedLandscapePct = cfg.overlayDetailedScaleFor(true)
             )
+            view.setTextScales(cfg.overlayCompactTextScalePct, cfg.overlayExpandedTextScalePct, cfg.overlayDetailedTextScalePct)
             view.setClickThrough(cfg.overlayClickThrough)
             view.alpha = targetAlpha
-            view.setBgOpacity(cfg.overlayBgOpacityPct)
+            view.setBgOpacity(cfg.overlayActiveBgOpacityPct())
 
             val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -466,12 +496,17 @@ class OverlayController(
             var layoutChanged = false
             var needsReposition = false
             existingView.alpha = targetAlpha
-            existingView.setBgOpacity(cfg.overlayBgOpacityPct)
+            existingView.setBgOpacity(cfg.overlayActiveBgOpacityPct())
             existingView.setClickThrough(cfg.overlayClickThrough)
             val effectiveExpanded = cfg.overlayExpanded && !cfg.overlayDetailed
             if (existingView.isExpandedMode() != effectiveExpanded || existingView.isDetailedMode() != cfg.overlayDetailed) {
                 existingView.setExpanded(effectiveExpanded)
                 existingView.setDetailed(cfg.overlayDetailed)
+                // The per-core rows only exist in the detailed data: refresh now instead of waiting up to 1 s.
+                val fresh = toDisplayData(engine.telemetry.value)
+                lastAppliedDisplay = fresh
+                lastApplyTimeMs = System.currentTimeMillis()
+                existingView.setDisplayData(fresh)
                 layoutChanged = true
                 needsReposition = true
             }
@@ -479,9 +514,15 @@ class OverlayController(
                     compactPortraitPct = cfg.overlayCompactScaleFor(false),
                     expandedPortraitPct = cfg.overlayExpandedScaleFor(false),
                     compactLandscapePct = cfg.overlayCompactScaleFor(true),
-                    expandedLandscapePct = cfg.overlayExpandedScaleFor(true)
+                    expandedLandscapePct = cfg.overlayExpandedScaleFor(true),
+                    detailedPortraitPct = cfg.overlayDetailedScaleFor(false),
+                    detailedLandscapePct = cfg.overlayDetailedScaleFor(true)
                 )
             ) {
+                layoutChanged = true
+                needsReposition = true
+            }
+            if (existingView.setTextScales(cfg.overlayCompactTextScalePct, cfg.overlayExpandedTextScalePct, cfg.overlayDetailedTextScalePct)) {
                 layoutChanged = true
                 needsReposition = true
             }
@@ -539,6 +580,11 @@ class OverlayController(
         params.y = y
         lastAppliedXPm = xPm
         lastAppliedYPm = yPm
+        engine.log(
+            LogLevel.INFO,
+            "Overlay",
+            "Place: screen ${screenW}x$screenH, overlay ${viewW}x$viewH, pos $xPm/$yPm pm -> $x,$y px"
+        )
     }
 
     private fun hide() {
@@ -566,7 +612,7 @@ class OverlayController(
             engine.telemetry.collect { state ->
                 val view = overlayView ?: return@collect
                 val now = System.currentTimeMillis()
-                if (lastAppliedDisplay != null && now - lastApplyTimeMs < 1000L) {
+                if (lastAppliedDisplay != null && now - lastApplyTimeMs < OVERLAY_REFRESH_MS) {
                     return@collect
                 }
                 val next = toDisplayData(state)
@@ -597,7 +643,9 @@ class OverlayController(
         val gpuLoad = state.gpu.smoothedLoadPct.roundToInt().coerceIn(0, 100)
         val gpuFreqMhz = state.gpu.currentFreqKhz / 1000L
         val tempDeg = state.temperatureC.roundToInt()
-        val wattsCenti = (state.watts * 100f).roundToInt()
+        // v3.8.1: the overlay shows the fast reading; the limiter and the history keep the slow average.
+        val shownWatts = if (state.batteryState == BatteryState.DISCHARGING && state.liveWatts > 0f) state.liveWatts else state.watts
+        val wattsCenti = (shownWatts * 100f).roundToInt()
         @Suppress("DEPRECATION")
         val refreshHz = try {
             windowManager.defaultDisplay?.refreshRate?.roundToInt()?.takeIf { it > 0 } ?: 60
@@ -631,13 +679,14 @@ class OverlayController(
             tempDeg = tempDeg,
             tempC = state.temperatureC,
             wattsCenti = wattsCenti,
-            watts = state.watts,
+            watts = shownWatts,
             chargeWattsCenti = (state.chargeWatts * 100f).roundToInt(),
             chargeWatts = state.chargeWatts,
             batteryState = state.batteryState,
             ddrMhz = state.ddrFreqMhz,
             fps = state.fps,
             refreshHz = refreshHz,
+            afterburn = state.afterburnState,
             clusters = clusters
         )
     }
@@ -657,6 +706,7 @@ class OverlayController(
             prev.ddrMhz != next.ddrMhz ||
             prevFpsTenth != nextFpsTenth ||
             prev.refreshHz != next.refreshHz ||
+            prev.afterburn != next.afterburn ||
             prev.clusters != next.clusters
     }
 
@@ -684,7 +734,32 @@ class OverlayController(
         private var expandedScalePctP = 100
         private var compactScalePctL = 100
         private var expandedScalePctL = 100
+        private var detailedScalePctP = 100
+        private var detailedScalePctL = 100
+        private var textPctCompact = 100
+        private var textPctExpanded = 100
+        private var textPctDetailed = 100
         private var effectiveScale = 1f
+
+        private fun styleTextPct(): Int = (if (detailed) textPctDetailed else if (expanded) textPctExpanded else textPctCompact)
+            .coerceIn(70, 160)
+
+        private fun textMul(): Float = styleTextPct() / 100f
+
+        /** Per-style text size (label/value text; the ring-centre figure keeps its size). Returns true if the look changed. */
+        fun setTextScales(compactPct: Int, expandedPct: Int, detailedPct: Int): Boolean {
+            val c = compactPct.coerceIn(70, 160)
+            val e = expandedPct.coerceIn(70, 160)
+            val dd = detailedPct.coerceIn(70, 160)
+            if (c == textPctCompact && e == textPctExpanded && dd == textPctDetailed) return false
+            textPctCompact = c
+            textPctExpanded = e
+            textPctDetailed = dd
+            applyPaintSizes(effectiveScale)
+            requestLayout()
+            invalidate()
+            return true
+        }
 
         private var downRawX = 0f
         private var downRawY = 0f
@@ -754,6 +829,8 @@ class OverlayController(
             typeface = monoBoldTypeface
         }
 
+        private val afterburnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
         private val pillRect = RectF()
         private val borderRect = RectF()
         private val arcRect = RectF()
@@ -764,7 +841,9 @@ class OverlayController(
 
         private fun requestedScalePct(): Int {
             val land = isLandscapeNow()
-            val pct = if (expanded || detailed) {
+            val pct = if (detailed) {
+                if (land) detailedScalePctL else detailedScalePctP
+            } else if (expanded) {
                 if (land) expandedScalePctL else expandedScalePctP
             } else {
                 if (land) compactScalePctL else compactScalePctP
@@ -782,13 +861,14 @@ class OverlayController(
             val ringStroke = if (detailed) 6f * d else 4f * d
             trackPaint.strokeWidth = ringStroke
             arcPaint.strokeWidth = ringStroke
-            compactLabelPaint.textSize = 9f * d
-            compactTextPaint.textSize = 11.5f * d
+            val tm = textMul()
+            compactLabelPaint.textSize = 9f * d * tm
+            compactTextPaint.textSize = 11.5f * d * tm
             ringCenterPaint.textSize = if (detailed) 16.5f * d else 11.5f * d
-            ringLabelPaint.textSize = 10f * d
-            ringSubPaint.textSize = if (detailed) 12f * d else 9.5f * d
-            detailedTextPaint.textSize = 14.5f * d
-            detailedBoldPaint.textSize = 14.5f * d
+            ringLabelPaint.textSize = 10f * d * tm
+            ringSubPaint.textSize = (if (detailed) 12f * d else 9.5f * d) * tm
+            detailedTextPaint.textSize = 14.5f * d * tm
+            detailedBoldPaint.textSize = 14.5f * d * tm
         }
 
         fun isExpandedMode(): Boolean = expanded
@@ -831,12 +911,16 @@ class OverlayController(
             compactPortraitPct: Int,
             expandedPortraitPct: Int,
             compactLandscapePct: Int,
-            expandedLandscapePct: Int
+            expandedLandscapePct: Int,
+            detailedPortraitPct: Int = expandedPortraitPct,
+            detailedLandscapePct: Int = expandedLandscapePct
         ): Boolean {
             compactScalePctP = compactPortraitPct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
             expandedScalePctP = expandedPortraitPct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
             compactScalePctL = compactLandscapePct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
             expandedScalePctL = expandedLandscapePct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
+            detailedScalePctP = detailedPortraitPct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
+            detailedScalePctL = detailedLandscapePct.coerceIn(OverlaySizing.MIN_SCALE_PCT, OverlaySizing.MAX_SCALE_PCT)
             return refreshScaleForCurrentOrientation()
         }
 
@@ -933,7 +1017,7 @@ class OverlayController(
             val subH = subFm.descent - subFm.ascent
             val slotH = 66f * d + 4f * d + subH
             val minLeftColH = 3f * slotH + 2f * (12f * d)
-            val rightColH = detailedRowCount(data) * (14.5f * d * 1.5f)
+            val rightColH = detailedRowCount(data) * (14.5f * d * textMul() * 1.5f)
             return maxOf(minLeftColH, rightColH)
         }
 
@@ -955,7 +1039,8 @@ class OverlayController(
                 style = style,
                 detailedRowCount = detailedRowCount(data),
                 extraRightColWidthAt1 = extraRightWAt1,
-                strings = strings
+                strings = strings,
+                textScalePct = styleTextPct()
             )
             val maxPct = OverlaySizing.maxScalePct(screenW, screenH, style, natWAt1, natHAt1)
             val effectivePct = minOf(requestedScalePct(), maxPct)
@@ -1045,6 +1130,27 @@ class OverlayController(
                 expanded -> drawExpanded(canvas, d)
                 else -> drawCompact(canvas, d)
             }
+            drawAfterburnDot(canvas, d)
+        }
+
+        /**
+         * v3.7.1: a small dot in the top-right corner shows what Afterburn is doing for the app in front:
+         * green = boosting, amber = reduced, red = blocked (heat or battery). Nothing is drawn while it is
+         * off or idle. It sits inside the padding, so it never changes the measured size of any style.
+         */
+        private fun drawAfterburnDot(canvas: Canvas, d: Float) {
+            val color = when (data.afterburn) {
+                AfterburnState.BOOSTING -> 0xFF3DDC84.toInt()
+                AfterburnState.REDUCED -> 0xFFFFB300.toInt()
+                AfterburnState.BLOCKED_THERMAL, AfterburnState.BLOCKED_BATTERY -> 0xFFFF5252.toInt()
+                else -> return
+            }
+            val compact = !expanded && !detailed
+            val r = (if (compact) 2.5f else 3.5f) * d
+            val cx = width - (if (compact) 7f else 9f) * d
+            val cy = (if (compact) 6f else 9f) * d
+            afterburnPaint.color = color
+            canvas.drawCircle(cx, cy, r, afterburnPaint)
         }
 
         private fun drawCompact(canvas: Canvas, d: Float) {
@@ -1115,8 +1221,8 @@ class OverlayController(
             val subGap = 2f * d
 
             val baseCenterSize = 11.5f * d
-            val baseLabelSize = 10f * d
-            val baseSubSize = 9.5f * d
+            val baseLabelSize = 10f * d * textMul()
+            val baseSubSize = 9.5f * d * textMul()
 
             ringLabelPaint.textSize = baseLabelSize
             val baseLabelFm = ringLabelPaint.fontMetrics
@@ -1272,12 +1378,12 @@ class OverlayController(
             val minRingGap = 12f * d
 
             val baseCenterSize = 16.5f * d
-            val baseSubSize = 12f * d
+            val baseSubSize = 12f * d * textMul()
             ringSubPaint.textSize = baseSubSize
             val subFm = ringSubPaint.fontMetrics
             val subH = subFm.descent - subFm.ascent
 
-            val textSize = 14.5f * d
+            val textSize = 14.5f * d * textMul()
             val lineHeight = textSize * 1.5f
             val rowCount = detailedRowCount(data)
             val rightColH = rowCount * lineHeight
@@ -1498,6 +1604,11 @@ class OverlayController(
                         } catch (_: Throwable) {
                         }
                         val land = screenW > screenH
+                        engine.log(
+                            LogLevel.INFO,
+                            "Overlay",
+                            "Drag end: screen ${screenW}x$screenH, overlay ${viewW}x$viewH, raw ${params.x},${params.y} -> $xPm/$yPm pm (${if (land) "landscape" else "portrait"})"
+                        )
                         engine.updateConfig {
                             // Save into the slot for the orientation the user dragged in.
                             it.withOverlayPosPm(land, xPm, yPm)

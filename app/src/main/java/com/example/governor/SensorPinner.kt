@@ -71,7 +71,9 @@ class SensorPinner(
         val enabled: Boolean = false,
         val rate: Rate = Rate.MAX,
         val sensorTypes: Set<Int> = setOf(Sensor.TYPE_GYROSCOPE),
-        val pauseWhenScreenOff: Boolean = true
+        val pauseWhenScreenOff: Boolean = true,
+        /** Pin only while a game is detected and running (Game mode). */
+        val gameOnly: Boolean = false
     )
 
     data class SensorInfo(
@@ -88,6 +90,8 @@ class SensorPinner(
         val available: List<SensorInfo> = emptyList(),
         /** True while listeners are actually registered. */
         val active: Boolean = false,
+        /** True while the engine reports Game mode. */
+        val gameActive: Boolean = false,
         /** Measured delivery rate per sensor type (Hz), refreshed once a second while active. */
         val measuredHz: Map<Int, Int> = emptyMap()
     )
@@ -99,6 +103,7 @@ class SensorPinner(
     private val lock = Any()
     private var serviceRunning = false
     private var screenInteractive = true
+    private var gameActive = false
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
     private var registered: List<Sensor> = emptyList()
@@ -128,6 +133,17 @@ class SensorPinner(
         }
     }
 
+    /** Called by the engine every cycle with whether Game mode is active; only acts on a change. */
+    fun setGameActive(active: Boolean) {
+        synchronized(lock) {
+            if (gameActive == active) return
+            gameActive = active
+            _state.update { it.copy(gameActive = active) }
+            // Only re-register when this setting actually depends on the game state.
+            if (_state.value.config.gameOnly) reconcile()
+        }
+    }
+
     fun setScreenInteractive(interactive: Boolean) {
         synchronized(lock) {
             if (screenInteractive == interactive) return
@@ -140,7 +156,8 @@ class SensorPinner(
 
     private fun reconcile() {
         val cfg = _state.value.config
-        val shouldRun = serviceRunning && cfg.enabled && (screenInteractive || !cfg.pauseWhenScreenOff)
+        val shouldRun = serviceRunning && cfg.enabled && (screenInteractive || !cfg.pauseWhenScreenOff) &&
+            (!cfg.gameOnly || gameActive)
         // Re-register from scratch on every change: simple, and a rate change always takes effect.
         releaseLocked()
         if (shouldRun) registerLocked(cfg)
@@ -267,7 +284,8 @@ class SensorPinner(
             enabled = prefs.getBoolean(KEY_ENABLED, false),
             rate = Rate.fromKey(prefs.getString(KEY_RATE, null)),
             sensorTypes = types,
-            pauseWhenScreenOff = prefs.getBoolean(KEY_PAUSE_OFF, true)
+            pauseWhenScreenOff = prefs.getBoolean(KEY_PAUSE_OFF, true),
+            gameOnly = prefs.getBoolean(KEY_GAME_ONLY, false)
         )
     }
 
@@ -277,6 +295,7 @@ class SensorPinner(
             .putString(KEY_RATE, c.rate.key)
             .putString(KEY_TYPES, c.sensorTypes.joinToString(","))
             .putBoolean(KEY_PAUSE_OFF, c.pauseWhenScreenOff)
+            .putBoolean(KEY_GAME_ONLY, c.gameOnly)
             .apply()
     }
 
@@ -286,6 +305,7 @@ class SensorPinner(
         const val KEY_RATE = "rate"
         const val KEY_TYPES = "types"
         const val KEY_PAUSE_OFF = "pause_screen_off"
+        const val KEY_GAME_ONLY = "game_only"
 
         private data class Candidate(val type: Int, val label: String, @StringRes val labelRes: Int)
 

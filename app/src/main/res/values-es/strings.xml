@@ -676,6 +676,9 @@
     <string name="nifty_no_sensors">No se hallaron sensores de movimiento compatibles.</string>
     <string name="nifty_pause_off_title">Pausar con pantalla apagada</string>
     <string name="nifty_pause_off_desc">Libera los sensores al apagar la pantalla y los vuelve a fijar al encenderla.</string>
+    <string name="nifty_game_only_title">Fijar solo en juegos</string>
+    <string name="nifty_game_only_desc">Fija los sensores solo mientras se detecta un juego en ejecución (modo Juego) y los libera el resto del tiempo. Reduce el consumo en reposo.</string>
+    <string name="nifty_status_game_wait">Esperando un juego. Los sensores no están fijados ahora.</string>
     <string name="nifty_status_active">ACTIVO</string>
     <string name="nifty_status_waiting">Esperando: arranca al iniciar el gobernador.</string>
     <string name="nifty_status_paused">En pausa (pantalla apagada) o sin sensores registrados. Consulta el registro.</string>
@@ -870,4 +873,30 @@
         <item quantity="one">%1$d activación</item>
         <item quantity="other">%1$d activaciones</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">Gobernador: límite térmico</string>
+    <string name="hunter_res_gov_battery">Gobernador: límite de batería</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → gobernador</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN REDUCIDO</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • impulso reducido</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN DETENIDO</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • bloqueado por calor</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • bloqueado por batería</string>
+    <string name="batt_charge_bands_session">Cargado en esta sesión: %1$s</string>
+    <string name="batt_charge_bands_lifetime">Cargado en total: %1$s</string>
+    <string name="batt_charge_voltage">Voltaje máximo de carga: %1$s V (sesión) • %2$s V (total)</string>
+    <string name="batt_charge_trust">Fiabilidad de los datos de carga: %1$d%% (la carga rápida pesa menos en la capacidad)</string>
+    <string name="cg_header">PROTECCIÓN DE REPOSO AL CARGAR</string>
+    <string name="cg_enable">Protección de reposo al cargar</string>
+    <string name="cg_enable_desc">Con la pantalla apagada y el teléfono cargando, detiene las apps en segundo plano que despiertan la CPU y calientan el teléfono. Requiere root.</string>
+    <string name="cg_others">Detener todas las demás apps de usuario</string>
+    <string name="cg_others_desc">También detiene cada minuto todas las apps instaladas que no estén en la lista blanca. Tu launcher, teclado y teléfono se mantienen siempre.</string>
+    <string name="cg_whitelist">Lista blanca (nunca se detienen)</string>
+    <string name="cg_whitelist_desc">Apps que deben seguir funcionando, como mensajería o alarmas.</string>
+    <string name="cg_kill">Lista de detención permanente</string>
+    <string name="cg_kill_desc">Apps y procesos del sistema que se detienen cada vez que la pantalla se apaga mientras se carga.</string>
+    <string name="cg_choose">Elegir apps (%1$d)</string>
+    <string name="cg_fast_wake">Impulso de despertar rápido</string>
+    <string name="cg_fast_wake_desc">Detecta el botón de encendido con la pantalla apagada y sube los relojes al máximo al instante, para desbloquear más rápido.</string>
+    <string name="cg_search">Buscar apps</string>
+    <string name="cg_done">Listo</string>
 </resources>

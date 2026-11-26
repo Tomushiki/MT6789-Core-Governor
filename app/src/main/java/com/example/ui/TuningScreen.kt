@@ -20,6 +20,7 @@ import android.content.res.Configuration
 import android.os.SystemClock
 import android.view.WindowManager
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
@@ -61,6 +62,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -68,6 +70,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -93,18 +96,26 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.governor.GameThreadInspectionResult
 import com.example.governor.SensorPinner
 import com.example.model.FreqRange
 import com.example.model.GovernorConfig
 import com.example.model.overlayCompactScaleFor
 import com.example.model.overlayExpandedScaleFor
 import com.example.model.overlayPosPm
+import com.example.model.overlayBgOpacityFor
+import com.example.model.overlayTextScaleFor
+import com.example.model.OVERLAY_TEXT_SCALE_MAX_PCT
+import com.example.model.OVERLAY_TEXT_SCALE_MIN_PCT
+import com.example.model.overlayPosPmFor
+import com.example.model.overlayScaleFor
 import com.example.model.GovernorMode
 import com.example.model.HardwareSpec
 import com.example.model.PowerPolarity
 import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
 import com.example.model.TelemetryState
+import com.example.model.ThreadAffinityMapping
 import com.example.model.ThrottleCurveShape
 import com.example.service.BootState
 import com.example.service.OverlaySizing
@@ -132,6 +143,7 @@ private enum class TuningCategory(@StringRes val labelRes: Int) {
     NIFTY(R.string.tuning_cat_nifty),
     THERMAL(R.string.tuning_cat_thermal),
     POWER(R.string.tuning_cat_power),
+    GAME_THREADS(R.string.tuning_cat_game_threads),
     PRESETS(R.string.tuning_cat_presets)
 }
 
@@ -170,7 +182,9 @@ fun TuningScreen(
         bgOpacityPct: Int?,
         isLandscape: Boolean
     ) -> Unit,
-    onUpdateOverlayPosition: (Int?, Int?, Boolean) -> Unit,
+    onUpdateOverlayPosition: (Int?, Int?, Boolean, Boolean) -> Unit,
+    onUpdateOverlayStyle: (OverlayStyle, Boolean, Int?, Int?, Int?, Int?, Boolean) -> Unit,
+    onSetOverlayTextScale: (OverlayStyle, Int) -> Unit,
     onUpdateRamPin: (Boolean?, Boolean?) -> Unit,
     onUpdateClusterRange: (GovernorMode, Int, FreqRange) -> Unit,
     onUpdateGpuRange: (GovernorMode, FreqRange) -> Unit,
@@ -210,6 +224,7 @@ fun TuningScreen(
         polarity: PowerPolarity?,
         componentAware: Boolean?
     ) -> Unit,
+    onSetSmoothPowerLimit: (Boolean) -> Unit,
     onUpdateAfterburn: (
         enabled: Boolean?,
         strength: com.example.model.BoostStrength?,
@@ -220,6 +235,7 @@ fun TuningScreen(
         voltageSagEnabled: Boolean?,
         toastEnabled: Boolean?
     ) -> Unit,
+    onSetBoostStrength: (String, com.example.model.BoostStrength?) -> Unit,
     onSavePreset: (String) -> Unit,
     onLoadPreset: (PresetItem) -> Unit,
     onDeletePreset: (PresetItem) -> Unit,
@@ -231,7 +247,8 @@ fun TuningScreen(
         enabled: Boolean?,
         rate: SensorPinner.Rate?,
         toggleType: Int?,
-        pauseWhenScreenOff: Boolean?
+        pauseWhenScreenOff: Boolean?,
+        gameOnly: Boolean?
     ) -> Unit,
     protectionStatus: com.example.governor.ProtectionStatus = com.example.governor.ProtectionStatus(),
     onSetProtectFromKill: (Boolean) -> Unit = {},
@@ -245,6 +262,18 @@ fun TuningScreen(
         cpuThresholdPct: Int?
     ) -> Unit = { _, _, _, _ -> },
     onToggleHunterWhitelist: (String) -> Unit = {},
+    gameThreadInspection: GameThreadInspectionResult = GameThreadInspectionResult(),
+    isRefreshingGameThreads: Boolean = false,
+    onRefreshGameThreads: () -> Unit = {},
+    onSetGameThreadEnabled: (Boolean) -> Unit = {},
+    onSetGameThreadAutoClassify: (Boolean) -> Unit = {},
+    onSetGameThreadSelectedGame: (String) -> Unit = {},
+    onUpsertThreadMappings: (List<ThreadAffinityMapping>) -> Unit = {},
+    onUpdateThreadMapping: (Int, ThreadAffinityMapping) -> Unit = { _, _ -> },
+    onRemoveThreadMapping: (Int) -> Unit = {},
+    onRemoveHistoricalThread: (String, String) -> Unit = { _, _ -> },
+    onClearGameThreadHistory: (String) -> Unit = {},
+    onClearAllThreadHistory: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -274,6 +303,16 @@ fun TuningScreen(
     var editingMode by rememberSaveable { mutableStateOf(GovernorMode.NORMAL) }
     var presetNameInput by remember { mutableStateOf("") }
     var fineOverlayControl by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(selectedCategory) {
+        if (selectedCategory == TuningCategory.GAME_THREADS) {
+            onRefreshGameThreads()
+        }
+    }
+
+    BackHandler(enabled = selectedCategory != TuningCategory.ALL) {
+        selectedCategory = TuningCategory.ALL
+    }
 
     val editingModeLabel = stringResource(
         if (editingMode == GovernorMode.NORMAL) R.string.mode_normal else R.string.mode_game
@@ -780,6 +819,11 @@ fun TuningScreen(
                 }
             }
 
+            // v3.6.6 Charge sleep guard (Screen-off section)
+            if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.SCREEN_OFF) {
+                item { ChargeGuardCard() }
+            }
+
             // 2c. Overlay
             if (selectedCategory == TuningCategory.ALL || selectedCategory == TuningCategory.OVERLAY) {
                 item {
@@ -876,36 +920,10 @@ fun TuningScreen(
                                 else -> OverlaySizing.DEFAULT_DETAILED_ROW_COUNT
                             }
                         }
-                        val compactMaxScalePct = remember(screenW, screenH, density, overlayStrings) {
-                            val (natW, natH) = OverlaySizing.measureNaturalSizeAtScaleOne(
-                                density,
-                                OverlayStyle.COMPACT,
-                                strings = overlayStrings
-                            )
-                            OverlaySizing.maxScalePct(screenW, screenH, OverlayStyle.COMPACT, natW, natH)
-                        }
-                        val expandedStyle = if (config.overlayDetailed) OverlayStyle.DETAILED else OverlayStyle.EXPANDED
-                        val expandedMaxScalePct = remember(screenW, screenH, density, expandedStyle, detailedRowCount, overlayStrings) {
-                            val (natW, natH) = OverlaySizing.measureNaturalSizeAtScaleOne(
-                                density,
-                                expandedStyle,
-                                detailedRowCount,
-                                strings = overlayStrings
-                            )
-                            OverlaySizing.maxScalePct(screenW, screenH, expandedStyle, natW, natH)
-                        }
                         val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
                         val scaleOrientLabel = stringResource(
                             if (isLandscape) R.string.tuning_overlay_orient_landscape
                             else R.string.tuning_overlay_orient_portrait
-                        )
-                        val compactDisplayPct = config.overlayCompactScaleFor(isLandscape).coerceIn(
-                            OverlaySizing.MIN_SCALE_PCT,
-                            compactMaxScalePct
-                        )
-                        val expandedDisplayPct = config.overlayExpandedScaleFor(isLandscape).coerceIn(
-                            OverlaySizing.MIN_SCALE_PCT,
-                            expandedMaxScalePct
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -940,100 +958,33 @@ fun TuningScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
-                        OverlayFineSliderRow(
-                            title = stringResource(R.string.tuning_overlay_compact_size, scaleOrientLabel),
-                            valueText = "${compactDisplayPct}%",
-                            explanation = stringResource(
-                                R.string.tuning_overlay_compact_size_desc,
-                                OverlaySizing.MIN_SCALE_PCT,
-                                compactMaxScalePct
-                            ),
-                            value = compactDisplayPct,
-                            fullMin = OverlaySizing.MIN_SCALE_PCT,
-                            fullMax = compactMaxScalePct,
-                            stepAmount = 1,
-                            fineHalfWindow = 10,
-                            fineMode = fineOverlayControl,
-                            onIntValueChange = {
-                                onUpdateOverlay(null, null, null, null, it, null, null, isLandscape)
-                            },
-                            enabled = config.overlayEnabled,
-                            testTag = "overlay_compact_scale_slider"
-                        )
+                        val activeStyle = when {
+                            config.overlayDetailed -> OverlayStyle.DETAILED
+                            config.overlayExpanded -> OverlayStyle.EXPANDED
+                            else -> OverlayStyle.COMPACT
+                        }
+                        for (style in OverlayStyle.entries) key(style) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                            OverlayStyleControls(
+                                style = style,
+                                isActive = style == activeStyle,
+                                config = config,
+                                isLandscape = isLandscape,
+                                orientLabel = scaleOrientLabel,
+                                screenW = screenW,
+                                screenH = screenH,
+                                density = density,
+                                strings = overlayStrings,
+                                detailedRowCount = detailedRowCount,
+                                fineMode = fineOverlayControl,
+                                onUpdateOverlayStyle = onUpdateOverlayStyle,
+                                onSetOverlayTextScale = onSetOverlayTextScale
+                            )
+                        }
 
-                        Spacer(modifier = Modifier.height(10.dp))
-                        OverlayFineSliderRow(
-                            title = stringResource(R.string.tuning_overlay_expanded_size, scaleOrientLabel),
-                            valueText = "${expandedDisplayPct}%",
-                            explanation = stringResource(
-                                R.string.tuning_overlay_expanded_size_desc,
-                                OverlaySizing.MIN_SCALE_PCT,
-                                expandedMaxScalePct
-                            ),
-                            value = expandedDisplayPct,
-                            fullMin = OverlaySizing.MIN_SCALE_PCT,
-                            fullMax = expandedMaxScalePct,
-                            stepAmount = 1,
-                            fineHalfWindow = 10,
-                            fineMode = fineOverlayControl,
-                            onIntValueChange = {
-                                onUpdateOverlay(null, null, null, null, null, it, null, isLandscape)
-                            },
-                            enabled = config.overlayEnabled,
-                            testTag = "overlay_expanded_scale_slider"
-                        )
-
-                        val posStyleName = stringResource(
-                            when {
-                                config.overlayDetailed -> R.string.tuning_overlay_style_detailed
-                                config.overlayExpanded -> R.string.tuning_overlay_style_expanded
-                                else -> R.string.tuning_overlay_style_compact
-                            }
-                        )
-                        val (posXPm, posYPm) = config.overlayPosPm(isLandscape)
-                        val clampedXPm = posXPm.coerceIn(0, 1000)
-                        val clampedYPm = posYPm.coerceIn(0, 1000)
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        OverlayFineSliderRow(
-                            title = stringResource(R.string.tuning_overlay_pos_x, posStyleName, scaleOrientLabel),
-                            valueText = "${String.format(Locale.US, "%.1f", clampedXPm / 10f)}%",
-                            explanation = stringResource(R.string.tuning_overlay_pos_x_desc),
-                            value = clampedXPm,
-                            fullMin = 0,
-                            fullMax = 1000,
-                            stepAmount = 1,
-                            fineHalfWindow = 100,
-                            fineMode = fineOverlayControl,
-                            onIntValueChange = {
-                                onUpdateOverlayPosition(it, null, false)
-                            },
-                            enabled = config.overlayEnabled,
-                            testTag = "overlay_pos_x_slider"
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        OverlayFineSliderRow(
-                            title = stringResource(R.string.tuning_overlay_pos_y, posStyleName, scaleOrientLabel),
-                            valueText = "${String.format(Locale.US, "%.1f", clampedYPm / 10f)}%",
-                            explanation = stringResource(R.string.tuning_overlay_pos_y_desc),
-                            value = clampedYPm,
-                            fullMin = 0,
-                            fullMax = 1000,
-                            stepAmount = 1,
-                            fineHalfWindow = 100,
-                            fineMode = fineOverlayControl,
-                            onIntValueChange = {
-                                onUpdateOverlayPosition(null, it, false)
-                            },
-                            enabled = config.overlayEnabled,
-                            testTag = "overlay_pos_y_slider"
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
                         OutlinedButton(
-                            onClick = { onUpdateOverlayPosition(null, null, true) },
+                            onClick = { onUpdateOverlayPosition(null, null, true, isLandscape) },
                             enabled = config.overlayEnabled,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1075,14 +1026,17 @@ fun TuningScreen(
                     PowerThrottleSection(
                         config = config,
                         telemetryFlow = telemetryFlow,
-                        onUpdatePowerThrottle = onUpdatePowerThrottle
+                        onUpdatePowerThrottle = onUpdatePowerThrottle,
+                        onSetSmoothPowerLimit = onSetSmoothPowerLimit
                     )
                 }
                 item {
                     AfterburnSection(
                         config = config,
                         telemetryFlow = telemetryFlow,
-                        onUpdateAfterburn = onUpdateAfterburn
+                        onUpdateAfterburn = onUpdateAfterburn,
+                        installedApps = installedApps,
+                        onSetBoostStrength = onSetBoostStrength
                     )
                 }
                 item {
@@ -1094,6 +1048,35 @@ fun TuningScreen(
                         onToggleWhitelist = onToggleHunterWhitelist
                     )
                 }
+            }
+
+            // 4b. Game Thread Controller
+            if (selectedCategory == TuningCategory.ALL) {
+                item {
+                    GameThreadSummaryCard(
+                        config = config,
+                        onOpenGameThreads = { selectedCategory = TuningCategory.GAME_THREADS }
+                    )
+                }
+            }
+            if (selectedCategory == TuningCategory.GAME_THREADS) {
+                gameThreadsItems(
+                    config = config,
+                    hardwareSpec = hardwareSpec,
+                    inspection = gameThreadInspection,
+                    isRefreshing = isRefreshingGameThreads,
+                    installedApps = installedApps,
+                    onRefresh = onRefreshGameThreads,
+                    onSetEnabled = onSetGameThreadEnabled,
+                    onSetAutoClassify = onSetGameThreadAutoClassify,
+                    onSetSelectedGame = onSetGameThreadSelectedGame,
+                    onUpsertMappings = onUpsertThreadMappings,
+                    onUpdateMapping = onUpdateThreadMapping,
+                    onRemoveMapping = onRemoveThreadMapping,
+                    onRemoveHistoricalThread = onRemoveHistoricalThread,
+                    onClearGameHistory = onClearGameThreadHistory,
+                    onClearAllHistory = onClearAllThreadHistory
+                )
             }
 
             // 5. Presets, JSON Export/Import & Hardware Details
@@ -1254,6 +1237,147 @@ fun TuningScreen(
                 }
             }
         }
+    }
+}
+
+/** Size + X/Y position for one overlay style (all three are always editable, not only the active one). */
+@Composable
+private fun OverlayStyleControls(
+    style: OverlayStyle,
+    isActive: Boolean,
+    config: GovernorConfig,
+    isLandscape: Boolean,
+    orientLabel: String,
+    screenW: Int,
+    screenH: Int,
+    density: Float,
+    strings: OverlaySizing.OverlayStrings,
+    detailedRowCount: Int,
+    fineMode: Boolean,
+    onUpdateOverlayStyle: (OverlayStyle, Boolean, Int?, Int?, Int?, Int?, Boolean) -> Unit,
+    onSetOverlayTextScale: (OverlayStyle, Int) -> Unit
+) {
+    val tag = style.name.lowercase()
+    val styleName = stringResource(
+        when (style) {
+            OverlayStyle.COMPACT -> R.string.tuning_overlay_style_compact
+            OverlayStyle.EXPANDED -> R.string.tuning_overlay_style_expanded
+            OverlayStyle.DETAILED -> R.string.tuning_overlay_style_detailed
+        }
+    )
+    val textScalePct = config.overlayTextScaleFor(style)
+    val maxScalePct = remember(screenW, screenH, density, style, detailedRowCount, strings, textScalePct) {
+        val (natW, natH) = OverlaySizing.measureNaturalSizeAtScaleOne(
+            density,
+            style,
+            detailedRowCount,
+            strings = strings,
+            textScalePct = textScalePct
+        )
+        OverlaySizing.maxScalePct(screenW, screenH, style, natW, natH)
+    }
+    val scalePct = config.overlayScaleFor(style, isLandscape)
+        .coerceIn(OverlaySizing.MIN_SCALE_PCT, maxScalePct)
+    val (posX, posY) = config.overlayPosPmFor(style, isLandscape)
+    val x = posX.coerceIn(0, 1000)
+    val y = posY.coerceIn(0, 1000)
+    val enabled = config.overlayEnabled
+
+    Text(
+        text = stringResource(
+            if (isActive) R.string.tuning_overlay_style_header_active else R.string.tuning_overlay_style_header,
+            styleName.replaceFirstChar { it.uppercase() }
+        ),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else 0.38f)
+    )
+    Spacer(modifier = Modifier.height(6.dp))
+    OverlayFineSliderRow(
+        title = stringResource(R.string.tuning_overlay_style_size, orientLabel),
+        valueText = "$scalePct%",
+        explanation = stringResource(
+            R.string.tuning_overlay_style_size_desc,
+            OverlaySizing.MIN_SCALE_PCT,
+            maxScalePct
+        ),
+        value = scalePct,
+        fullMin = OverlaySizing.MIN_SCALE_PCT,
+        fullMax = maxScalePct,
+        stepAmount = 1,
+        fineHalfWindow = 10,
+        fineMode = fineMode,
+        onIntValueChange = { onUpdateOverlayStyle(style, isLandscape, it, null, null, null, false) },
+        enabled = enabled,
+        testTag = "overlay_${tag}_scale_slider"
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    OverlayFineSliderRow(
+        title = stringResource(R.string.tuning_overlay_style_pos_x, orientLabel),
+        valueText = "${String.format(Locale.US, "%.1f", x / 10f)}%",
+        explanation = stringResource(R.string.tuning_overlay_pos_x_desc),
+        value = x,
+        fullMin = 0,
+        fullMax = 1000,
+        stepAmount = 1,
+        fineHalfWindow = 100,
+        fineMode = fineMode,
+        onIntValueChange = { onUpdateOverlayStyle(style, isLandscape, null, it, null, null, false) },
+        enabled = enabled,
+        testTag = "overlay_${tag}_pos_x_slider"
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    OverlayFineSliderRow(
+        title = stringResource(R.string.tuning_overlay_style_pos_y, orientLabel),
+        valueText = "${String.format(Locale.US, "%.1f", y / 10f)}%",
+        explanation = stringResource(R.string.tuning_overlay_pos_y_desc),
+        value = y,
+        fullMin = 0,
+        fullMax = 1000,
+        stepAmount = 1,
+        fineHalfWindow = 100,
+        fineMode = fineMode,
+        onIntValueChange = { onUpdateOverlayStyle(style, isLandscape, null, null, it, null, false) },
+        enabled = enabled,
+        testTag = "overlay_${tag}_pos_y_slider"
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    val bgOpacity = config.overlayBgOpacityFor(style)
+    OverlayFineSliderRow(
+        title = stringResource(R.string.tuning_overlay_style_bg_opacity),
+        valueText = "$bgOpacity%",
+        explanation = stringResource(R.string.tuning_overlay_style_bg_opacity_desc),
+        value = bgOpacity,
+        fullMin = 0,
+        fullMax = 100,
+        stepAmount = 1,
+        fineHalfWindow = 10,
+        fineMode = fineMode,
+        onIntValueChange = { onUpdateOverlayStyle(style, isLandscape, null, null, null, it, false) },
+        enabled = enabled,
+        testTag = "overlay_${tag}_bg_opacity_slider"
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    OverlayFineSliderRow(
+        title = stringResource(R.string.tuning_overlay_style_text_size),
+        valueText = "$textScalePct%",
+        explanation = stringResource(R.string.tuning_overlay_style_text_size_desc),
+        value = textScalePct,
+        fullMin = OVERLAY_TEXT_SCALE_MIN_PCT,
+        fullMax = OVERLAY_TEXT_SCALE_MAX_PCT,
+        stepAmount = 1,
+        fineHalfWindow = 10,
+        fineMode = fineMode,
+        onIntValueChange = { onSetOverlayTextScale(style, it) },
+        enabled = enabled,
+        testTag = "overlay_${tag}_text_size_slider"
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    TextButton(
+        onClick = { onUpdateOverlayStyle(style, isLandscape, null, null, null, null, true) },
+        enabled = enabled,
+        modifier = Modifier.testTag("overlay_${tag}_reset_position_button")
+    ) {
+        Text(stringResource(R.string.tuning_overlay_style_reset_pos, styleName))
     }
 }
 

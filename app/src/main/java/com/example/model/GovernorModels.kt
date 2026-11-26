@@ -17,6 +17,7 @@ package com.example.model
 
 import androidx.annotation.StringRes
 import com.example.R
+import com.example.service.OverlayStyle
 
 enum class GovernorMode {
     NORMAL,
@@ -192,7 +193,9 @@ data class PowerThrottleConfig(
     val averagingSamples: Int = 10,
     val unitScale: PowerUnitScale = PowerUnitScale.AUTO,
     val polarity: PowerPolarity = PowerPolarity.AUTO_ABS,
-    val componentAware: Boolean = true
+    val componentAware: Boolean = true,
+    /** v3.8.0: spread the cap between two adjacent frequency steps (duty cycle). v3.8.3: ON by default for fresh installs only (saved configs keep their value); also smooths thermal caps. */
+    val smoothPowerLimit: Boolean = true
 )
 
 enum class BoostStrength(val label: String, val factor: Float, @StringRes val labelRes: Int) {
@@ -239,6 +242,37 @@ data class StutterHunterConfig(
     val whitelist: Set<String> = emptySet()
 )
 
+data class ThreadAffinityMapping(
+    val pattern: String,
+    val cpuMask: String,
+    val exactMatch: Boolean = false,
+    val packageName: String = ""
+)
+
+data class ThreadObservationEntry(
+    val threadName: String,
+    val lastKnownTid: Int = 0,
+    val lastObservedAtMs: Long = 0L,
+    val observationCount: Int = 1
+)
+
+data class GameThreadHistoryRecord(
+    val packageName: String,
+    val displayName: String = "",
+    val lastProcessName: String = "",
+    val lastObservedAtMs: Long = 0L,
+    val threads: List<ThreadObservationEntry> = emptyList()
+)
+
+data class GameThreadControllerConfig(
+    val enabled: Boolean = false,
+    val autoClassify: Boolean = false,
+    val selectedGamePackage: String = "",
+    val lastObservedGamePackage: String = "",
+    val mappings: List<ThreadAffinityMapping> = emptyList(),
+    val threadHistory: Map<String, GameThreadHistoryRecord> = emptyMap()
+)
+
 data class GovernorConfig(
     val pollIntervalMs: Long = 150L,
     val adaptivePollingEnabled: Boolean = true,
@@ -261,6 +295,17 @@ data class GovernorConfig(
     // Landscape overlay sizes (-1 sentinel = same as portrait so existing configs keep current size).
     val overlayCompactScalePctL: Int = -1,
     val overlayExpandedScalePctL: Int = -1,
+    // v3.7.0: the detailed overlay has its own size (-1 sentinel = follow the expanded size, as before).
+    val overlayDetailedScalePct: Int = -1,
+    val overlayDetailedScalePctL: Int = -1,
+    // v3.7.1: per-style background opacity (-1 = follow the main overlayBgOpacityPct).
+    val overlayCompactBgOpacityPct: Int = -1,
+    val overlayExpandedBgOpacityPct: Int = -1,
+    val overlayDetailedBgOpacityPct: Int = -1,
+    // v3.8.0: per-style text size (100 = as before; label/value text only, not the ring-centre figure).
+    val overlayCompactTextScalePct: Int = 100,
+    val overlayExpandedTextScalePct: Int = 100,
+    val overlayDetailedTextScalePct: Int = 100,
     val overlayCompactXPm: Int = 40,
     val overlayCompactYPm: Int = 60,
     val overlayExpandedXPm: Int = 40,
@@ -326,7 +371,10 @@ data class GovernorConfig(
     // v3.0.0 Afterburn (default OFF); boostPackages = apps/games it is allowed to work on
     val afterburn: AfterburnConfig = AfterburnConfig(),
     val boostPackages: Set<String> = emptySet(),
-    val stutterHunter: StutterHunterConfig = StutterHunterConfig()
+    // v3.7.2: optional Afterburn strength per boosted app (an app without an entry uses afterburn.strength).
+    val boostStrengthByPkg: Map<String, BoostStrength> = emptyMap(),
+    val stutterHunter: StutterHunterConfig = StutterHunterConfig(),
+    val gameThreadController: GameThreadControllerConfig = GameThreadControllerConfig()
 )
 
 data class PresetItem(
@@ -403,6 +451,8 @@ data class TelemetryState(
     val temperatureC: Float = 0f,
     val tempSensorLabel: String = "Unassigned",
     val watts: Float = 0f,
+    /** v3.8.1: fast discharge watts (about 2 samples of smoothing) for the overlay; [watts] stays the slow average the limiter uses. */
+    val liveWatts: Float = 0f,
     val chargeWatts: Float = 0f,
     val signedWatts: Float = 0f,
     val batteryState: BatteryState = BatteryState.UNKNOWN,
@@ -474,44 +524,174 @@ fun GovernorConfig.withOverlayPosPm(landscape: Boolean, xPm: Int?, yPm: Int?): G
     }
 }
 
+/** Resets every style's saved overlay position, for both portrait and landscape, to the defaults. */
+fun GovernorConfig.withOverlayPositionsReset(): GovernorConfig = copy(
+    overlayCompactXPm = 40, overlayCompactYPm = 60,
+    overlayExpandedXPm = 40, overlayExpandedYPm = 60,
+    overlayDetailedXPm = 40, overlayDetailedYPm = 60,
+    overlayCompactXPmL = 40, overlayCompactYPmL = 60,
+    overlayExpandedXPmL = 40, overlayExpandedYPmL = 60,
+    overlayDetailedXPmL = 40, overlayDetailedYPmL = 60
+)
+
 /** Effective compact overlay scale % for the given orientation (-1 sentinel falls back to portrait). */
 fun GovernorConfig.overlayCompactScaleFor(landscape: Boolean): Int {
     val raw = if (landscape && overlayCompactScalePctL >= 0) overlayCompactScalePctL else overlayCompactScalePct
     return raw.coerceIn(25, 200)
 }
 
-/** Effective expanded/detailed overlay scale % for the given orientation (-1 sentinel falls back to portrait). */
+/** Effective expanded overlay scale % for the given orientation (-1 sentinel falls back to portrait). */
 fun GovernorConfig.overlayExpandedScaleFor(landscape: Boolean): Int {
     val raw = if (landscape && overlayExpandedScalePctL >= 0) overlayExpandedScalePctL else overlayExpandedScalePct
     return raw.coerceIn(25, 200)
 }
 
+/**
+ * Effective detailed overlay scale %. A detailed size that was never set (-1) follows the expanded size,
+ * so configs saved before v3.7.0 look exactly the same. Landscape falls back to the detailed portrait size
+ * first, and then to the expanded size.
+ */
+fun GovernorConfig.overlayDetailedScaleFor(landscape: Boolean): Int {
+    val raw = when {
+        landscape && overlayDetailedScalePctL >= 0 -> overlayDetailedScalePctL
+        overlayDetailedScalePct >= 0 -> overlayDetailedScalePct
+        else -> return overlayExpandedScaleFor(landscape)
+    }
+    return raw.coerceIn(25, 200)
+}
+
 /** Effective overlay scale % for the active style and orientation. */
 fun GovernorConfig.overlayScalePct(landscape: Boolean): Int {
-    return if (overlayExpanded || overlayDetailed) {
+    return if (overlayDetailed) {
+        overlayDetailedScaleFor(landscape)
+    } else if (overlayExpanded) {
         overlayExpandedScaleFor(landscape)
     } else {
         overlayCompactScaleFor(landscape)
     }
 }
 
-/** Returns a copy with compact and/or expanded scale % updated for one orientation (null keeps old value). */
+/** Returns a copy with compact, expanded and/or detailed scale % updated for one orientation (null keeps old value). */
 fun GovernorConfig.withOverlayScalePct(
     landscape: Boolean,
     compactPct: Int? = null,
-    expandedPct: Int? = null
+    expandedPct: Int? = null,
+    detailedPct: Int? = null
 ): GovernorConfig {
     val nextCompact = compactPct?.coerceIn(25, 200)
     val nextExpanded = expandedPct?.coerceIn(25, 200)
+    val nextDetailed = detailedPct?.coerceIn(25, 200)
     return if (landscape) {
         copy(
             overlayCompactScalePctL = nextCompact ?: overlayCompactScalePctL,
-            overlayExpandedScalePctL = nextExpanded ?: overlayExpandedScalePctL
+            overlayExpandedScalePctL = nextExpanded ?: overlayExpandedScalePctL,
+            overlayDetailedScalePctL = nextDetailed ?: overlayDetailedScalePctL
         )
     } else {
         copy(
             overlayCompactScalePct = nextCompact ?: overlayCompactScalePct,
-            overlayExpandedScalePct = nextExpanded ?: overlayExpandedScalePct
+            overlayExpandedScalePct = nextExpanded ?: overlayExpandedScalePct,
+            overlayDetailedScalePct = nextDetailed ?: overlayDetailedScalePct
         )
     }
+}
+
+// ---- Per-style access (v3.7.0): every overlay style can be tuned without having to be the active one. ----
+
+private fun GovernorConfig.viewedAs(style: OverlayStyle): GovernorConfig = copy(
+    overlayExpanded = style == OverlayStyle.EXPANDED,
+    overlayDetailed = style == OverlayStyle.DETAILED
+)
+
+/** Saved position (permille) of one specific style for one orientation. */
+fun GovernorConfig.overlayPosPmFor(style: OverlayStyle, landscape: Boolean): Pair<Int, Int> =
+    viewedAs(style).overlayPosPm(landscape)
+
+/** Returns a copy with one specific style's position changed (null keeps the old axis); the active style is untouched. */
+fun GovernorConfig.withOverlayPosPmFor(style: OverlayStyle, landscape: Boolean, xPm: Int?, yPm: Int?): GovernorConfig =
+    viewedAs(style).withOverlayPosPm(landscape, xPm, yPm)
+        .copy(overlayExpanded = overlayExpanded, overlayDetailed = overlayDetailed)
+
+/** Resets one style's position, for both orientations, to the defaults. */
+fun GovernorConfig.withOverlayPositionResetFor(style: OverlayStyle): GovernorConfig =
+    withOverlayPosPmFor(style, false, 40, 60).withOverlayPosPmFor(style, true, 40, 60)
+
+/** Effective scale % of one specific style for one orientation. */
+fun GovernorConfig.overlayScaleFor(style: OverlayStyle, landscape: Boolean): Int = when (style) {
+    OverlayStyle.COMPACT -> overlayCompactScaleFor(landscape)
+    OverlayStyle.EXPANDED -> overlayExpandedScaleFor(landscape)
+    OverlayStyle.DETAILED -> overlayDetailedScaleFor(landscape)
+}
+
+/** Returns a copy with one specific style's scale % changed for one orientation. */
+fun GovernorConfig.withOverlayScalePctFor(style: OverlayStyle, landscape: Boolean, pct: Int): GovernorConfig = when (style) {
+    OverlayStyle.COMPACT -> withOverlayScalePct(landscape, compactPct = pct)
+    OverlayStyle.EXPANDED -> withOverlayScalePct(landscape, expandedPct = pct)
+    OverlayStyle.DETAILED -> withOverlayScalePct(landscape, detailedPct = pct)
+}
+
+// ---- Per-style background opacity (v3.7.1) ----
+
+/** Background opacity % of one style; a style that was never tuned (-1) follows the main background opacity. */
+fun GovernorConfig.overlayBgOpacityFor(style: OverlayStyle): Int {
+    val raw = when (style) {
+        OverlayStyle.COMPACT -> overlayCompactBgOpacityPct
+        OverlayStyle.EXPANDED -> overlayExpandedBgOpacityPct
+        OverlayStyle.DETAILED -> overlayDetailedBgOpacityPct
+    }
+    return (if (raw >= 0) raw else overlayBgOpacityPct).coerceIn(0, 100)
+}
+
+/** Background opacity % of the style that is showing now. */
+fun GovernorConfig.overlayActiveBgOpacityPct(): Int = overlayBgOpacityFor(
+    when {
+        overlayDetailed -> OverlayStyle.DETAILED
+        overlayExpanded -> OverlayStyle.EXPANDED
+        else -> OverlayStyle.COMPACT
+    }
+)
+
+/** Returns a copy with one style's background opacity set (the other styles are untouched). */
+fun GovernorConfig.withOverlayBgOpacityFor(style: OverlayStyle, pct: Int): GovernorConfig {
+    val v = pct.coerceIn(0, 100)
+    return when (style) {
+        OverlayStyle.COMPACT -> copy(overlayCompactBgOpacityPct = v)
+        OverlayStyle.EXPANDED -> copy(overlayExpandedBgOpacityPct = v)
+        OverlayStyle.DETAILED -> copy(overlayDetailedBgOpacityPct = v)
+    }
+}
+
+// ---- Per-style text size (v3.8.0) ----
+
+const val OVERLAY_TEXT_SCALE_MIN_PCT = 70
+const val OVERLAY_TEXT_SCALE_MAX_PCT = 160
+
+fun GovernorConfig.overlayTextScaleFor(style: OverlayStyle): Int = when (style) {
+    OverlayStyle.COMPACT -> overlayCompactTextScalePct
+    OverlayStyle.EXPANDED -> overlayExpandedTextScalePct
+    OverlayStyle.DETAILED -> overlayDetailedTextScalePct
+}.coerceIn(OVERLAY_TEXT_SCALE_MIN_PCT, OVERLAY_TEXT_SCALE_MAX_PCT)
+
+/** Returns a copy with one style's text size set (the other styles are untouched). */
+fun GovernorConfig.withOverlayTextScaleFor(style: OverlayStyle, pct: Int): GovernorConfig {
+    val v = pct.coerceIn(OVERLAY_TEXT_SCALE_MIN_PCT, OVERLAY_TEXT_SCALE_MAX_PCT)
+    return when (style) {
+        OverlayStyle.COMPACT -> copy(overlayCompactTextScalePct = v)
+        OverlayStyle.EXPANDED -> copy(overlayExpandedTextScalePct = v)
+        OverlayStyle.DETAILED -> copy(overlayDetailedTextScalePct = v)
+    }
+}
+
+// ---- Per-app Afterburn strength (v3.7.2) ----
+
+/** Afterburn strength used for one app: its own choice if it has one, otherwise the main setting. */
+fun GovernorConfig.boostStrengthFor(packageName: String): BoostStrength =
+    boostStrengthByPkg[packageName] ?: afterburn.strength
+
+/** Returns a copy with one app's strength set; null removes it so the app follows the main setting again. */
+fun GovernorConfig.withBoostStrengthFor(packageName: String, strength: BoostStrength?): GovernorConfig {
+    if (packageName.isBlank()) return this
+    val next = boostStrengthByPkg.toMutableMap()
+    if (strength == null) next.remove(packageName) else next[packageName] = strength
+    return copy(boostStrengthByPkg = next)
 }

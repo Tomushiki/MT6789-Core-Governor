@@ -15,26 +15,32 @@
 
 package com.example.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.model.BoostStrength
 import com.example.model.GovernorConfig
+import com.example.model.InstalledAppInfo
 import com.example.model.AfterburnState
 import com.example.model.TelemetryState
 import com.example.ui.components.EcuCard
@@ -60,7 +66,9 @@ fun AfterburnSection(
         batteryThresholdPct: Int?,
         voltageSagEnabled: Boolean?,
         toastEnabled: Boolean?
-    ) -> Unit
+    ) -> Unit,
+    installedApps: List<InstalledAppInfo> = emptyList(),
+    onSetBoostStrength: (String, BoostStrength?) -> Unit = { _, _ -> }
 ) {
     val telemetry by telemetryFlow.collectAsStateWithLifecycle()
     val ext = LocalExtendedColors.current
@@ -121,6 +129,56 @@ fun AfterburnSection(
                     enabled = b.enabled,
                     modifier = Modifier.testTag("afterburn_strength_${st.name}")
                 )
+            }
+        }
+
+        if (config.boostPackages.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = stringResource(R.string.afterburn_per_app_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                text = stringResource(R.string.afterburn_per_app_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            val appLabels = remember(installedApps) { installedApps.associate { it.packageName to it.label } }
+            val boostApps = remember(config.boostPackages, appLabels) {
+                config.boostPackages.sortedBy { (appLabels[it] ?: it).lowercase() }
+            }
+            boostApps.forEach { pkg ->
+                key(pkg) {
+                    val own = config.boostStrengthByPkg[pkg]
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = appLabels[pkg] ?: pkg,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = own == null,
+                            onClick = { onSetBoostStrength(pkg, null) },
+                            label = { Text(stringResource(R.string.afterburn_per_app_default)) },
+                            enabled = b.enabled,
+                            modifier = Modifier.testTag("afterburn_app_${pkg}_default")
+                        )
+                        BoostStrength.values().forEach { st ->
+                            FilterChip(
+                                selected = own == st,
+                                onClick = { onSetBoostStrength(pkg, st) },
+                                label = { Text(stringResource(st.labelRes)) },
+                                enabled = b.enabled,
+                                modifier = Modifier.testTag("afterburn_app_${pkg}_${st.name}")
+                            )
+                        }
+                    }
+                }
             }
         }
 

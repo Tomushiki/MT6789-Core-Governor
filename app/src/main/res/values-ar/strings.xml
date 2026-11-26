@@ -676,6 +676,9 @@
     <string name="nifty_no_sensors">لم يُعثر على مستشعرات حركة مدعومة في هذا الجهاز.</string>
     <string name="nifty_pause_off_title">إيقاف مؤقت عند إطفاء الشاشة</string>
     <string name="nifty_pause_off_desc">يحرر المستشعرات عند إطفاء الشاشة ويثبتها مجدداً عند إضاءتها. يوفّر البطارية.</string>
+    <string name="nifty_game_only_title">التثبيت أثناء اللعب فقط</string>
+    <string name="nifty_game_only_desc">يثبّت المستشعرات فقط أثناء اكتشاف لعبة وتشغيلها (وضع اللعبة) ويحررها في غير ذلك. يقلل استهلاك الطاقة في وضع الخمول.</string>
+    <string name="nifty_status_game_wait">بانتظار لعبة. المستشعرات غير مثبّتة حالياً.</string>
     <string name="nifty_status_active">نشط</string>
     <string name="nifty_status_waiting">بانتظار التشغيل: يبدأ عند تشغيل الحاكم.</string>
     <string name="nifty_status_paused">متوقف مؤقتاً (الشاشة مطفأة) أو تعذر تسجيل أي مستشعر. راجع السجل.</string>
@@ -902,4 +905,30 @@
         <item quantity="many">%1$d إيقاظاً</item>
         <item quantity="other">%1$d إيقاظ</item>
     </plurals>
+    <string name="hunter_res_gov_thermal">المنظّم: حد الحرارة</string>
+    <string name="hunter_res_gov_battery">المنظّم: حد البطارية</string>
+    <string name="hunter_action_line_governor">%1$s • %2$s → المنظّم</string>
+    <string name="afterburn_toast_reduced_title">AFTERBURN مخفَّض</string>
+    <string name="afterburn_toast_reduced_subtitle">%1$s • تم خفض التعزيز</string>
+    <string name="afterburn_toast_stopped_title">AFTERBURN متوقف</string>
+    <string name="afterburn_toast_stopped_heat_subtitle">%1$s • محظور بسبب الحرارة</string>
+    <string name="afterburn_toast_stopped_battery_subtitle">%1$s • محظور بسبب البطارية</string>
+    <string name="batt_charge_bands_session">الشحن في هذه الجلسة: %1$s</string>
+    <string name="batt_charge_bands_lifetime">إجمالي الشحن: %1$s</string>
+    <string name="batt_charge_voltage">أعلى جهد شحن: %1$s V (الجلسة) • %2$s V (الإجمالي)</string>
+    <string name="batt_charge_trust">موثوقية بيانات الشحن: %1$d%% (الشحن السريع يُحتسب أقل في السعة)</string>
+    <string name="cg_header">حارس الشحن أثناء السكون</string>
+    <string name="cg_enable">حارس الشحن أثناء السكون</string>
+    <string name="cg_enable_desc">عندما تكون الشاشة مطفأة والهاتف يشحن، يوقف تطبيقات الخلفية التي توقظ المعالج وتسخّن الهاتف. يتطلب صلاحيات الروت.</string>
+    <string name="cg_others">إيقاف جميع تطبيقات المستخدم الأخرى</string>
+    <string name="cg_others_desc">يوقف أيضاً كل تطبيق مثبّت غير موجود في القائمة البيضاء، كل دقيقة. يتم دائماً الإبقاء على الشاشة الرئيسية ولوحة المفاتيح والهاتف.</string>
+    <string name="cg_whitelist">القائمة البيضاء (لا تُوقف أبداً)</string>
+    <string name="cg_whitelist_desc">التطبيقات التي يجب أن تبقى تعمل، مثل تطبيقات المراسلة أو المنبهات.</string>
+    <string name="cg_kill">قائمة الإيقاف الدائم</string>
+    <string name="cg_kill_desc">التطبيقات وعمليات النظام التي تُوقف في كل مرة تُطفأ فيها الشاشة أثناء الشحن.</string>
+    <string name="cg_choose">اختيار التطبيقات (%1$d)</string>
+    <string name="cg_fast_wake">تعزيز الاستيقاظ السريع</string>
+    <string name="cg_fast_wake_desc">يكتشف زر التشغيل أثناء إطفاء الشاشة ويرفع الترددات إلى الحد الأقصى فوراً، ليكون فتح القفل أسرع.</string>
+    <string name="cg_search">بحث عن تطبيقات</string>
+    <string name="cg_done">تم</string>
 </resources>

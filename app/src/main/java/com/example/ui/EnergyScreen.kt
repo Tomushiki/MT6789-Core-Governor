@@ -846,6 +846,41 @@ private fun BatteryCard(
             )
         }
 
+        if (batt.chargeBandLifetimeSec.any { it >= 1f }) {
+            Spacer(modifier = Modifier.height(8.dp))
+            val bandLabels = listOf("<5 W", "5-10 W", "10-15 W", "15-20 W", "20-25 W", "25+ W")
+            fun bandText(secs: List<Float>): String =
+                secs.indices.filter { secs[it] >= 1f && it < bandLabels.size }
+                    .joinToString("  •  ") { "${bandLabels[it]} ${formatChargeBandTime(secs[it])}" }
+                    .ifEmpty { "--" }
+            Text(
+                text = stringResource(R.string.batt_chg_bands_title),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Text(
+                    text = stringResource(R.string.batt_chg_bands_session, bandText(batt.chargeBandSessionSec)),
+                    style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = stringResource(R.string.batt_chg_bands_lifetime, bandText(batt.chargeBandLifetimeSec)),
+                    style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            val peakVoltText = if (batt.peakChargeVoltageMv > 0f) {
+                String.format(Locale.US, "%.2f V", batt.peakChargeVoltageMv / 1000f)
+            } else "--"
+            val trustText = if (batt.chargeTrustPct >= 0) "${batt.chargeTrustPct}%" else "--"
+            Text(
+                text = stringResource(R.string.batt_chg_peak_trust, peakVoltText, trustText),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
         if (batt.recentSegments.isNotEmpty()) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -874,6 +909,17 @@ private fun BatteryCard(
                         style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (seg.direction == BatteryState.CHARGING && seg.avgWatts > 0f) {
+                        Text(
+                            text = stringResource(
+                                R.string.batt_seg_chg_extra,
+                                String.format(Locale.US, "%.1f", seg.avgWatts),
+                                String.format(Locale.US, "%.2f", seg.peakVoltageMv / 1000f)
+                            ),
+                            style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelSmall.fontSize),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -1147,4 +1193,14 @@ private fun BatteryTruthLine(telemetryFlow: kotlinx.coroutines.flow.StateFlow<co
         style = MaterialTheme.typography.labelSmall,
         color = if (t.calChargeDone && t.calDischargeDone) ext.optimal else MaterialTheme.colorScheme.onSurfaceVariant
     )
+}
+
+/** Compact duration for the charge-power-band lines: 45s, 12m, 1h 05m. */
+private fun formatChargeBandTime(sec: Float): String {
+    val total = sec.toInt().coerceAtLeast(0)
+    return when {
+        total < 60 -> "${total}s"
+        total < 3600 -> "${total / 60}m"
+        else -> String.format(Locale.US, "%dh %02dm", total / 3600, (total % 3600) / 60)
+    }
 }

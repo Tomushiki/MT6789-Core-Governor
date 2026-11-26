@@ -260,6 +260,8 @@ private fun HunterActionRow(
     val gameLabel = appLabels[action.gamePackage] ?: action.gamePackage
     val culpritLabel = appLabels[action.culpritPackage] ?: action.culpritPackage
     val resultText = when (action.result) {
+        HunterActionResult.GOVERNOR_THERMAL -> stringResource(R.string.hunter_res_gov_thermal)
+        HunterActionResult.GOVERNOR_BATTERY -> stringResource(R.string.hunter_res_gov_battery)
         HunterActionResult.REPORTED -> stringResource(R.string.hunter_res_reported)
         HunterActionResult.STOPPED_CHECKING -> stringResource(R.string.hunter_res_checking)
         HunterActionResult.RECOVERED -> stringResource(R.string.hunter_res_recovered)
@@ -272,14 +274,20 @@ private fun HunterActionRow(
         stringResource(R.string.hunter_action_fps_single, resultText, action.fpsBefore)
     }
     Column(modifier = Modifier.fillMaxWidth()) {
+        val isGovernor = action.result == HunterActionResult.GOVERNOR_THERMAL ||
+            action.result == HunterActionResult.GOVERNOR_BATTERY
         Text(
-            text = stringResource(
-                R.string.hunter_action_line,
-                timeText,
-                gameLabel,
-                culpritLabel,
-                action.cpuPct.roundToInt()
-            ),
+            text = if (isGovernor) {
+                stringResource(R.string.hunter_action_line_governor, timeText, gameLabel)
+            } else {
+                stringResource(
+                    R.string.hunter_action_line,
+                    timeText,
+                    gameLabel,
+                    culpritLabel,
+                    action.cpuPct.roundToInt()
+                )
+            },
             style = MaterialTheme.typography.bodySmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis

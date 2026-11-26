@@ -61,7 +61,9 @@ object PollPolicy {
         val maxLoadSpikePct: Float,
         val lastTouchMs: Long,
         val screenInteractive: Boolean,
-        val foregroundChanged: Boolean
+        val foregroundChanged: Boolean,
+        /** v3.8.1: the overlay is showing, so live watts need the loop at its base rate (never stretched). */
+        val overlayLive: Boolean = false
     )
 
     /** Result for one tick: the sleep to use and the state to carry forward. */
@@ -74,6 +76,7 @@ object PollPolicy {
         if (i.gameMode || i.burstActive) return false
         if (i.tempThrottleActive || i.powerThrottleActive) return false
         if (i.foregroundChanged) return false
+        if (i.overlayLive) return false
         if (i.cpuLoadPct > CALM_CPU_LOAD_PCT) return false
         if (i.gpuLoadPct > CALM_GPU_LOAD_PCT) return false
         if (i.maxLoadSpikePct >= SPIKE_PCT) return false
