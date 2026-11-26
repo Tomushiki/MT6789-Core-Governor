@@ -18,6 +18,14 @@ package com.example.data
 import android.content.Context
 import android.net.Uri
 import com.example.governor.GameThreadLogic
+import com.example.model.AfterburnConfig
+import com.example.model.AutoTuneCandidateSpec
+import com.example.model.AutoTuneMode
+import com.example.model.AutoTuneParam
+import com.example.model.AutoTuneTrialRecord
+import com.example.model.AutoTuneTrialStatus
+import com.example.model.BoostStrength
+import com.example.model.CompositeScoreWeights
 import com.example.model.EfficiencyMode
 import com.example.model.ExplorationRate
 import com.example.model.FreqRange
@@ -27,9 +35,9 @@ import com.example.model.GovernorConfig
 import com.example.model.HardwareSpec
 import com.example.model.ModeOverride
 import com.example.model.ModeProfile
+import com.example.model.PerGameAutoTuneState
+import com.example.model.PerGameProfile
 import com.example.model.PowerPolarity
-import com.example.model.BoostStrength
-import com.example.model.AfterburnConfig
 import com.example.model.PowerThrottleConfig
 import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
@@ -614,7 +622,116 @@ class ConfigStorage(private val context: Context) {
                 }
                 put("threadHistory", histObj)
             })
+            put("scoreWeights", JSONObject().apply {
+                put("p5FpsPct", c.scoreWeights.p5FpsPct)
+                put("avgFpsPct", c.scoreWeights.avgFpsPct)
+                put("fpsPerWattPct", c.scoreWeights.fpsPerWattPct)
+                put("tempPct", c.scoreWeights.tempPct)
+                put("stabilityPct", c.scoreWeights.stabilityPct)
+                putFinite("tempThresholdC", c.scoreWeights.tempThresholdC)
+            })
+            val pgObj = JSONObject()
+            c.perGameProfiles.toSortedMap().forEach { (pkg, prof) ->
+                if (pkg.isNotBlank() && !prof.isEmpty) {
+                    pgObj.put(pkg, perGameProfileToJson(prof))
+                }
+            }
+            put("perGameProfiles", pgObj)
+            val atObj = JSONObject()
+            c.autoTuneByPkg.toSortedMap().forEach { (pkg, st) ->
+                if (pkg.isNotBlank()) {
+                    atObj.put(pkg, autoTuneStateToJson(st))
+                }
+            }
+            put("autoTuneByPkg", atObj)
         }
+    }
+
+    private fun JSONObject.putFinite(key: String, value: Float) {
+        if (value.isFinite()) put(key, value.toDouble())
+    }
+
+    private fun perGameProfileToJson(p: PerGameProfile): JSONObject = JSONObject().apply {
+        p.headroomPct?.let { putFinite("headroomPct", it) }
+        p.rampUpSpeed?.let { putFinite("rampUpSpeed", it) }
+        p.rampDownSpeed?.let { putFinite("rampDownSpeed", it) }
+        p.gpuHeadroomPct?.let { putFinite("gpuHeadroomPct", it) }
+        p.gpuRampUpSpeed?.let { putFinite("gpuRampUpSpeed", it) }
+        p.gpuRampDownSpeed?.let { putFinite("gpuRampDownSpeed", it) }
+        p.cpuRangesKhz?.let { m ->
+            val cpuObj = JSONObject()
+            m.forEach { (id, r) ->
+                cpuObj.put(id.toString(), JSONObject().apply {
+                    put("minKhz", r.minKhz)
+                    put("maxKhz", r.maxKhz)
+                })
+            }
+            put("cpuRangesKhz", cpuObj)
+        }
+        p.gpuRangeKhz?.let { r ->
+            put("gpuRangeKhz", JSONObject().apply {
+                put("minKhz", r.minKhz)
+                put("maxKhz", r.maxKhz)
+            })
+        }
+        p.powerLimitWatts?.let { putFinite("powerLimitWatts", it) }
+        p.tempStartC?.let { putFinite("tempStartC", it) }
+        p.tempFullC?.let { putFinite("tempFullC", it) }
+        p.afterburnStrength?.let { put("afterburnStrength", it.name) }
+    }
+
+    private fun trialRecordToJson(t: AutoTuneTrialRecord): JSONObject = JSONObject().apply {
+        put("trialId", t.trialId)
+        put("timestampMs", t.timestampMs)
+        put("sessionFileName", t.sessionFileName)
+        t.param?.let { put("param", it.name) }
+        put("oldValue", t.oldValue)
+        put("newValue", t.newValue)
+        putFinite("score", t.score)
+        putFinite("baselineScore", t.baselineScore)
+        putFinite("bestScoreBefore", t.bestScoreBefore)
+        putFinite("avgFps", t.avgFps)
+        putFinite("p5Fps", t.p5Fps)
+        putFinite("avgWatts", t.avgWatts)
+        putFinite("maxTempC", t.maxTempC)
+        put("status", t.status.name)
+        put("reason", t.reason)
+        put("reasonCode", t.reasonCode)
+        put("candidateKey", t.candidateKey)
+    }
+
+    private fun autoTuneStateToJson(st: PerGameAutoTuneState): JSONObject = JSONObject().apply {
+        put("enabled", st.enabled)
+        put("paused", st.paused)
+        put("mode", st.mode.name)
+        put("minSessionMinutes", st.minSessionMinutes)
+        putFinite("rewardMarginPct", st.rewardMarginPct)
+        put("lockedParams", JSONArray().apply { st.lockedParams.sortedBy { it.name }.forEach { put(it.name) } })
+        put("baselineCaptured", st.baselineCaptured)
+        if (!st.baselineProfile.isEmpty) put("baselineProfile", perGameProfileToJson(st.baselineProfile))
+        st.userOriginalProfile?.let { if (!it.isEmpty) put("userOriginalProfile", perGameProfileToJson(it)) }
+        if (!st.bestProfile.isEmpty) put("bestProfile", perGameProfileToJson(st.bestProfile))
+        st.candidateProfile?.let { if (!it.isEmpty) put("candidateProfile", perGameProfileToJson(it)) }
+        st.pendingCandidate?.let { pc ->
+            put("pendingCandidate", JSONObject().apply {
+                put("param", pc.param.name)
+                put("direction", pc.direction)
+                putFinite("value", pc.value)
+                put("key", pc.key)
+            })
+        }
+        put("pendingTrialId", st.pendingTrialId)
+        st.pendingSuggestion?.let { put("pendingSuggestion", trialRecordToJson(it)) }
+        putFinite("baselineScore", st.baselineScore)
+        putFinite("baselineP5Fps", st.baselineP5Fps)
+        putFinite("bestScore", st.bestScore)
+        put("nextTrialId", st.nextTrialId)
+        put("paramCursor", st.paramCursor)
+        put("consecutiveNoImproveParams", st.consecutiveNoImproveParams)
+        put("converged", st.converged)
+        put("badCandidateKeys", JSONArray().apply { st.badCandidateKeys.sorted().forEach { put(it) } })
+        put("triedCandidateKeys", JSONArray().apply { st.triedCandidateKeys.sorted().forEach { put(it) } })
+        put("trials", JSONArray().apply { st.trials.takeLast(60).forEach { put(trialRecordToJson(it)) } })
     }
 
     private fun modeToJson(m: ModeProfile): JSONObject {
@@ -808,8 +925,168 @@ class ConfigStorage(private val context: Context) {
                     whitelist = wl
                 )
             } else default.stutterHunter,
-            gameThreadController = parseGameThreadControllerConfig(gtcObj)
+            gameThreadController = parseGameThreadControllerConfig(gtcObj),
+            perGameProfiles = parsePerGameProfiles(obj.optJSONObject("perGameProfiles")),
+            autoTuneByPkg = parseAutoTuneMap(obj.optJSONObject("autoTuneByPkg")),
+            scoreWeights = parseScoreWeights(obj.optJSONObject("scoreWeights"))
         )
+    }
+
+    private fun parseScoreWeights(obj: JSONObject?): CompositeScoreWeights {
+        if (obj == null) return CompositeScoreWeights()
+        return CompositeScoreWeights(
+            p5FpsPct = obj.optInt("p5FpsPct", 35).coerceIn(0, 100),
+            avgFpsPct = obj.optInt("avgFpsPct", 25).coerceIn(0, 100),
+            fpsPerWattPct = obj.optInt("fpsPerWattPct", 20).coerceIn(0, 100),
+            tempPct = obj.optInt("tempPct", 10).coerceIn(0, 100),
+            stabilityPct = obj.optInt("stabilityPct", 10).coerceIn(0, 100),
+            tempThresholdC = obj.optDouble("tempThresholdC", 45.0).toFloat().coerceIn(30f, 70f)
+        )
+    }
+
+    private fun parsePerGameProfiles(obj: JSONObject?): Map<String, PerGameProfile> {
+        if (obj == null) return emptyMap()
+        val out = LinkedHashMap<String, PerGameProfile>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val pkg = keys.next().trim()
+            if (pkg.isEmpty()) continue
+            val pObj = obj.optJSONObject(pkg) ?: continue
+            val prof = jsonToPerGameProfile(pObj)
+            if (!prof.isEmpty) out[pkg] = prof
+        }
+        return out
+    }
+
+    private fun jsonToPerGameProfile(obj: JSONObject?): PerGameProfile {
+        if (obj == null) return PerGameProfile()
+        fun optFloat(k: String): Float? = if (obj.has(k) && !obj.isNull(k)) obj.optDouble(k, Double.NaN).toFloat().takeIf { it.isFinite() } else null
+        val cpuObj = obj.optJSONObject("cpuRangesKhz")
+        val cpuRanges = if (cpuObj != null) {
+            val map = LinkedHashMap<Int, FreqRange>()
+            cpuObj.keys().forEach { key ->
+                val id = key.toIntOrNull() ?: return@forEach
+                val r = cpuObj.optJSONObject(key) ?: return@forEach
+                map[id] = FreqRange(r.optLong("minKhz"), r.optLong("maxKhz"))
+            }
+            map
+        } else null
+        val gpuRange = obj.optJSONObject("gpuRangeKhz")?.let {
+            FreqRange(it.optLong("minKhz"), it.optLong("maxKhz"))
+        }
+        val abStr = obj.optString("afterburnStrength", "").let { name ->
+            BoostStrength.values().firstOrNull { it.name == name }
+        }
+        return PerGameProfile(
+            headroomPct = optFloat("headroomPct"),
+            rampUpSpeed = optFloat("rampUpSpeed"),
+            rampDownSpeed = optFloat("rampDownSpeed"),
+            gpuHeadroomPct = optFloat("gpuHeadroomPct"),
+            gpuRampUpSpeed = optFloat("gpuRampUpSpeed"),
+            gpuRampDownSpeed = optFloat("gpuRampDownSpeed"),
+            cpuRangesKhz = cpuRanges,
+            gpuRangeKhz = gpuRange,
+            powerLimitWatts = optFloat("powerLimitWatts"),
+            tempStartC = optFloat("tempStartC"),
+            tempFullC = optFloat("tempFullC"),
+            afterburnStrength = abStr
+        )
+    }
+
+    private fun jsonToTrialRecord(obj: JSONObject?): AutoTuneTrialRecord? {
+        if (obj == null) return null
+        fun optF(k: String): Float = if (obj.has(k) && !obj.isNull(k)) obj.optDouble(k, Double.NaN).toFloat() else Float.NaN
+        val paramName = obj.optString("param", "")
+        val param = AutoTuneParam.values().firstOrNull { it.name == paramName }
+        return AutoTuneTrialRecord(
+            trialId = obj.optInt("trialId", 0),
+            timestampMs = obj.optLong("timestampMs", 0L),
+            sessionFileName = obj.optString("sessionFileName", ""),
+            param = param,
+            oldValue = obj.optString("oldValue", ""),
+            newValue = obj.optString("newValue", ""),
+            score = optF("score"),
+            baselineScore = optF("baselineScore"),
+            bestScoreBefore = optF("bestScoreBefore"),
+            avgFps = optF("avgFps"),
+            p5Fps = optF("p5Fps"),
+            avgWatts = optF("avgWatts"),
+            maxTempC = optF("maxTempC"),
+            status = enumOrDefault(obj.optString("status"), AutoTuneTrialStatus.IGNORED),
+            reason = obj.optString("reason", ""),
+            reasonCode = obj.optString("reasonCode", ""),
+            candidateKey = obj.optString("candidateKey", "")
+        )
+    }
+
+    private fun parseAutoTuneMap(obj: JSONObject?): Map<String, PerGameAutoTuneState> {
+        if (obj == null) return emptyMap()
+        val out = LinkedHashMap<String, PerGameAutoTuneState>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val pkg = keys.next().trim()
+            if (pkg.isEmpty()) continue
+            val sObj = obj.optJSONObject(pkg) ?: continue
+            fun optF(k: String): Float = if (sObj.has(k) && !sObj.isNull(k)) sObj.optDouble(k, Double.NaN).toFloat() else Float.NaN
+            val locked = mutableSetOf<AutoTuneParam>()
+            sObj.optJSONArray("lockedParams")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    AutoTuneParam.values().firstOrNull { it.name == arr.optString(i) }?.let { locked.add(it) }
+                }
+            }
+            val badKeys = mutableSetOf<String>()
+            sObj.optJSONArray("badCandidateKeys")?.let { arr ->
+                for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let { badKeys.add(it) }
+            }
+            val triedKeys = mutableSetOf<String>()
+            sObj.optJSONArray("triedCandidateKeys")?.let { arr ->
+                for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let { triedKeys.add(it) }
+            }
+            val trials = mutableListOf<AutoTuneTrialRecord>()
+            sObj.optJSONArray("trials")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    jsonToTrialRecord(arr.optJSONObject(i))?.let { trials.add(it) }
+                }
+            }
+            val pc = sObj.optJSONObject("pendingCandidate")?.let { pcObj ->
+                val p = AutoTuneParam.values().firstOrNull { it.name == pcObj.optString("param") } ?: return@let null
+                val v = pcObj.optDouble("value", Double.NaN).toFloat()
+                if (!v.isFinite()) return@let null
+                AutoTuneCandidateSpec(
+                    param = p,
+                    direction = pcObj.optInt("direction", 1),
+                    value = v,
+                    key = pcObj.optString("key", "")
+                )
+            }
+            out[pkg] = PerGameAutoTuneState(
+                enabled = sObj.optBoolean("enabled", false),
+                paused = sObj.optBoolean("paused", false),
+                mode = enumOrDefault(sObj.optString("mode"), AutoTuneMode.SUGGEST_ONLY),
+                minSessionMinutes = sObj.optInt("minSessionMinutes", 8).coerceIn(1, 30),
+                rewardMarginPct = sObj.optDouble("rewardMarginPct", 3.0).toFloat().coerceIn(0.5f, 15f),
+                lockedParams = locked,
+                baselineCaptured = sObj.optBoolean("baselineCaptured", false),
+                baselineProfile = jsonToPerGameProfile(sObj.optJSONObject("baselineProfile")),
+                userOriginalProfile = sObj.optJSONObject("userOriginalProfile")?.let { jsonToPerGameProfile(it) },
+                bestProfile = jsonToPerGameProfile(sObj.optJSONObject("bestProfile")),
+                candidateProfile = sObj.optJSONObject("candidateProfile")?.let { jsonToPerGameProfile(it) },
+                pendingCandidate = pc,
+                pendingTrialId = sObj.optInt("pendingTrialId", 0),
+                pendingSuggestion = jsonToTrialRecord(sObj.optJSONObject("pendingSuggestion")),
+                baselineScore = optF("baselineScore"),
+                baselineP5Fps = optF("baselineP5Fps"),
+                bestScore = optF("bestScore"),
+                nextTrialId = sObj.optInt("nextTrialId", 1).coerceAtLeast(1),
+                paramCursor = sObj.optInt("paramCursor", 0).coerceAtLeast(0),
+                consecutiveNoImproveParams = sObj.optInt("consecutiveNoImproveParams", 0).coerceAtLeast(0),
+                converged = sObj.optBoolean("converged", false),
+                badCandidateKeys = badKeys,
+                triedCandidateKeys = triedKeys,
+                trials = trials
+            )
+        }
+        return out
     }
 
     private fun parseGameThreadControllerConfig(obj: JSONObject?): GameThreadControllerConfig {

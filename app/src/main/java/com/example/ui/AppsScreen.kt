@@ -58,6 +58,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.model.InstalledAppInfo
+import com.example.model.PerGameAutoTuneState
+import com.example.model.PerGameProfile
 import com.example.ui.components.EcuCard
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.LocalExtendedColors
@@ -75,7 +77,10 @@ fun AppsScreen(
     modifier: Modifier = Modifier,
     smartControls: Map<String, com.example.governor.AppControlInfo> = emptyMap(),
     onSmartSet: (String, com.example.governor.AppControl, com.example.governor.AppOverride) -> Unit = { _, _, _ -> },
-    onSmartReset: (String) -> Unit = {}
+    onSmartReset: (String) -> Unit = {},
+    autoTuneByPkg: Map<String, PerGameAutoTuneState> = emptyMap(),
+    perGameProfiles: Map<String, PerGameProfile> = emptyMap(),
+    onOpenAutoTune: (InstalledAppInfo) -> Unit = {}
 ) {
     val context = LocalContext.current
     val ext = LocalExtendedColors.current
@@ -250,6 +255,8 @@ fun AppsScreen(
             ) {
                 items(filteredApps, key = { it.packageName }) { app ->
                     val isGame = app.packageName in selectedPackages
+                    val atState = autoTuneByPkg[app.packageName]
+                    val hasOverride = perGameProfiles[app.packageName]?.isEmpty == false
                     EcuCard(
                         accentBorder = if (isGame) selectColor else null,
                         modifier = Modifier
@@ -262,12 +269,31 @@ fun AppsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Text(
-                                    text = app.label,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = app.label,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (!boostMode && isGame && (atState?.enabled == true || hasOverride)) {
+                                        val pillText = when {
+                                            atState?.enabled == true && atState.paused -> stringResource(R.string.autotune_badge_paused)
+                                            atState?.enabled == true && atState.converged -> stringResource(R.string.autotune_badge_converged)
+                                            atState?.enabled == true -> stringResource(atState.mode.labelRes)
+                                            else -> stringResource(R.string.per_game_badge_custom)
+                                        }
+                                        StatusPill(
+                                            label = pillText,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                                        )
+                                    }
+                                }
                                 Text(
                                     text = app.packageName,
                                     style = MaterialTheme.typography.labelSmall,
@@ -281,6 +307,17 @@ fun AppsScreen(
                                     onSet = { c, o -> onSmartSet(app.packageName, c, o) },
                                     onReset = { onSmartReset(app.packageName) }
                                 )
+                                if (!boostMode && app.packageName in gamePackages) {
+                                    androidx.compose.material3.TextButton(
+                                        onClick = { onOpenAutoTune(app) },
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.apps_open_autotune_btn),
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                }
                             }
                             Checkbox(
                                 checked = isGame,

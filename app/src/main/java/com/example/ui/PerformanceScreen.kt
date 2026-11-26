@@ -37,13 +37,21 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -73,11 +81,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.governor.ImpactConfidence
 import com.example.governor.MetricSample
 import com.example.governor.MetricSummary
 import com.example.governor.MetricsMath
 import com.example.governor.SessionInfo
+import com.example.governor.TweakImpactAnalyzer
+import com.example.governor.TweakImpactEntry
 import com.example.model.BatteryState
+import com.example.model.CompositeScoreWeights
 import com.example.ui.components.EcuCard
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.LocalExtendedColors
@@ -122,9 +134,14 @@ fun PerformanceScreen(
     selectedSamples: List<MetricSample>,
     recording: Boolean,
     appLabels: Map<String, String>,
+    scoreWeights: CompositeScoreWeights = CompositeScoreWeights(),
     onSelectSession: (SessionInfo?) -> Unit,
     onDeleteSession: (SessionInfo) -> Unit,
-    onDeleteAllSessions: () -> Unit,
+    onDeleteAllSessions: (Boolean) -> Unit,
+    onToggleSessionKeep: (SessionInfo) -> Unit = {},
+    onOpenSessionDetail: (SessionInfo) -> Unit = {},
+    onOpenCompare: (List<SessionInfo>) -> Unit = {},
+    onUpdateScoreWeights: (CompositeScoreWeights) -> Unit = {},
     onClearLive: () -> Unit,
     onExportCsv: (SessionInfo, android.net.Uri) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
@@ -151,6 +168,16 @@ fun PerformanceScreen(
     var windowMin by rememberSaveable { mutableStateOf(5) }
     var scrub by remember { mutableStateOf<Float?>(null) }
     var confirmDeleteAll by remember { mutableStateOf(false) }
+    var includeKeptInDeleteAll by remember { mutableStateOf(false) }
+    var compareSelectMode by rememberSaveable { mutableStateOf(false) }
+    var compareFileNames by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var showWeightsDialog by remember { mutableStateOf(false) }
+
+    val distinctRankGames = remember(sessions) {
+        sessions.map { it.packageName }.filter { it.isNotBlank() }.distinct()
+    }
+    var selectedRankPkg by rememberSaveable { mutableStateOf("") }
+    val effectiveRankPkg = if (selectedRankPkg in distinctRankGames) selectedRankPkg else (distinctRankGames.firstOrNull() ?: "")
 
     val samples = remember(live, selectedSession, selectedSamples, windowMin) {
         if (selectedSession != null) {
@@ -211,8 +238,13 @@ fun PerformanceScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(onClick = { scrub = null; onSelectSession(null) }) {
-                        Text(stringResource(R.string.metrics_back_to_live))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { scrub = null; onSelectSession(null) }) {
+                            Text(stringResource(R.string.metrics_back_to_live))
+                        }
+                        Button(onClick = { onOpenSessionDetail(selectedSession) }) {
+                            Text(stringResource(R.string.metrics_full_details_btn))
+                        }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -342,8 +374,29 @@ fun PerformanceScreen(
             }
         }
 
-        // 6. Saved sessions
+        // 6. Tweak impact ranking per game
+        if (effectiveRankPkg.isNotBlank() && sessions.count { it.packageName == effectiveRankPkg } >= 2) {
+            item {
+                val report = remember(effectiveRankPkg, sessions, scoreWeights) {
+                    TweakImpactAnalyzer.analyze(effectiveRankPkg, sessions, scoreWeights)
+                }
+                TweakImpactRankingCard(
+                    games = distinctRankGames,
+                    selectedPkg = effectiveRankPkg,
+                    appLabels = appLabels,
+                    report = report,
+                    onSelectPkg = { selectedRankPkg = it },
+                    onOpenWeights = { showWeightsDialog = true }
+                )
+            }
+        }
+
+        // 7. Saved sessions + compare selector
         item {
+            val selectedCompareSessions = remember(sessions, compareFileNames) {
+                compareFileNames.mapNotNull { fn -> sessions.firstOrNull { it.fileName == fn } }
+            }
+            val diffGamesInCompare = selectedCompareSessions.map { it.packageName }.distinct().size > 1
             EcuCard {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -355,9 +408,48 @@ fun PerformanceScreen(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (sessions.isNotEmpty()) {
-                        TextButton(onClick = { confirmDeleteAll = true }) {
-                            Text(stringResource(R.string.metrics_delete_all))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (sessions.size >= 2) {
+                            TextButton(onClick = {
+                                compareSelectMode = !compareSelectMode
+                                if (!compareSelectMode) compareFileNames = emptyList()
+                            }) {
+                                Icon(Icons.Default.CompareArrows, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    stringResource(
+                                        if (compareSelectMode) R.string.common_cancel else R.string.metrics_compare_btn
+                                    )
+                                )
+                            }
+                        }
+                        if (sessions.isNotEmpty()) {
+                            TextButton(onClick = {
+                                includeKeptInDeleteAll = false
+                                confirmDeleteAll = true
+                            }) {
+                                Text(stringResource(R.string.metrics_delete_all))
+                            }
+                        }
+                    }
+                }
+                if (compareSelectMode) {
+                    Text(
+                        text = stringResource(R.string.metrics_compare_pick_hint, selectedCompareSessions.size),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (diffGamesInCompare) {
+                        Text(
+                            text = stringResource(R.string.cmp_warn_diff_games),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ext.warning
+                        )
+                    }
+                    if (selectedCompareSessions.size in 2..4) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Button(onClick = { onOpenCompare(selectedCompareSessions) }) {
+                            Text(stringResource(R.string.metrics_compare_launch_btn, selectedCompareSessions.size))
                         }
                     }
                 }
@@ -371,16 +463,34 @@ fun PerformanceScreen(
             }
         }
         items(sessions, key = { it.fileName }) { info ->
+            val inCompare = info.fileName in compareFileNames
             SessionRow(
                 info = info,
                 name = appLabels[info.packageName] ?: info.packageName,
-                selected = selectedSession?.fileName == info.fileName,
-                onClick = { scrub = null; onSelectSession(info) },
+                selected = if (compareSelectMode) inCompare else selectedSession?.fileName == info.fileName,
+                compareMode = compareSelectMode,
+                checkedForCompare = inCompare,
+                onClick = {
+                    if (compareSelectMode) {
+                        compareFileNames = if (inCompare) {
+                            compareFileNames - info.fileName
+                        } else if (compareFileNames.size < 4) {
+                            compareFileNames + info.fileName
+                        } else {
+                            compareFileNames
+                        }
+                    } else {
+                        scrub = null
+                        onSelectSession(info)
+                    }
+                },
+                onToggleKeep = { onToggleSessionKeep(info) },
+                onOpenDetails = { onOpenSessionDetail(info) },
                 onDelete = { onDeleteSession(info) }
             )
         }
 
-        // 7. How the numbers are made
+        // 8. How the numbers are made
         item {
             EcuCard {
                 Text(
@@ -399,12 +509,34 @@ fun PerformanceScreen(
     }
 
     if (confirmDeleteAll) {
+        val keptCount = sessions.count { it.kept }
         AlertDialog(
             onDismissRequest = { confirmDeleteAll = false },
             title = { Text(stringResource(R.string.metrics_delete_all_title)) },
-            text = { Text(pluralStringResource(R.plurals.plural_sessions_remove, sessions.size, sessions.size)) },
+            text = {
+                Column {
+                    val removable = if (includeKeptInDeleteAll) sessions.size else (sessions.size - keptCount)
+                    Text(pluralStringResource(R.plurals.plural_sessions_remove, removable, removable))
+                    if (keptCount > 0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { includeKeptInDeleteAll = !includeKeptInDeleteAll }
+                        ) {
+                            Checkbox(
+                                checked = includeKeptInDeleteAll,
+                                onCheckedChange = { includeKeptInDeleteAll = it }
+                            )
+                            Text(
+                                text = stringResource(R.string.metrics_delete_include_kept, keptCount),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            },
             confirmButton = {
-                TextButton(onClick = { confirmDeleteAll = false; onDeleteAllSessions() }) {
+                TextButton(onClick = { confirmDeleteAll = false; onDeleteAllSessions(includeKeptInDeleteAll) }) {
                     Text(stringResource(R.string.common_delete))
                 }
             },
@@ -412,6 +544,17 @@ fun PerformanceScreen(
                 TextButton(onClick = { confirmDeleteAll = false }) {
                     Text(stringResource(R.string.common_cancel))
                 }
+            }
+        )
+    }
+
+    if (showWeightsDialog) {
+        CompositeScoreWeightsDialog(
+            initial = scoreWeights,
+            onDismiss = { showWeightsDialog = false },
+            onSave = {
+                showWeightsDialog = false
+                onUpdateScoreWeights(it)
             }
         )
     }
@@ -501,27 +644,57 @@ private fun SessionRow(
     info: SessionInfo,
     name: String,
     selected: Boolean,
+    compareMode: Boolean,
+    checkedForCompare: Boolean,
     onClick: () -> Unit,
+    onToggleKeep: () -> Unit,
+    onOpenDetails: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val ext = LocalExtendedColors.current
+    val primary = MaterialTheme.colorScheme.primary
     val s = info.summary
-    EcuCard(accentBorder = if (selected) MaterialTheme.colorScheme.primary else null) {
+    EcuCard(accentBorder = if (selected) primary else null) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onClick),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+            if (compareMode) {
+                Checkbox(
+                    checked = checkedForCompare,
+                    onCheckedChange = { onClick() }
                 )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (info.kept) {
+                        StatusPill(
+                            label = stringResource(R.string.metrics_kept_pill),
+                            color = primary,
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    }
+                    if (info.midSessionChanges > 0) {
+                        StatusPill(
+                            label = stringResource(R.string.metrics_mid_changes_pill, info.midSessionChanges),
+                            color = ext.throttle,
+                            containerColor = ext.throttle.copy(alpha = 0.16f)
+                        )
+                    }
+                }
                 val chgBadge = if (s.includesCharging) stringResource(R.string.metrics_incl_charging) else ""
+                val snapNote = if (info.snapshot == null) " • ${stringResource(R.string.snap_not_recorded)}" else ""
                 Text(
-                    text = "${formatDate(info.startMs)} • ${fmtDuration(s.durationMs)}$chgBadge",
+                    text = "${formatDate(info.startMs)} • ${fmtDuration(s.durationMs)}$chgBadge$snapNote",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -542,10 +715,203 @@ private fun SessionRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.metrics_delete_session_cd))
+            if (!compareMode) {
+                Column(horizontalAlignment = Alignment.End) {
+                    Row {
+                        IconButton(onClick = onToggleKeep) {
+                            Icon(
+                                imageVector = if (info.kept) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                                contentDescription = stringResource(
+                                    if (info.kept) R.string.metrics_unkeep_cd else R.string.metrics_keep_cd
+                                ),
+                                tint = if (info.kept) primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = onDelete) {
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.metrics_delete_session_cd))
+                        }
+                    }
+                    TextButton(onClick = onOpenDetails) {
+                        Text(stringResource(R.string.metrics_details_short_btn))
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun TweakImpactRankingCard(
+    games: List<String>,
+    selectedPkg: String,
+    appLabels: Map<String, String>,
+    report: com.example.governor.TweakImpactReport,
+    onSelectPkg: (String) -> Unit,
+    onOpenWeights: () -> Unit
+) {
+    val ext = LocalExtendedColors.current
+    EcuCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.rank_header),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            TextButton(onClick = onOpenWeights) {
+                Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(stringResource(R.string.rank_weights_btn))
+            }
+        }
+        if (games.size > 1) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                games.take(4).forEach { pkg ->
+                    FilterChip(
+                        selected = pkg == selectedPkg,
+                        onClick = { onSelectPkg(pkg) },
+                        label = { Text(appLabels[pkg] ?: pkg, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+        }
+        if (report.analyzedSessionCount < 2 || (report.bestTweaks.isEmpty() && report.worstTweaks.isEmpty())) {
+            Text(
+                text = stringResource(R.string.rank_not_enough_data),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            Text(
+                text = stringResource(R.string.rank_analyzed_count, report.analyzedSessionCount),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (report.bestTweaks.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.rank_best_tweaks),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = ext.optimal
+                )
+                report.bestTweaks.take(4).forEach { e ->
+                    TweakImpactRow(entry = e, positive = true)
+                }
+            }
+            if (report.worstTweaks.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.rank_worst_tweaks),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = ext.throttle
+                )
+                report.worstTweaks.take(4).forEach { e ->
+                    TweakImpactRow(entry = e, positive = false)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TweakImpactRow(entry: TweakImpactEntry, positive: Boolean) {
+    val ext = LocalExtendedColors.current
+    val deltaColor = if (positive) ext.optimal else ext.throttle
+    val arrow = if (entry.deltaScore >= 0f) "↑ +" else "↓ "
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "${stringResource(snapshotFieldLabelRes(entry.fieldKey))}: ${localizedSnapshotValue(entry.fromValue)} → ${localizedSnapshotValue(entry.toValue)}",
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                modifier = Modifier.weight(1f).padding(end = 6.dp)
+            )
+            Text(
+                text = "$arrow${String.format(Locale.US, "%.1f", entry.deltaScore)}",
+                style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.labelMedium.fontSize, fontWeight = FontWeight.Bold),
+                color = deltaColor
+            )
+        }
+        val confStr = stringResource(impactConfidenceLabelRes(entry.confidence))
+        val fpsStr = if (entry.deltaFps.isFinite()) "${if (entry.deltaFps >= 0f) "+" else ""}${String.format(Locale.US, "%.1f", entry.deltaFps)} FPS" else "–"
+        val p5Str = if (entry.deltaP5Fps.isFinite()) "${if (entry.deltaP5Fps >= 0f) "+" else ""}${String.format(Locale.US, "%.1f", entry.deltaP5Fps)} p5" else "–"
+        val wStr = if (entry.deltaWatts.isFinite()) "${if (entry.deltaWatts >= 0f) "+" else ""}${String.format(Locale.US, "%.2f", entry.deltaWatts)} W" else "–"
+        val tStr = if (entry.deltaTempC.isFinite()) "${if (entry.deltaTempC >= 0f) "+" else ""}${String.format(Locale.US, "%.1f", entry.deltaTempC)} °C" else "–"
+        Text(
+            text = stringResource(R.string.rank_entry_meta, fpsStr, p5Str, wStr, tStr, entry.fromCount, entry.toCount, confStr),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (entry.confidence == ImpactConfidence.LOW) ext.warning else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+    }
+}
+
+@Composable
+private fun CompositeScoreWeightsDialog(
+    initial: CompositeScoreWeights,
+    onDismiss: () -> Unit,
+    onSave: (CompositeScoreWeights) -> Unit
+) {
+    var p5 by remember { mutableStateOf(initial.p5FpsPct) }
+    var avg by remember { mutableStateOf(initial.avgFpsPct) }
+    var fpw by remember { mutableStateOf(initial.fpsPerWattPct) }
+    var temp by remember { mutableStateOf(initial.tempPct) }
+    var stab by remember { mutableStateOf(initial.stabilityPct) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.rank_weights_dialog_title)) },
+        text = {
+            Column {
+                WeightSliderRow(stringResource(R.string.cmp_metric_p5_fps), p5) { p5 = it }
+                WeightSliderRow(stringResource(R.string.cmp_metric_avg_fps), avg) { avg = it }
+                WeightSliderRow(stringResource(R.string.cmp_metric_fpw), fpw) { fpw = it }
+                WeightSliderRow(stringResource(R.string.cmp_metric_avg_temp), temp) { temp = it }
+                WeightSliderRow(stringResource(R.string.cmp_metric_stability), stab) { stab = it }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(
+                    initial.copy(
+                        p5FpsPct = p5,
+                        avgFpsPct = avg,
+                        fpsPerWattPct = fpw,
+                        tempPct = temp,
+                        stabilityPct = stab
+                    )
+                )
+            }) {
+                Text(stringResource(R.string.common_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.common_cancel))
+            }
+        }
+    )
+}
+
+@Composable
+private fun WeightSliderRow(label: String, pct: Int, onChange: (Int) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.bodySmall)
+            Text("$pct%", style = MonoMetricStyle.copy(fontSize = MaterialTheme.typography.bodySmall.fontSize))
+        }
+        Slider(
+            value = pct.toFloat().coerceIn(0f, 100f),
+            onValueChange = { onChange(it.roundToInt()) },
+            valueRange = 0f..100f
+        )
     }
 }
 

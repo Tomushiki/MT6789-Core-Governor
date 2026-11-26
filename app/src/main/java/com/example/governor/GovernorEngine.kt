@@ -31,6 +31,7 @@ import com.example.data.OriginalCpuBackup
 import com.example.data.OriginalHardwareBackup
 import com.example.model.BatteryState
 import com.example.model.ClusterLiveState
+import com.example.model.EffectiveGameConfig
 import com.example.model.GovernorConfig
 import com.example.model.GovernorMode
 import com.example.model.boostStrengthFor
@@ -146,6 +147,17 @@ class GovernorEngine(context: Context) {
         metrics.onSample = { s, inGame ->
             rating.add(s.fps, s.watts, s.tempC, s.cpuLoadPct, inGame, s.batteryState.isPluggedOrCharging)
         }
+        metrics.snapshotProvider = { pkg ->
+            val cleanPkg = pkg.ifBlank { _telemetry.value.foregroundPackage }
+            val preparedCfg = prepareAutoTuneForSessionStart(cleanPkg)
+            val eff = AutoTuneLogic.resolveEffectiveForGame(preparedCfg, cleanPkg)
+            SessionTweakSnapshot.capture(preparedCfg, eff, cleanPkg)
+        }
+        metrics.onSessionSaved = { savedInfo ->
+            engineScope.launch(Dispatchers.Default) {
+                handleSessionSavedForAutoTune(savedInfo)
+            }
+        }
     }
 
     /** On-device learned power model & opt-in efficiency governor helper. */
@@ -203,6 +215,104 @@ class GovernorEngine(context: Context) {
     private var smartWasOn = false
 
     private val configUpdateLock = Any()
+
+    // v4.0.0 Zero-allocation per-game override cache (recomputed ONLY when config instance or fg package changes).
+    private var cachedResolveCfgRef: GovernorConfig? = null
+    private var cachedResolvePkg: String = ""
+    private var cachedEffectiveGameProfile: EffectiveGameConfig? = null
+    private var lastAutoTunePrepPkg: String = ""
+
+    private fun resolveEffectiveGameCached(cfg: GovernorConfig, activeMode: GovernorMode, fgPkg: String): EffectiveGameConfig? {
+        if (activeMode != GovernorMode.GAME || fgPkg.isBlank()) {
+            cachedResolveCfgRef = null
+            cachedResolvePkg = ""
+            cachedEffectiveGameProfile = null
+            return null
+        }
+        if (cfg !== cachedResolveCfgRef || fgPkg != cachedResolvePkg || cachedEffectiveGameProfile == null) {
+            cachedResolveCfgRef = cfg
+            cachedResolvePkg = fgPkg
+            cachedEffectiveGameProfile = AutoTuneLogic.resolveEffectiveForGame(cfg, fgPkg)
+        }
+        return cachedEffectiveGameProfile
+    }
+
+    private fun prepareAutoTuneForSessionStart(pkg: String): GovernorConfig {
+        if (pkg.isBlank()) return _config.value
+        val cur = _config.value
+        val quickCheck = AutoTuneLogic.prepareSessionStart(cur, pkg)
+        if (quickCheck === cur || quickCheck == cur) return cur
+        synchronized(configUpdateLock) {
+            val latest = _config.value
+            val prepared = AutoTuneLogic.prepareSessionStart(latest, pkg)
+            if (prepared != latest) {
+                _config.value = prepared
+                storage.saveConfigDebounced(prepared)
+                val st = prepared.autoTuneByPkg[pkg]
+                val cand = st?.pendingCandidate
+                if (cand != null) {
+                    log(
+                        LogLevel.INFO,
+                        "AutoTune",
+                        "Trial #${st.pendingTrialId} ready for $pkg: ${cand.param.name} -> ${AutoTuneLogic.formatValue(cand.param, cand.value)}"
+                    )
+                }
+            }
+            return _config.value
+        }
+    }
+
+    private fun handleSessionSavedForAutoTune(session: SessionInfo) {
+        val pkg = session.packageName
+        if (pkg.isBlank()) return
+        var evaluatedRecord: com.example.model.AutoTuneTrialRecord? = null
+        var convergedNow = false
+        updateConfig(markMidSession = false) { cfg ->
+            val st = cfg.autoTuneByPkg[pkg] ?: return@updateConfig cfg
+            if (!st.enabled || st.paused) return@updateConfig cfg
+            val prevCount = st.trials.size
+            val nextCfg = AutoTuneLogic.evaluateCompletedSession(cfg, session)
+            val nextSt = nextCfg.autoTuneByPkg[pkg]
+            if (nextSt != null && nextSt.trials.size > prevCount) {
+                evaluatedRecord = nextSt.trials.lastOrNull()
+            }
+            if (nextSt != null && !st.converged && nextSt.converged) {
+                convergedNow = true
+            }
+            nextCfg
+        }
+        evaluatedRecord?.let { rec ->
+            log(
+                LogLevel.INFO,
+                "AutoTune",
+                "$pkg Trial #${rec.trialId} -> ${rec.status.name} (${rec.reasonCode}, avg ${"%.1f".format(Locale.US, rec.avgFps)} FPS, p5 ${"%.1f".format(Locale.US, rec.p5Fps)})"
+            )
+        }
+        if (convergedNow) {
+            log(LogLevel.INFO, "AutoTune", "$pkg auto-tune converged.")
+        }
+    }
+
+    private fun isTuningConfigChange(prev: GovernorConfig, next: GovernorConfig): Boolean {
+        return prev.gameMode != next.gameMode ||
+            prev.tempThrottle != next.tempThrottle ||
+            prev.powerThrottle != next.powerThrottle ||
+            prev.afterburn != next.afterburn ||
+            prev.boostPackages != next.boostPackages ||
+            prev.boostStrengthByPkg != next.boostStrengthByPkg ||
+            prev.ramPinMax != next.ramPinMax ||
+            prev.ramPinGameOnly != next.ramPinGameOnly ||
+            prev.stutterHunter != next.stutterHunter ||
+            prev.gameThreadController.enabled != next.gameThreadController.enabled ||
+            prev.gameThreadController.mappings != next.gameThreadController.mappings ||
+            prev.adaptiveRefreshEnabled != next.adaptiveRefreshEnabled ||
+            prev.adaptiveIdleHz != next.adaptiveIdleHz ||
+            prev.adaptiveActiveHz != next.adaptiveActiveHz ||
+            prev.perGameProfiles != next.perGameProfiles ||
+            prev.safetyFloorPct != next.safetyFloorPct ||
+            prev.efficiencyLearningEnabled != next.efficiencyLearningEnabled ||
+            prev.efficiencyMode != next.efficiencyMode
+    }
 
     /** v3.6.7/3.6.8 Game Thread Controller: thread-level taskset CPU affinity in Game mode & thread history. */
     val gameThreadRuntime = GameThreadRuntime(
@@ -1119,7 +1229,7 @@ class GovernorEngine(context: Context) {
     }
 
     private suspend fun runControlTick(hw: HardwareSpec, nowMs: Long) {
-        val cfg = _config.value
+        val rawCfg = _config.value
         pollNextIntervalMs = 0L
 
         val readPaths = mutableListOf("/proc/stat")
@@ -1135,7 +1245,7 @@ class GovernorEngine(context: Context) {
         val gedCandidatesToRead = lockedGedLoadPath?.let { listOf(it) } ?: hw.gpu.gedLoadCandidatePaths
         readPaths.addAll(gedCandidatesToRead)
 
-        val tempSensor = hw.thermalSensors.firstOrNull { it.path == cfg.selectedTempSensorPath }
+        val tempSensor = hw.thermalSensors.firstOrNull { it.path == rawCfg.selectedTempSensorPath }
             ?: hw.thermalSensors.firstOrNull()
         tempSensor?.let { readPaths.add(it.path) }
 
@@ -1148,7 +1258,7 @@ class GovernorEngine(context: Context) {
             hw.batteryPower.chargeFullDesignPath?.let { readPaths.add(it) }
             hw.batteryPower.cycleCountPath?.let { readPaths.add(it) }
         }
-        if (cfg.overlayEnabled && cfg.overlayDetailed) {
+        if (rawCfg.overlayEnabled && rawCfg.overlayDetailed) {
             hw.ddr?.curFreqPath?.let { readPaths.add(it) }
         }
 
@@ -1169,12 +1279,27 @@ class GovernorEngine(context: Context) {
         val appChanged = fgPkg.isNotBlank() && prevFg.isNotBlank() && fgPkg != prevFg && fgPkg != appContext.packageName
         if (fgPkg.isNotBlank()) lastForegroundPkg = fgPkg
 
-        val activeMode = when (cfg.modeOverride) {
+        val activeMode = when (rawCfg.modeOverride) {
             ModeOverride.FORCE_NORMAL -> GovernorMode.NORMAL
             ModeOverride.FORCE_GAME -> GovernorMode.GAME
-            ModeOverride.AUTO -> if (fgPkg in cfg.gamePackages) GovernorMode.GAME else GovernorMode.NORMAL
+            ModeOverride.AUTO -> if (fgPkg in rawCfg.gamePackages) GovernorMode.GAME else GovernorMode.NORMAL
         }
-        val modeProfile = if (activeMode == GovernorMode.GAME) cfg.gameMode else cfg.normalMode
+        // Activate next Auto-Tune trial ONLY at game session start (never mid-session).
+        val cfg = if (activeMode == GovernorMode.GAME && fgPkg.isNotBlank()) {
+            if (!metrics.recording.value && fgPkg != lastAutoTunePrepPkg) {
+                lastAutoTunePrepPkg = fgPkg
+                prepareAutoTuneForSessionStart(fgPkg)
+            } else {
+                rawCfg
+            }
+        } else {
+            lastAutoTunePrepPkg = ""
+            rawCfg
+        }
+        val effGame = resolveEffectiveGameCached(cfg, activeMode, fgPkg)
+        val modeProfile = if (activeMode == GovernorMode.GAME) (effGame?.gameMode ?: cfg.gameMode) else cfg.normalMode
+        val effTempThrottle = if (activeMode == GovernorMode.GAME && effGame != null) effGame.tempThrottle else cfg.tempThrottle
+        val effPowerThrottle = if (activeMode == GovernorMode.GAME && effGame != null) effGame.powerThrottle else cfg.powerThrottle
         sensorPinner.setGameActive(activeMode == GovernorMode.GAME)
 
         // 2. CPU loads from /proc/stat
@@ -1331,14 +1456,14 @@ class GovernorEngine(context: Context) {
             prevLatchedPeakTempC = latchedPeakTempC,
             prevCapCpuPct = currentTempCpuCapPct,
             prevCapGpuPct = currentTempGpuCapPct,
-            config = cfg.tempThrottle,
+            config = effTempThrottle,
             safetyFloorPct = cfg.safetyFloorPct,
             isChargingOrPlugged = stableBatteryState.isPluggedOrCharging
         )
         latchedPeakTempC = nextLatchedPeak
         currentTempCpuCapPct = nextTempCpuCap
         currentTempGpuCapPct = nextTempGpuCap
-        val tempThrottleActive = cfg.tempThrottle.enabled &&
+        val tempThrottleActive = effTempThrottle.enabled &&
             (currentTempCpuCapPct < 99.5f || currentTempGpuCapPct < 99.5f)
 
         // 4b. v3.0.0 Afterburn: decided from temperature + battery together, per selected app.
@@ -1370,7 +1495,7 @@ class GovernorEngine(context: Context) {
         }
         // v3.7.2: the app being boosted (also during the grace period) decides the strength.
         val boostPkg = if (fgPkg in cfg.boostPackages) fgPkg else lastBoostPkg
-        val boostStrength = cfg.boostStrengthFor(boostPkg)
+        val boostStrength = if (effGame != null && boostPkg == fgPkg) effGame.afterburnStrength else cfg.boostStrengthFor(boostPkg)
         val boostAppSelected = fgPkg in cfg.boostPackages || nowMs < boostSelectedUntilMs
         // v3.7.0: one load spike must not trip the voltage-sag cut: judge the sag on a ~2 s average.
         val sagDt = (nowMs - lastSagSampleMs).coerceIn(0L, 2_000L)
@@ -1381,7 +1506,7 @@ class GovernorEngine(context: Context) {
             cfg = cfg.afterburn.copy(strength = boostStrength),
             appSelected = boostAppSelected,
             tempC = tempC,
-            throttleStartC = cfg.tempThrottle.startTempC,
+            throttleStartC = effTempThrottle.startTempC,
             batteryPct = effBattPct,
             pluggedOrCharging = stableBatteryState.isPluggedOrCharging,
             wasActive = afterburnDecision.active,
@@ -1395,7 +1520,7 @@ class GovernorEngine(context: Context) {
             log(
                 LogLevel.INFO,
                 "Afterburn",
-                "Afterburn waiting (${afterburnDecision.state.label}): ${"%.1f".format(Locale.US, tempC)}C vs start ${"%.1f".format(Locale.US, cfg.tempThrottle.startTempC)}C (needs ${"%.1f".format(Locale.US, cfg.afterburn.thermalMarginC)}C margin), batt ${effBattPct}% (gauge ${cachedBatteryPct}%), sag ${smoothedSagMv.roundToInt()}mV"
+                "Afterburn waiting (${afterburnDecision.state.label}): ${"%.1f".format(Locale.US, tempC)}C vs start ${"%.1f".format(Locale.US, effTempThrottle.startTempC)}C (needs ${"%.1f".format(Locale.US, cfg.afterburn.thermalMarginC)}C margin), batt ${effBattPct}% (gauge ${cachedBatteryPct}%), sag ${smoothedSagMv.roundToInt()}mV"
             )
         }
         val boostLevel = afterburnDecision.level
@@ -1429,7 +1554,7 @@ class GovernorEngine(context: Context) {
         }
 
         // 5b. Gentle Power Throttle (discharging ONLY; release cleanly while charging/plugged)
-        val maxWin = cfg.powerThrottle.averagingSamples.coerceIn(2, 40)
+        val maxWin = effPowerThrottle.averagingSamples.coerceIn(2, 40)
         val avgWatts: Float
         if (stableBatteryState == BatteryState.DISCHARGING) {
             if (rawState == BatteryState.DISCHARGING) {
@@ -1438,7 +1563,7 @@ class GovernorEngine(context: Context) {
             }
             avgWatts = if (wattWindow.isNotEmpty()) wattWindow.average().toFloat() else rawReading.dischargeWatts
             smoothedChargeWatts = 0f
-            if (cfg.powerThrottle.enabled) {
+            if (effPowerThrottle.enabled) {
                 val fastWatts = if (wattWindow.isNotEmpty()) wattWindow.toList().takeLast(3).average().toFloat() else avgWatts
                 val prevCap = currentPowerCapPct
                 val st = PowerCapController.step(
@@ -1446,7 +1571,7 @@ class GovernorEngine(context: Context) {
                     nowMs = nowMs,
                     avgWatts = avgWatts,
                     fastWatts = fastWatts,
-                    cfg = cfg.powerThrottle,
+                    cfg = effPowerThrottle,
                     floorPct = cfg.safetyFloorPct,
                     bypassed = boostLevel > 0f
                 )
@@ -1458,7 +1583,7 @@ class GovernorEngine(context: Context) {
                     log(
                         LogLevel.WARN,
                         "PowerCap",
-                        "Power draw ${"%.2f".format(avgWatts)}W > ${cfg.powerThrottle.limitWatts}W limit; stepping cap down."
+                        "Power draw ${"%.2f".format(avgWatts)}W > ${effPowerThrottle.limitWatts}W limit; stepping cap down."
                     )
                 }
             } else {
@@ -1479,7 +1604,7 @@ class GovernorEngine(context: Context) {
             }
         }
         val powerThrottleActive = stableBatteryState == BatteryState.DISCHARGING &&
-            cfg.powerThrottle.enabled && currentPowerCapPct < 99.5f
+            effPowerThrottle.enabled && currentPowerCapPct < 99.5f
 
         // 5c. v3.8.0 smooth power limit gate (OFF by default; falls back to the plain cap on any doubt)
         run {
@@ -1492,7 +1617,7 @@ class GovernorEngine(context: Context) {
                 smoothTickGapMs = if (smoothTickGapMs <= 0f) gap else smoothTickGapMs * 0.7f + gap * 0.3f
             }
             val thermalCapActive = currentTempCpuCapPct < 99.5f || currentTempGpuCapPct < 99.5f
-            val wanted = cfg.powerThrottle.smoothPowerLimit && (powerThrottleActive || thermalCapActive)
+            val wanted = effPowerThrottle.smoothPowerLimit && (powerThrottleActive || thermalCapActive)
             var reason: String? = null
             if (wanted) {
                 val rate = smoothSched.values.maxOfOrNull { it.switchesPerSec(nowMs) } ?: 0f
@@ -1520,7 +1645,7 @@ class GovernorEngine(context: Context) {
             if (nowActive) {
                 val settled = nowMs - lastPowerStepMs >= 1000L
                 // Watt-based trim only follows the power limit; thermal-only runs get no trim.
-                smoothTrimValue = smoothTrim.update(nowMs, avgWatts, cfg.powerThrottle.limitWatts, powerThrottleActive, settled)
+                smoothTrimValue = smoothTrim.update(nowMs, avgWatts, effPowerThrottle.limitWatts, powerThrottleActive, settled)
             } else {
                 resetSmoothPowerLimit()
                 smoothActive = false
@@ -1558,7 +1683,7 @@ class GovernorEngine(context: Context) {
                 log(
                     LogLevel.INFO,
                     "SmoothLimit",
-                    "$plans | ${"%.2f".format(Locale.US, avgWatts)}W of ${"%.1f".format(Locale.US, cfg.powerThrottle.limitWatts)}W | " +
+                    "$plans | ${"%.2f".format(Locale.US, avgWatts)}W of ${"%.1f".format(Locale.US, effPowerThrottle.limitWatts)}W | " +
                         "tick ${smoothTickGapMs.roundToInt()}ms | ${"%.1f".format(Locale.US, rate)} switches/s | trim ${"%+.2f".format(Locale.US, smoothTrimValue)}"
                 )
             }
@@ -1592,7 +1717,7 @@ class GovernorEngine(context: Context) {
             gpuShareSmoothed = 0.5f
         }
 
-        val (cpuPowerCapRaw, gpuPowerCapRaw) = if (cfg.powerThrottle.componentAware && powerThrottleActive) {
+        val (cpuPowerCapRaw, gpuPowerCapRaw) = if (effPowerThrottle.componentAware && powerThrottleActive) {
             GovernorMath.splitPowerCap(
                 basePowerCapPct = currentPowerCapPct,
                 gpuShare = gpuShareSmoothed,
@@ -1625,7 +1750,7 @@ class GovernorEngine(context: Context) {
 
         val cpuBaseCut = (100f - cpuPowerCap).coerceAtLeast(0f)
         for (p in hw.cpuPolicies) {
-            val factor = if (cfg.powerThrottle.componentAware && powerThrottleActive) {
+            val factor = if (effPowerThrottle.componentAware && powerThrottleActive) {
                 clusterFactors[p.policyId] ?: 1.0f
             } else {
                 1.0f
@@ -1638,7 +1763,7 @@ class GovernorEngine(context: Context) {
         val effectiveCpuCapPct = GovernorMath.combineCaps(currentTempCpuCapPct, cpuPowerCap, cfg.safetyFloorPct)
         val effectiveGpuCapPct = GovernorMath.combineCaps(currentTempGpuCapPct, gpuPowerCap, cfg.safetyFloorPct)
 
-        if (powerThrottleActive && cfg.powerThrottle.componentAware) {
+        if (powerThrottleActive && effPowerThrottle.componentAware) {
             val dominant = if (gpuShareSmoothed >= 0.5f) "GPU" else "CPU"
             val sharePct = if (dominant == "GPU") {
                 (gpuShareSmoothed * 100f).roundToInt()
@@ -2876,7 +3001,7 @@ class GovernorEngine(context: Context) {
         return true
     }
 
-    fun updateConfig(transform: (GovernorConfig) -> GovernorConfig) {
+    fun updateConfig(markMidSession: Boolean = true, transform: (GovernorConfig) -> GovernorConfig) {
         val prev: GovernorConfig
         val next: GovernorConfig
         synchronized(configUpdateLock) {
@@ -2885,6 +3010,9 @@ class GovernorEngine(context: Context) {
             if (prev == next) return
             _config.value = next
             storage.saveConfigDebounced(next)
+        }
+        if (markMidSession && metrics.recording.value && isTuningConfigChange(prev, next)) {
+            metrics.recordMidSessionConfigChange()
         }
         _telemetry.update { it.copy(modeOverride = next.modeOverride) }
 
@@ -3005,12 +3133,14 @@ class GovernorEngine(context: Context) {
             val populatedPatched = storage.populateDefaultsForHardware(patched, _hardwareSpec.value)
             _config.value = populatedPatched
             storage.saveConfig(populatedPatched)
+            if (metrics.recording.value) metrics.recordMidSessionConfigChange()
             log(LogLevel.INFO, "Presets", "Applied preset '${preset.name}' (caps and temperature throttle only).")
             return
         }
         val populated = storage.populateDefaultsForHardware(preset.config, _hardwareSpec.value)
         _config.value = populated
         storage.saveConfig(populated)
+        if (metrics.recording.value) metrics.recordMidSessionConfigChange()
         _telemetry.update { it.copy(modeOverride = populated.modeOverride) }
         log(LogLevel.INFO, "Presets", "Loaded preset '${preset.name}'.")
     }
@@ -3027,6 +3157,7 @@ class GovernorEngine(context: Context) {
         val populated = storage.populateDefaultsForHardware(importedConfig, _hardwareSpec.value)
         _config.value = populated
         storage.saveConfig(populated)
+        if (metrics.recording.value) metrics.recordMidSessionConfigChange()
         if (importedPresets.isNotEmpty()) {
             val existingUser = _presets.value.filter { !it.builtIn }
             val merged = _presets.value.filter { it.builtIn } + existingUser + importedPresets.filter { !it.builtIn }
@@ -3104,6 +3235,10 @@ class GovernorEngine(context: Context) {
         lastSlowBattSysfsReadMs = 0L
         lastBatteryCheckMs = 0L
         gameThreadRuntime.reset()
+        cachedResolveCfgRef = null
+        cachedResolvePkg = ""
+        cachedEffectiveGameProfile = null
+        lastAutoTunePrepPkg = ""
     }
 
     private fun installCrashRestoreHook() {

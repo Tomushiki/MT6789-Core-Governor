@@ -17,9 +17,11 @@ package com.example
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.activity.compose.BackHandler
@@ -87,11 +89,14 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.LocaleHelper
+import com.example.governor.SessionExport
+import com.example.governor.SessionInfo
 import com.example.governor.UpdateState
 import com.example.model.GovernorMode
 import com.example.ui.AdaptiveRefreshCard
 import com.example.ui.AppDemandCard
 import com.example.ui.AppsScreen
+import com.example.ui.AutoTuneScreen
 import com.example.ui.ScreenOffCard
 import com.example.ui.CoreGovernorViewModel
 import com.example.ui.EnergyScreen
@@ -100,6 +105,8 @@ import com.example.ui.MonitorScreen
 import com.example.ui.OppTableScreen
 import com.example.ui.SystemScreen
 import com.example.ui.PerformanceScreen
+import com.example.ui.SessionComparisonScreen
+import com.example.ui.SessionDetailScreen
 import com.example.ui.TuningScreen
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.CoreGovernorTheme
@@ -170,6 +177,7 @@ fun CoreGovernorRootScreen(
     val metricsRecording by vm.metricsRecording.collectAsStateWithLifecycle()
     val selectedSession by vm.selectedSession.collectAsStateWithLifecycle()
     val selectedSamples by vm.selectedSamples.collectAsStateWithLifecycle()
+    val comparisonSamples by vm.comparisonSamples.collectAsStateWithLifecycle()
     val updateState by vm.updateState.collectAsStateWithLifecycle()
     val includePrereleases by vm.includePrereleases.collectAsStateWithLifecycle()
     val dismissedUpdateVersion by vm.dismissedUpdateVersion.collectAsStateWithLifecycle()
@@ -181,6 +189,19 @@ fun CoreGovernorRootScreen(
 
     val smartControls by vm.appControls.collectAsStateWithLifecycle()
     var currentTab by rememberSaveable { mutableStateOf(NavTab.MONITOR) }
+    var autoTunePkg by rememberSaveable { mutableStateOf<String?>(null) }
+    var detailSessionFileName by rememberSaveable { mutableStateOf<String?>(null) }
+    var compareSessionFiles by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var detailCsvTarget by remember { mutableStateOf<SessionInfo?>(null) }
+    val detailCsvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        val target = detailCsvTarget
+        if (uri != null && target != null) {
+            vm.exportSessionCsv(target, uri)
+            Toast.makeText(context, context.getString(R.string.metrics_saving_csv), Toast.LENGTH_SHORT).show()
+        }
+    }
     // Tracks whether the activity is started (in front), so hidden tabs never do background UI work.
     var appStarted by remember { mutableStateOf(true) }
     val activityLifecycle = (context as? ComponentActivity)?.lifecycle
@@ -231,8 +252,14 @@ fun CoreGovernorRootScreen(
         }
     }
 
-    BackHandler(enabled = currentTab != NavTab.MONITOR) {
-        currentTab = NavTab.MONITOR
+    val hasSubScreen = detailSessionFileName != null || compareSessionFiles.isNotEmpty() || autoTunePkg != null
+    BackHandler(enabled = hasSubScreen || currentTab != NavTab.MONITOR) {
+        when {
+            detailSessionFileName != null -> detailSessionFileName = null
+            compareSessionFiles.isNotEmpty() -> compareSessionFiles = emptyList()
+            autoTunePkg != null -> autoTunePkg = null
+            else -> currentTab = NavTab.MONITOR
+        }
     }
 
     val hasBackground = com.example.ui.theme.Appearance.background != null
@@ -304,6 +331,11 @@ fun CoreGovernorRootScreen(
                     NavigationBarItem(
                         selected = selected,
                         onClick = {
+                            if (currentTab != tab) {
+                                autoTunePkg = null
+                                detailSessionFileName = null
+                                compareSessionFiles = emptyList()
+                            }
                             currentTab = tab
                             if (tab == NavTab.APPS) vm.refreshUsageStatsPermission()
                         },
@@ -500,20 +532,93 @@ fun CoreGovernorRootScreen(
             NavTab.METRICS -> {
                 val metricsLive by vm.metricsLive.collectAsStateWithLifecycle()
                 val appLabels = remember(installedApps) { installedApps.associate { it.packageName to it.label } }
-                PerformanceScreen(
-                    live = metricsLive,
-                    sessions = metricsSessions,
-                    selectedSession = selectedSession,
-                    selectedSamples = selectedSamples,
-                    recording = metricsRecording,
-                    appLabels = appLabels,
-                    onSelectSession = vm::selectSession,
-                    onDeleteSession = vm::deleteSession,
-                    onDeleteAllSessions = vm::deleteAllSessions,
-                    onClearLive = vm::clearLiveMetrics,
-                    onExportCsv = vm::exportSessionCsv,
-                    modifier = Modifier
-                )
+                val detailInfo = remember(detailSessionFileName, metricsSessions, selectedSession) {
+                    val fn = detailSessionFileName ?: return@remember null
+                    metricsSessions.firstOrNull { it.fileName == fn } ?: selectedSession?.takeIf { it.fileName == fn }
+                }
+                val compareList = remember(compareSessionFiles, metricsSessions) {
+                    compareSessionFiles.mapNotNull { fn -> metricsSessions.firstOrNull { it.fileName == fn } }
+                }
+                LaunchedEffect(compareList) {
+                    if (compareList.size >= 2) vm.loadComparisonSamples(compareList)
+                }
+                LaunchedEffect(detailInfo?.fileName) {
+                    if (detailInfo != null && selectedSession?.fileName != detailInfo.fileName) {
+                        vm.selectSession(detailInfo)
+                    }
+                }
+                when {
+                    detailInfo != null -> {
+                        val samplesForDetail = if (selectedSession?.fileName == detailInfo.fileName) selectedSamples else emptyList()
+                        val detailAppName = appLabels[detailInfo.packageName] ?: detailInfo.packageName
+                        SessionDetailScreen(
+                            session = detailInfo,
+                            samples = samplesForDetail,
+                            appName = detailAppName,
+                            scoreWeights = config.scoreWeights,
+                            onUpdateWeights = vm::updateScoreWeights,
+                            onToggleKeep = { vm.toggleSessionKept(detailInfo) },
+                            onShareSummary = {
+                                val text = SessionExport.summaryText(
+                                    title = detailAppName,
+                                    startMs = detailInfo.startMs,
+                                    s = detailInfo.summary,
+                                    device = Build.MODEL ?: "Android",
+                                    appVersion = vm.currentVersion
+                                )
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, text)
+                                }
+                                context.startActivity(
+                                    Intent.createChooser(send, context.getString(R.string.metrics_share_chooser))
+                                )
+                            },
+                            onExportCsv = {
+                                detailCsvTarget = detailInfo
+                                detailCsvLauncher.launch(detailInfo.fileName)
+                            },
+                            onBack = { detailSessionFileName = null },
+                            modifier = Modifier
+                        )
+                    }
+                    compareList.size >= 2 -> {
+                        SessionComparisonScreen(
+                            sessions = compareList,
+                            samplesByFile = comparisonSamples,
+                            appLabels = appLabels,
+                            scoreWeights = config.scoreWeights,
+                            onBack = { compareSessionFiles = emptyList() },
+                            modifier = Modifier
+                        )
+                    }
+                    else -> {
+                        PerformanceScreen(
+                            live = metricsLive,
+                            sessions = metricsSessions,
+                            selectedSession = selectedSession,
+                            selectedSamples = selectedSamples,
+                            recording = metricsRecording,
+                            appLabels = appLabels,
+                            scoreWeights = config.scoreWeights,
+                            onSelectSession = vm::selectSession,
+                            onDeleteSession = vm::deleteSession,
+                            onDeleteAllSessions = vm::deleteAllSessions,
+                            onToggleSessionKeep = vm::toggleSessionKept,
+                            onOpenSessionDetail = { s ->
+                                vm.selectSession(s)
+                                detailSessionFileName = s.fileName
+                            },
+                            onOpenCompare = { list ->
+                                compareSessionFiles = list.map { it.fileName }
+                            },
+                            onUpdateScoreWeights = vm::updateScoreWeights,
+                            onClearLive = vm::clearLiveMetrics,
+                            onExportCsv = vm::exportSessionCsv,
+                            modifier = Modifier
+                        )
+                    }
+                }
             }
             NavTab.ENERGY -> {
                 val energySnapshot by vm.powerModelSnapshot.collectAsStateWithLifecycle()
@@ -624,20 +729,63 @@ fun CoreGovernorRootScreen(
                 onRefreshTable = vm::refreshGpuOppTable,
                 modifier = Modifier
             )
-            NavTab.APPS -> AppsScreen(
-                installedApps = installedApps,
-                isLoadingApps = isLoadingApps,
-                gamePackages = config.gamePackages,
-                usageStatsGranted = usageStatsGranted,
-                onToggleGamePackage = vm::toggleGamePackage,
-                boostPackages = config.boostPackages,
-                onToggleBoostPackage = vm::toggleBoostPackage,
-                onRefreshUsageStats = vm::refreshUsageStatsPermission,
-                modifier = Modifier,
-                smartControls = smartControls,
-                onSmartSet = vm::smartSetControl,
-                onSmartReset = vm::smartResetApp
-            )
+            NavTab.APPS -> {
+                val atPkg = autoTunePkg
+                if (atPkg != null) {
+                    val label = installedApps.firstOrNull { it.packageName == atPkg }?.label ?: atPkg
+                    val pkgSessions = remember(metricsSessions, atPkg) {
+                        metricsSessions.filter { it.packageName == atPkg }
+                    }
+                    AutoTuneScreen(
+                        packageName = atPkg,
+                        appName = label,
+                        config = config,
+                        sessions = pkgSessions,
+                        onSetEnabled = { vm.setAutoTuneEnabled(atPkg, it) },
+                        onSetMode = { vm.setAutoTuneMode(atPkg, it) },
+                        onSetMinMinutes = { vm.setAutoTuneMinMinutes(atPkg, it) },
+                        onSetPaused = { vm.setAutoTunePaused(atPkg, it) },
+                        onToggleLockParam = { vm.toggleAutoTuneLock(atPkg, it) },
+                        onApplySuggestion = { vm.applyAutoTuneSuggestion(atPkg) },
+                        onResetToBaseline = { vm.resetAutoTuneToBaseline(atPkg) },
+                        onRevertToUserSettings = { vm.revertAutoTuneToUserSettings(atPkg) },
+                        onRetune = { vm.retuneAutoTune(atPkg) },
+                        onUpdateProfile = { vm.setPerGameProfile(atPkg, it) },
+                        onOpenSessionDetail = { s ->
+                            vm.selectSession(s)
+                            detailSessionFileName = s.fileName
+                            currentTab = NavTab.METRICS
+                            autoTunePkg = null
+                        },
+                        onCompareTrialWithBaseline = { baseFn, trialFn ->
+                            compareSessionFiles = listOf(baseFn, trialFn)
+                            detailSessionFileName = null
+                            currentTab = NavTab.METRICS
+                            autoTunePkg = null
+                        },
+                        onBack = { autoTunePkg = null },
+                        modifier = Modifier
+                    )
+                } else {
+                    AppsScreen(
+                        installedApps = installedApps,
+                        isLoadingApps = isLoadingApps,
+                        gamePackages = config.gamePackages,
+                        usageStatsGranted = usageStatsGranted,
+                        onToggleGamePackage = vm::toggleGamePackage,
+                        boostPackages = config.boostPackages,
+                        onToggleBoostPackage = vm::toggleBoostPackage,
+                        onRefreshUsageStats = vm::refreshUsageStatsPermission,
+                        modifier = Modifier,
+                        smartControls = smartControls,
+                        onSmartSet = vm::smartSetControl,
+                        onSmartReset = vm::smartResetApp,
+                        autoTuneByPkg = config.autoTuneByPkg,
+                        perGameProfiles = config.perGameProfiles,
+                        onOpenAutoTune = { autoTunePkg = it.packageName }
+                    )
+                }
+            }
             NavTab.SYSTEM -> {
                 val rating by vm.deviceRating.collectAsStateWithLifecycle()
                 val rows by vm.systemRows.collectAsStateWithLifecycle()

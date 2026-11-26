@@ -273,6 +273,134 @@ data class GameThreadControllerConfig(
     val threadHistory: Map<String, GameThreadHistoryRecord> = emptyMap()
 )
 
+data class CompositeScoreWeights(
+    val p5FpsPct: Int = 35,
+    val avgFpsPct: Int = 25,
+    val fpsPerWattPct: Int = 20,
+    val tempPct: Int = 10,
+    val stabilityPct: Int = 10,
+    val tempThresholdC: Float = 45f
+)
+
+data class PerGameProfile(
+    val headroomPct: Float? = null,
+    val rampUpSpeed: Float? = null,
+    val rampDownSpeed: Float? = null,
+    val gpuHeadroomPct: Float? = null,
+    val gpuRampUpSpeed: Float? = null,
+    val gpuRampDownSpeed: Float? = null,
+    val cpuRangesKhz: Map<Int, FreqRange>? = null,
+    val gpuRangeKhz: FreqRange? = null,
+    val powerLimitWatts: Float? = null,
+    val tempStartC: Float? = null,
+    val tempFullC: Float? = null,
+    val afterburnStrength: BoostStrength? = null
+) {
+    val isEmpty: Boolean
+        get() = headroomPct == null &&
+            rampUpSpeed == null &&
+            rampDownSpeed == null &&
+            gpuHeadroomPct == null &&
+            gpuRampUpSpeed == null &&
+            gpuRampDownSpeed == null &&
+            cpuRangesKhz == null &&
+            gpuRangeKhz == null &&
+            powerLimitWatts == null &&
+            tempStartC == null &&
+            tempFullC == null &&
+            afterburnStrength == null
+}
+
+enum class AutoTuneMode(@StringRes val labelRes: Int) {
+    SUGGEST_ONLY(R.string.autotune_mode_suggest),
+    AUTO_APPLY(R.string.autotune_mode_auto)
+}
+
+enum class AutoTuneParam(@StringRes val labelRes: Int) {
+    POWER_LIMIT_WATTS(R.string.autotune_param_power_limit),
+    TEMP_START_C(R.string.autotune_param_temp_start),
+    HEADROOM_PCT(R.string.autotune_param_cpu_headroom),
+    GPU_HEADROOM_PCT(R.string.autotune_param_gpu_headroom),
+    RAMP_DOWN_SPEED(R.string.autotune_param_cpu_ramp_down),
+    GPU_RAMP_DOWN_SPEED(R.string.autotune_param_gpu_ramp_down),
+    RAMP_UP_SPEED(R.string.autotune_param_cpu_ramp_up),
+    GPU_RAMP_UP_SPEED(R.string.autotune_param_gpu_ramp_up)
+}
+
+enum class AutoTuneTrialStatus(@StringRes val labelRes: Int) {
+    PENDING(R.string.autotune_status_pending),
+    BASELINE(R.string.autotune_status_baseline),
+    KEPT(R.string.autotune_status_kept),
+    REVERTED(R.string.autotune_status_reverted),
+    REJECTED_SAFETY(R.string.autotune_status_rejected_safety),
+    IGNORED(R.string.autotune_status_ignored)
+}
+
+data class AutoTuneCandidateSpec(
+    val param: AutoTuneParam,
+    val direction: Int,
+    val value: Float,
+    val key: String
+)
+
+data class AutoTuneTrialRecord(
+    val trialId: Int,
+    val timestampMs: Long,
+    val sessionFileName: String = "",
+    val param: AutoTuneParam? = null,
+    val oldValue: String = "",
+    val newValue: String = "",
+    val score: Float = Float.NaN,
+    val baselineScore: Float = Float.NaN,
+    val bestScoreBefore: Float = Float.NaN,
+    val avgFps: Float = Float.NaN,
+    val p5Fps: Float = Float.NaN,
+    val avgWatts: Float = Float.NaN,
+    val maxTempC: Float = Float.NaN,
+    val status: AutoTuneTrialStatus,
+    val reason: String = "",
+    val reasonCode: String = "",
+    val candidateKey: String = ""
+)
+
+data class PerGameAutoTuneState(
+    val enabled: Boolean = false,
+    val paused: Boolean = false,
+    val mode: AutoTuneMode = AutoTuneMode.SUGGEST_ONLY,
+    val minSessionMinutes: Int = 8,
+    val rewardMarginPct: Float = 3f,
+    val lockedParams: Set<AutoTuneParam> = emptySet(),
+    val baselineCaptured: Boolean = false,
+    val baselineProfile: PerGameProfile = PerGameProfile(),
+    val userOriginalProfile: PerGameProfile? = null,
+    val bestProfile: PerGameProfile = PerGameProfile(),
+    val candidateProfile: PerGameProfile? = null,
+    val pendingCandidate: AutoTuneCandidateSpec? = null,
+    val pendingTrialId: Int = 0,
+    val pendingSuggestion: AutoTuneTrialRecord? = null,
+    val baselineScore: Float = Float.NaN,
+    val baselineP5Fps: Float = Float.NaN,
+    val bestScore: Float = Float.NaN,
+    val nextTrialId: Int = 1,
+    val paramCursor: Int = 0,
+    val consecutiveNoImproveParams: Int = 0,
+    val converged: Boolean = false,
+    val badCandidateKeys: Set<String> = emptySet(),
+    val triedCandidateKeys: Set<String> = emptySet(),
+    val trials: List<AutoTuneTrialRecord> = emptyList()
+)
+
+data class EffectiveGameConfig(
+    val packageName: String,
+    val gameMode: ModeProfile,
+    val tempThrottle: TempThrottleConfig,
+    val powerThrottle: PowerThrottleConfig,
+    val afterburnStrength: BoostStrength,
+    val hasPerGameOverride: Boolean,
+    val autoTuneActive: Boolean,
+    val autoTuneTrialId: Int
+)
+
 data class GovernorConfig(
     val pollIntervalMs: Long = 150L,
     val adaptivePollingEnabled: Boolean = true,
@@ -374,7 +502,11 @@ data class GovernorConfig(
     // v3.7.2: optional Afterburn strength per boosted app (an app without an entry uses afterburn.strength).
     val boostStrengthByPkg: Map<String, BoostStrength> = emptyMap(),
     val stutterHunter: StutterHunterConfig = StutterHunterConfig(),
-    val gameThreadController: GameThreadControllerConfig = GameThreadControllerConfig()
+    val gameThreadController: GameThreadControllerConfig = GameThreadControllerConfig(),
+    // v4.0.0 Per-game override profiles, per-game auto-tune state, and composite score weights.
+    val perGameProfiles: Map<String, PerGameProfile> = emptyMap(),
+    val autoTuneByPkg: Map<String, PerGameAutoTuneState> = emptyMap(),
+    val scoreWeights: CompositeScoreWeights = CompositeScoreWeights()
 )
 
 data class PresetItem(

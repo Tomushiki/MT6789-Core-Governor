@@ -43,7 +43,9 @@ data class MetricSample(
     val cpuLoadPct: Float,
     val gpuLoadPct: Float,
     val work: Float,
-    val batteryState: BatteryState = BatteryState.DISCHARGING
+    val batteryState: BatteryState = BatteryState.DISCHARGING,
+    val thermalThrottled: Boolean = false,
+    val powerThrottled: Boolean = false
 ) {
     val isDischarge: Boolean
         get() = batteryState == BatteryState.DISCHARGING
@@ -72,16 +74,25 @@ data class MetricSummary(
     val energyWh: Float,
     val includesCharging: Boolean = false,
     /** Lowest valid (above 0 W) discharge power seen. NaN when there is none or the file predates 2.7.2. */
-    val minWatts: Float = Float.NaN
+    val minWatts: Float = Float.NaN,
+    // v4.0.0 extended figures (NaN / 0 for files saved before 4.0.0)
+    val p1Fps: Float = Float.NaN,
+    val p50Fps: Float = Float.NaN,
+    val frameStabilityPct: Float = Float.NaN,
+    val thermalThrottleSec: Int = 0,
+    val powerThrottleSec: Int = 0
 )
 
-/** A saved game session. The summary lives in the file header so listing never has to read the samples. */
+/** A saved game session. The summary and tweak snapshot live in the file header so listing never has to read samples. */
 data class SessionInfo(
     val fileName: String,
     val packageName: String,
     val startMs: Long,
     val endMs: Long,
-    val summary: MetricSummary
+    val summary: MetricSummary,
+    val snapshot: SessionTweakSnapshot? = null,
+    val midSessionChanges: Int = 0,
+    val kept: Boolean = false
 )
 
 object MetricsMath {
@@ -138,6 +149,10 @@ object MetricsMath {
         return out
     }
 
+    /** Seconds spent strictly above [thresholdC] across samples. */
+    fun timeAboveTempSec(samples: List<MetricSample>, thresholdC: Float): Int =
+        samples.count { !it.tempC.isNaN() && it.tempC >= thresholdC }
+
     fun summarize(samples: List<MetricSample>): MetricSummary {
         if (samples.isEmpty()) {
             return MetricSummary(0L, 0, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, 0f, false)
@@ -160,10 +175,14 @@ object MetricsMath {
         var ratioWattsForWork = 0.0
         var energyWs = 0.0
         var includesCharging = false
+        var thermalSec = 0
+        var powerSec = 0
 
         for ((i, s) in samples.withIndex()) {
             sumTemp += s.tempC
             if (s.tempC > maxTemp) maxTemp = s.tempC
+            if (s.thermalThrottled) thermalSec++
+            if (s.powerThrottled) powerSec++
             if (s.batteryState == BatteryState.CHARGING || s.batteryState == BatteryState.FULL_PLUGGED) {
                 includesCharging = true
             }
@@ -194,12 +213,21 @@ object MetricsMath {
             }
         }
         fpsValues.sort()
+        val avgFps = if (fpsN == 0) Float.NaN else (sumFps / fpsN).toFloat()
+        val p1 = if (fpsValues.isEmpty()) Float.NaN else fpsValues[((fpsValues.size - 1) * 0.01).toInt()]
         val p5 = if (fpsValues.isEmpty()) Float.NaN else fpsValues[((fpsValues.size - 1) * 0.05).toInt()]
+        val p50 = if (fpsValues.isEmpty()) Float.NaN else fpsValues[((fpsValues.size - 1) * 0.50).toInt()]
+        val stabilityPct = if (fpsValues.isNotEmpty() && !avgFps.isNaN() && avgFps > 0f) {
+            val lo = avgFps * 0.90f
+            val hi = avgFps * 1.10f
+            val stableCount = fpsValues.count { it in lo..hi }
+            (stableCount * 100f) / fpsValues.size
+        } else Float.NaN
         val n = samples.size
         return MetricSummary(
             durationMs = samples.last().tMs - samples.first().tMs,
             sampleCount = n,
-            avgFps = if (fpsN == 0) Float.NaN else (sumFps / fpsN).toFloat(),
+            avgFps = avgFps,
             minFps = if (fpsN == 0) Float.NaN else minFps,
             p5Fps = p5,
             avgTempC = (sumTemp / n).toFloat(),
@@ -210,7 +238,12 @@ object MetricsMath {
             avgWorkPerWatt = if (ratioWattsForWork > 0.0) (ratioWork / ratioWattsForWork).toFloat() else Float.NaN,
             energyWh = (energyWs / 3600.0).toFloat(),
             includesCharging = includesCharging,
-            minWatts = if (minW.isInfinite()) Float.NaN else minW
+            minWatts = if (minW.isInfinite()) Float.NaN else minW,
+            p1Fps = p1,
+            p50Fps = p50,
+            frameStabilityPct = stabilityPct,
+            thermalThrottleSec = thermalSec,
+            powerThrottleSec = powerSec
         )
     }
 
@@ -233,8 +266,11 @@ object MetricsMath {
         else -> BatteryState.DISCHARGING
     }
 
-    fun encodeSample(s: MetricSample): String =
-        "${s.tMs},${f(s.tempC)},${f(s.watts)},${f(s.fps)},${f(s.cpuLoadPct)},${f(s.gpuLoadPct)},${f(s.work)},${stateToCode(s.batteryState)}"
+    fun encodeSample(s: MetricSample): String {
+        val flags = (if (s.thermalThrottled) 1 else 0) or (if (s.powerThrottled) 2 else 0)
+        val base = "${s.tMs},${f(s.tempC)},${f(s.watts)},${f(s.fps)},${f(s.cpuLoadPct)},${f(s.gpuLoadPct)},${f(s.work)},${stateToCode(s.batteryState)}"
+        return if (flags == 0) base else "$base,$flags"
+    }
 
     fun decodeSample(line: String): MetricSample? {
         val p = line.split(',')
@@ -243,16 +279,44 @@ object MetricsMath {
         val v = FloatArray(6)
         for (i in 0 until 6) v[i] = p[i + 1].toFloatOrNull() ?: return null
         val state = if (p.size >= 8) codeToState(p[7]) else BatteryState.DISCHARGING
-        return MetricSample(t, v[0], v[1], v[2], v[3], v[4], v[5], state)
+        val flags = if (p.size >= 9) p[8].trim().toIntOrNull() ?: 0 else 0
+        return MetricSample(
+            tMs = t,
+            tempC = v[0],
+            watts = v[1],
+            fps = v[2],
+            cpuLoadPct = v[3],
+            gpuLoadPct = v[4],
+            work = v[5],
+            batteryState = state,
+            thermalThrottled = (flags and 1) != 0,
+            powerThrottled = (flags and 2) != 0
+        )
     }
 
-    fun encodeHeader(pkg: String, startMs: Long, endMs: Long, s: MetricSummary): String =
+    fun encodeHeader(
+        pkg: String,
+        startMs: Long,
+        endMs: Long,
+        s: MetricSummary,
+        snapshot: SessionTweakSnapshot? = null,
+        midSessionChanges: Int = 0,
+        kept: Boolean = false
+    ): String =
         listOf(
             "#CG1", pkg.replace('|', '_').replace('\n', ' '), startMs, endMs, s.sampleCount,
             f(s.avgFps), f(s.minFps), f(s.p5Fps), f(s.avgTempC), f(s.maxTempC),
             f(s.avgWatts), f(s.maxWatts), f(s.avgFpsPerWatt), f(s.avgWorkPerWatt), f(s.energyWh),
             if (s.includesCharging) "1" else "0",
-            f(s.minWatts)
+            f(s.minWatts),
+            f(s.p1Fps),
+            f(s.p50Fps),
+            f(s.frameStabilityPct),
+            s.thermalThrottleSec.coerceAtLeast(0),
+            s.powerThrottleSec.coerceAtLeast(0),
+            midSessionChanges.coerceAtLeast(0),
+            if (kept) "1" else "0",
+            snapshot?.encode().orEmpty()
         ).joinToString("|")
 
     fun decodeHeader(fileName: String, line: String): SessionInfo? {
@@ -262,9 +326,19 @@ object MetricsMath {
         val end = p[3].toLongOrNull() ?: return null
         val n = p[4].toIntOrNull() ?: return null
         fun g(i: Int) = p[i].toFloatOrNull() ?: Float.NaN
+        fun gOpt(i: Int) = p.getOrNull(i)?.toFloatOrNull() ?: Float.NaN
         val hasCharging = p.getOrNull(15) == "1"
         // Field 16 (minimum power) was added in 2.7.2; older files do not have it.
-        val minW = p.getOrNull(16)?.toFloatOrNull() ?: Float.NaN
+        val minW = gOpt(16)
+        // Fields 17..24 were added in 4.0.0; older files return NaN / 0 / null snapshot.
+        val p1 = gOpt(17)
+        val p50 = gOpt(18)
+        val stability = gOpt(19)
+        val thermalSec = p.getOrNull(20)?.toIntOrNull() ?: 0
+        val powerSec = p.getOrNull(21)?.toIntOrNull() ?: 0
+        val midChanges = p.getOrNull(22)?.toIntOrNull() ?: 0
+        val kept = p.getOrNull(23) == "1"
+        val snap = SessionTweakSnapshot.decode(p.getOrNull(24))
         return SessionInfo(
             fileName = fileName,
             packageName = p[1],
@@ -279,8 +353,16 @@ object MetricsMath {
                 avgFpsPerWatt = g(12), avgWorkPerWatt = g(13),
                 energyWh = g(14),
                 includesCharging = hasCharging,
-                minWatts = minW
-            )
+                minWatts = minW,
+                p1Fps = p1,
+                p50Fps = p50,
+                frameStabilityPct = stability,
+                thermalThrottleSec = thermalSec,
+                powerThrottleSec = powerSec
+            ),
+            snapshot = snap,
+            midSessionChanges = midChanges,
+            kept = kept
         )
     }
 }
@@ -320,6 +402,14 @@ class MetricsRecorder(
     @Volatile
     var onSample: ((MetricSample, Boolean) -> Unit)? = null
 
+    /** Called once when a game session begins to capture the active tweak snapshot. */
+    @Volatile
+    var snapshotProvider: ((String) -> SessionTweakSnapshot?)? = null
+
+    /** Called on IO thread after a game session is saved cleanly. */
+    @Volatile
+    var onSessionSaved: ((SessionInfo) -> Unit)? = null
+
     fun sessionFile(info: SessionInfo): File = File(dir, info.fileName)
 
     private val liveBuf = ArrayDeque<MetricSample>()
@@ -342,10 +432,20 @@ class MetricsRecorder(
     private var sessionSamples = ArrayList<MetricSample>()
     private var sessionPkg = ""
     private var sessionActive = false
+    private var sessionStartSnapshot: SessionTweakSnapshot? = null
+    private var sessionMidChanges = 0
     private val saveLock = Any()
 
     init {
         scope.launch(Dispatchers.IO) { refreshSessions() }
+    }
+
+    /** Marks that user settings were modified while a game session was already running. */
+    @Synchronized
+    fun recordMidSessionConfigChange() {
+        if (sessionActive) {
+            sessionMidChanges++
+        }
     }
 
     /** Called from the control loop after each telemetry push. Cheap unless a sample is due. */
@@ -376,7 +476,9 @@ class MetricsRecorder(
             cpuLoadPct = t.totalCpuLoadPct,
             gpuLoadPct = t.gpu.smoothedLoadPct,
             work = MetricsMath.workScore(t.clusters, t.gpu),
-            batteryState = t.batteryState
+            batteryState = t.batteryState,
+            thermalThrottled = t.tempThrottleActive,
+            powerThrottled = t.powerThrottleActive
         )
 
         liveBuf.addLast(sample)
@@ -393,6 +495,8 @@ class MetricsRecorder(
                 sessionActive = true
                 sessionPkg = t.foregroundPackage
                 sessionSamples = ArrayList()
+                sessionMidChanges = 0
+                sessionStartSnapshot = snapshotProvider?.invoke(sessionPkg)
                 _recording.value = true
             }
             sessionSamples.add(sample)
@@ -416,25 +520,46 @@ class MetricsRecorder(
         if (!sessionActive) return
         val samples = sessionSamples
         val pkg = sessionPkg
+        val snap = sessionStartSnapshot
+        val midChanges = sessionMidChanges
         sessionActive = false
         sessionSamples = ArrayList()
         sessionPkg = ""
+        sessionStartSnapshot = null
+        sessionMidChanges = 0
         _recording.value = false
         if (samples.size < MIN_SESSION_SAMPLES) return
-        scope.launch(Dispatchers.IO) { saveSession(pkg, samples) }
+        scope.launch(Dispatchers.IO) { saveSession(pkg, samples, snap, midChanges) }
     }
 
-    private fun saveSession(pkg: String, samples: List<MetricSample>) {
+    private fun saveSession(
+        pkg: String,
+        samples: List<MetricSample>,
+        snapshot: SessionTweakSnapshot?,
+        midChanges: Int
+    ) {
         synchronized(saveLock) {
             try {
                 dir.mkdirs()
                 val start = samples.first().tMs
                 val end = samples.last().tMs
-                val safePkg = pkg.ifBlank { "unknown" }.replace(Regex("[^A-Za-z0-9._-]"), "_")
-                val file = File(dir, "${start}_$safePkg.csv")
+                val cleanPkg = pkg.ifBlank { "unknown" }
+                val safePkg = cleanPkg.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val fileName = "${start}_$safePkg.csv"
+                val file = File(dir, fileName)
                 val summary = MetricsMath.summarize(samples)
                 file.bufferedWriter().use { w ->
-                    w.write(MetricsMath.encodeHeader(pkg.ifBlank { "unknown" }, start, end, summary))
+                    w.write(
+                        MetricsMath.encodeHeader(
+                            pkg = cleanPkg,
+                            startMs = start,
+                            endMs = end,
+                            s = summary,
+                            snapshot = snapshot,
+                            midSessionChanges = midChanges,
+                            kept = false
+                        )
+                    )
                     w.newLine()
                     for (s in samples) {
                         w.write(MetricsMath.encodeSample(s))
@@ -443,7 +568,18 @@ class MetricsRecorder(
                 }
                 pruneOld()
                 refreshSessions()
-                log(LogLevel.INFO, "Metrics", "Saved session ${safePkg} (${samples.size}s).")
+                val savedInfo = SessionInfo(
+                    fileName = fileName,
+                    packageName = cleanPkg,
+                    startMs = start,
+                    endMs = end,
+                    summary = summary,
+                    snapshot = snapshot,
+                    midSessionChanges = midChanges,
+                    kept = false
+                )
+                log(LogLevel.INFO, "Metrics", "Saved session $safePkg (${samples.size}s).")
+                onSessionSaved?.invoke(savedInfo)
             } catch (e: Exception) {
                 log(LogLevel.WARN, "Metrics", "Could not save session: ${e.message}")
             }
@@ -452,8 +588,20 @@ class MetricsRecorder(
 
     private fun pruneOld() {
         val files = dir.listFiles { f -> f.name.endsWith(".csv") }?.sortedBy { it.name } ?: return
-        if (files.size > MAX_SAVED_SESSIONS) {
-            files.take(files.size - MAX_SAVED_SESSIONS).forEach { it.delete() }
+        if (files.size <= MAX_SAVED_SESSIONS) return
+        var excess = files.size - MAX_SAVED_SESSIONS
+        for (f in files) {
+            if (excess <= 0) break
+            val kept = try {
+                val line = f.bufferedReader().use { it.readLine() }
+                if (line != null) MetricsMath.decodeHeader(f.name, line)?.kept == true else false
+            } catch (_: Exception) {
+                false
+            }
+            if (!kept) {
+                f.delete()
+                excess--
+            }
         }
     }
 
@@ -473,6 +621,43 @@ class MetricsRecorder(
         _sessions.value = list
     }
 
+    suspend fun setSessionKept(info: SessionInfo, kept: Boolean) = withContext(Dispatchers.IO) {
+        synchronized(saveLock) {
+            val file = File(dir, info.fileName)
+            if (!file.exists()) return@withContext
+            try {
+                val lines = file.readLines()
+                if (lines.isEmpty()) return@withContext
+                val decoded = MetricsMath.decodeHeader(info.fileName, lines[0]) ?: info
+                val newHeader = MetricsMath.encodeHeader(
+                    pkg = decoded.packageName,
+                    startMs = decoded.startMs,
+                    endMs = decoded.endMs,
+                    s = decoded.summary,
+                    snapshot = decoded.snapshot,
+                    midSessionChanges = decoded.midSessionChanges,
+                    kept = kept
+                )
+                val tmp = File(dir, "${info.fileName}.tmp")
+                tmp.bufferedWriter().use { w ->
+                    w.write(newHeader)
+                    for (i in 1 until lines.size) {
+                        w.newLine()
+                        w.write(lines[i])
+                    }
+                    w.newLine()
+                }
+                if (!tmp.renameTo(file)) {
+                    file.writeText(tmp.readText())
+                    tmp.delete()
+                }
+                refreshSessions()
+            } catch (e: Exception) {
+                log(LogLevel.WARN, "Metrics", "Could not update keep flag: ${e.message}")
+            }
+        }
+    }
+
     suspend fun loadSession(info: SessionInfo): List<MetricSample> = withContext(Dispatchers.IO) {
         try {
             File(dir, info.fileName).useLines { lines ->
@@ -484,12 +669,28 @@ class MetricsRecorder(
     }
 
     suspend fun deleteSession(info: SessionInfo) = withContext(Dispatchers.IO) {
-        File(dir, info.fileName).delete()
-        refreshSessions()
+        synchronized(saveLock) {
+            File(dir, info.fileName).delete()
+            refreshSessions()
+        }
     }
 
-    suspend fun deleteAllSessions() = withContext(Dispatchers.IO) {
-        dir.listFiles { f -> f.name.endsWith(".csv") }?.forEach { it.delete() }
-        refreshSessions()
+    suspend fun deleteAllSessions(includeKept: Boolean = false) = withContext(Dispatchers.IO) {
+        synchronized(saveLock) {
+            dir.listFiles { f -> f.name.endsWith(".csv") }?.forEach { f ->
+                if (includeKept) {
+                    f.delete()
+                } else {
+                    val kept = try {
+                        val line = f.bufferedReader().use { it.readLine() }
+                        line != null && MetricsMath.decodeHeader(f.name, line)?.kept == true
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (!kept) f.delete()
+                }
+            }
+            refreshSessions()
+        }
     }
 }

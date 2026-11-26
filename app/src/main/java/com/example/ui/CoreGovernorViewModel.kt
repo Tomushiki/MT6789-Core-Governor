@@ -51,12 +51,16 @@ import com.example.governor.GameThreadInspectionResult
 import com.example.governor.GameThreadLogic
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.example.governor.AutoTuneLogic
 import com.example.governor.MetricSample
 import com.example.governor.PowerModelUiSnapshot
 import com.example.governor.SensorPinner
 import com.example.governor.SessionInfo
 import com.example.governor.UpdateChecker
 import com.example.governor.UpdateState
+import com.example.model.AutoTuneMode
+import com.example.model.AutoTuneParam
+import com.example.model.CompositeScoreWeights
 import com.example.model.EfficiencyMode
 import com.example.model.ExplorationRate
 import com.example.model.FreqRange
@@ -66,6 +70,7 @@ import com.example.model.InstalledAppInfo
 import com.example.model.LogEntry
 import com.example.model.LogLevel
 import com.example.model.ModeOverride
+import com.example.model.PerGameProfile
 import com.example.model.PowerPolarity
 import com.example.model.PowerUnitScale
 import com.example.model.PresetItem
@@ -127,6 +132,9 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
 
     private val _selectedSamples = MutableStateFlow<List<MetricSample>>(emptyList())
     val selectedSamples: StateFlow<List<MetricSample>> = _selectedSamples.asStateFlow()
+
+    private val _comparisonSamples = MutableStateFlow<Map<String, List<MetricSample>>>(emptyMap())
+    val comparisonSamples: StateFlow<Map<String, List<MetricSample>>> = _comparisonSamples.asStateFlow()
 
     private val _installedApps = MutableStateFlow<List<InstalledAppInfo>>(emptyList())
     val installedApps: StateFlow<List<InstalledAppInfo>> = _installedApps.asStateFlow()
@@ -880,14 +888,93 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun loadComparisonSamples(sessions: List<SessionInfo>) {
+        if (sessions.isEmpty()) {
+            _comparisonSamples.value = emptyMap()
+            return
+        }
+        val names = sessions.map { it.fileName }.toSet()
+        viewModelScope.launch {
+            val current = _comparisonSamples.value
+            val next = HashMap<String, List<MetricSample>>(sessions.size)
+            for (info in sessions) {
+                val cached = current[info.fileName]
+                next[info.fileName] = cached ?: engine.metrics.loadSession(info)
+            }
+            _comparisonSamples.value = next.filterKeys { it in names }
+        }
+    }
+
+    fun toggleSessionKept(info: SessionInfo) {
+        val nextKept = !info.kept
+        if (_selectedSession.value?.fileName == info.fileName) {
+            _selectedSession.value = _selectedSession.value?.copy(kept = nextKept)
+        }
+        viewModelScope.launch { engine.metrics.setSessionKept(info, nextKept) }
+    }
+
     fun deleteSession(info: SessionInfo) {
         if (_selectedSession.value?.fileName == info.fileName) selectSession(null)
         viewModelScope.launch { engine.metrics.deleteSession(info) }
     }
 
-    fun deleteAllSessions() {
-        selectSession(null)
-        viewModelScope.launch { engine.metrics.deleteAllSessions() }
+    fun deleteAllSessions(includeKept: Boolean = false) {
+        if (includeKept || _selectedSession.value?.kept != true) selectSession(null)
+        viewModelScope.launch { engine.metrics.deleteAllSessions(includeKept) }
+    }
+
+    fun updateScoreWeights(weights: CompositeScoreWeights) {
+        engine.updateConfig(markMidSession = false) { it.copy(scoreWeights = weights) }
+    }
+
+    fun setPerGameProfile(pkg: String, profile: PerGameProfile?) {
+        val clean = pkg.trim()
+        if (clean.isEmpty()) return
+        engine.updateConfig { cfg ->
+            val next = cfg.perGameProfiles.toMutableMap()
+            if (profile == null || profile.isEmpty) {
+                next.remove(clean)
+            } else {
+                next[clean] = profile
+            }
+            cfg.copy(perGameProfiles = next)
+        }
+    }
+
+    fun setAutoTuneEnabled(pkg: String, enabled: Boolean) {
+        engine.updateConfig(markMidSession = false) { AutoTuneLogic.setEnabled(it, pkg, enabled) }
+    }
+
+    fun setAutoTuneMode(pkg: String, mode: AutoTuneMode) {
+        engine.updateConfig(markMidSession = false) { AutoTuneLogic.setMode(it, pkg, mode) }
+    }
+
+    fun setAutoTuneMinMinutes(pkg: String, minutes: Int) {
+        engine.updateConfig(markMidSession = false) { AutoTuneLogic.setMinSessionMinutes(it, pkg, minutes) }
+    }
+
+    fun setAutoTunePaused(pkg: String, paused: Boolean) {
+        engine.updateConfig(markMidSession = false) { AutoTuneLogic.setPaused(it, pkg, paused) }
+    }
+
+    fun toggleAutoTuneLock(pkg: String, param: AutoTuneParam) {
+        engine.updateConfig(markMidSession = false) { AutoTuneLogic.toggleLockParam(it, pkg, param) }
+    }
+
+    fun applyAutoTuneSuggestion(pkg: String) {
+        engine.updateConfig { AutoTuneLogic.applySuggestion(it, pkg) }
+    }
+
+    fun resetAutoTuneToBaseline(pkg: String) {
+        engine.updateConfig { AutoTuneLogic.resetToBaseline(it, pkg) }
+    }
+
+    fun revertAutoTuneToUserSettings(pkg: String) {
+        engine.updateConfig { AutoTuneLogic.revertToUserSettings(it, pkg) }
+    }
+
+    fun retuneAutoTune(pkg: String) {
+        engine.updateConfig(markMidSession = false) { AutoTuneLogic.retune(it, pkg) }
     }
 
     fun clearLiveMetrics() = engine.metrics.clearLive()

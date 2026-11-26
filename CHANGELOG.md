@@ -6,6 +6,23 @@ All notable changes to **CoreGovernor** will be documented in this file.
 
 No changes yet.
 
+## [4.0.0] - 2026-11-26
+
+### Added
+- **Game Session Comparison & Full Details (`Metrics` tab):**
+  - **Settings snapshot per session:** Each recorded session now captures a compact snapshot of the active tuning state at game start (Game-mode CPU/GPU headroom & ramp speeds, CPU/GPU frequency ranges, thermal throttle curve/start/full/reduction/reaction, power throttle limit/sustain/step/smooth limit, Afterburn state & per-package strength, RAM pin, Stutter Hunter mode, Game Thread Controller, Adaptive Refresh Rate, per-game override status, and Auto-Tune trial ID) inside the `#CG1|` CSV header. Legacy sessions without snapshots continue to load with "Settings not recorded".
+  - **Mid-session change tracking:** Modifying tuning settings while a session is recording keeps the start snapshot intact and increments a `MODIFIED` counter on the session.
+  - **Session Full Details screen:** Displays composite score (0–100), percentile FPS (`1% low`, `Median`, `5% low`, `Avg`), frame stability (% within ±10% of average FPS), power/thermal throttle durations, configurable temperature threshold time-above counter (`42/45/48/50 °C`), downsampled charts, and the full start snapshot table.
+  - **Multi-session Comparison (2–4 sessions):** Side-by-side metrics table with direction arrows + colour-coded better/worse deltas relative to baseline A, shared time-axis overlay charts (FPS, power, temperature), settings-differences-only breakdown, plain-language verdicts, fairness warnings (different games, charging included, duration mismatch, short session < 20 samples, mid-session edits, missing snapshot), and plain-text export via `SessionExport.comparisonText`.
+  - **Tweak Impact Ranking & customizable weights:** Aggregates recorded sessions per game to rank the best and worst tweaks with delta score, FPS, p5, watts, temperature, sample counts, and clear Low confidence warnings when fewer than 3 sessions back either value. Composite score weights (`35% p5 FPS, 25% avg FPS, 20% FPS/W, 10% temp, 10% stability` by default) can be tuned and saved.
+  - **Keep protection:** Bookmarking a session marks it as `KEPT`, protecting it from automatic 40-session pruning and accidental "Delete all" unless explicitly checked.
+- **Auto-Tune Per Game (`Apps` tab -> `Auto-tune & game profile`):**
+  - **Per-game override profiles:** `GovernorConfig.perGameProfiles` stores optional per-package overrides (Game-mode headroom/ramps/ranges, power limit, thermal start/full, Afterburn strength) resolved and cached on package/config change with zero per-tick allocations, clamped safely within global thermal and power limits.
+  - **Conservative trial-based Auto-Tune (OFF by default):** Supports `Suggest only` and `Auto-apply` modes, captures an unplugged clean baseline first, tests one bounded parameter step per full game session (settings only change at game launch, never mid-session), discards charging/short/mid-edited/no-FPS sessions, blacklists and immediately reverts on thermal/power/p5-collapse safety triggers, keeps improvements only when beating the configured reward margin (3% default), supports per-parameter locks, `Reset to baseline`, `Revert to my settings`, `Re-tune`, and a trial journal linked directly to Session Details & Comparison.
+
+### Changed
+- Version 4.0.0 (versionCode 67).
+
 ## [3.8.3] - 2026-11-26
 
 ### Changed

@@ -160,6 +160,23 @@ If the governor does not stay running for a minute after an automatic start at b
 - **Notify only vs Stop apps:** Defaults to **Notify only**, which logs and lists the culprit without stopping anything. **Stop apps** runs `am force-stop` with root, enforces cooldowns and session caps, and checks 6 seconds later whether FPS recovered (if stopping an app did not help, it is skipped for the rest of the game session).
 - **Safety:** Thermal throttling, power throttling, or 90%+ GPU load skips hunting. Own app, foreground game, launcher, keyboard, dialer, system apps, protected processes, and apps in your **Whitelist** are never blamed or stopped.
 
+## 7k. Session Comparison, Full Details & Tweak Impact Ranking (Metrics tab, 4.0.0)
+
+- **Settings snapshot:** Every new game session saves a compact snapshot of all active tuning settings at launch. If you tweak settings while playing, the session is marked `MODIFIED` while keeping the original start snapshot.
+- **Keep sessions:** Tap the bookmark icon on any saved session (or in Full Details) to mark it `KEPT` so automatic 40-session cleanup and default Delete All will not delete it.
+- **Full details:** Open any saved session and tap **Full details** (or **Details** in the session list) to inspect `1% low`, `Median`, `5% low`, frame stability (±10%), time throttled by heat/power, time above a chosen temperature threshold (`42/45/48/50 °C`), and the full settings snapshot.
+- **Compare 2–4 sessions:** Tap **Compare** above the session list, pick 2 to 4 runs, and view side-by-side deltas against baseline A, shared-timeline overlay graphs for FPS, watts and temperature, only the settings that changed, a plain-language verdict, and fairness warnings (for charging, mismatched duration, or different games). Use **Export** to share a text summary.
+- **Tweak impact ranking:** Once a game has sessions with varying settings, the Metrics tab ranks the best and worst setting changes with session counts and a **Low** confidence label whenever fewer than 3 sessions back a value. Tap **Weights** to adjust the composite score formula.
+
+## 7l. Auto-Tune Per Game & Per-Game Profiles (Apps tab, 4.0.0)
+
+- **Per-game overrides:** In the **Apps** tab, tap **Auto-tune & game profile** under any selected game to set custom Game-mode power limits, thermal throttle start temperatures, or Afterburn strength for that game alone (capped safely by your global limits).
+- **Trial-based Auto-Tune (off by default):** Enable it per game and choose **Suggest only** (shows the next candidate change for you to tap Apply) or **Auto-apply**.
+  1. Play an unplugged session of at least your configured minimum minutes (default 8 min) so Auto-Tune records a clean baseline.
+  2. Candidate tweaks are applied only when a game starts—never mid-session. Short, charging, or mid-session-edited runs are ignored automatically.
+  3. Safety checks revert and block any candidate that hits thermal limits, excessive power throttling, or a >15% drop in 5% low FPS.
+  4. Lock individual tweaks you want untouched, inspect every trial in the **Trial Journal**, or use **Reset to baseline**, **Revert to my settings**, or **Re-tune** at any time.
+
 ## 8. Suggested starting points
 
 Daily use: start from the Balanced preset. Leave temperature and power throttling on. Keep Normal mode maximums below the top step if the phone gets warm.
