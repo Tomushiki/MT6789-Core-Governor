@@ -306,7 +306,11 @@ fun PowerThrottleSection(
         polarity: PowerPolarity?,
         componentAware: Boolean?
     ) -> Unit,
-    onSetSmoothPowerLimit: (Boolean) -> Unit
+    onSetSmoothPowerLimit: (Boolean) -> Unit,
+    onSetSmoothMinConfidence: (Int) -> Unit,
+    onSetSmoothSliceMs: (Int) -> Unit,
+    onSetSmoothSliceAuto: (Boolean) -> Unit,
+    onSetSmoothFixDrift: (Boolean) -> Unit
 ) {
     val telemetry by telemetryFlow.collectAsStateWithLifecycle()
     val ext = LocalExtendedColors.current
@@ -367,6 +371,51 @@ fun PowerThrottleSection(
             onCheckedChange = { onSetSmoothPowerLimit(it) },
             testTag = "power_smooth_switch"
         )
+
+        if (p.smoothPowerLimit) {
+            Spacer(modifier = Modifier.height(10.dp))
+            SettingSliderRow(
+                title = stringResource(R.string.power_smooth_min_conf),
+                valueText = "${config.smoothMinConfidencePct}%",
+                explanation = stringResource(R.string.power_smooth_min_conf_desc),
+                value = config.smoothMinConfidencePct.toFloat(),
+                valueRange = 10f..95f,
+                steps = 16,
+                onValueChange = { raw -> onSetSmoothMinConfidence(((raw / 5f).roundToInt() * 5).coerceIn(10, 95)) },
+                testTag = "slider_smooth_min_confidence"
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            SettingSliderRow(
+                title = stringResource(R.string.power_smooth_slice),
+                valueText = if (config.smoothSliceAuto) {
+                    stringResource(R.string.power_smooth_slice_start, config.smoothSliceMs)
+                } else {
+                    "${config.smoothSliceMs} ms"
+                },
+                explanation = stringResource(R.string.power_smooth_slice_desc),
+                value = config.smoothSliceMs.toFloat(),
+                valueRange = 30f..400f,
+                steps = 36,
+                onValueChange = { raw -> onSetSmoothSliceMs(((raw / 10f).roundToInt() * 10).coerceIn(30, 400)) },
+                testTag = "slider_smooth_slice"
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            SettingSwitchRow(
+                title = stringResource(R.string.power_smooth_slice_auto),
+                explanation = stringResource(R.string.power_smooth_slice_auto_desc),
+                checked = config.smoothSliceAuto,
+                onCheckedChange = { onSetSmoothSliceAuto(it) },
+                testTag = "power_smooth_slice_auto_switch"
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            SettingSwitchRow(
+                title = stringResource(R.string.power_smooth_fix_drift),
+                explanation = stringResource(R.string.power_smooth_fix_drift_desc),
+                checked = config.smoothFixDrift,
+                onCheckedChange = { onSetSmoothFixDrift(it) },
+                testTag = "power_smooth_fix_drift_switch"
+            )
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
 

@@ -119,6 +119,8 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
     val logs: StateFlow<List<LogEntry>> = engine.logs
     val powerModelSnapshot: StateFlow<PowerModelUiSnapshot> = engine.powerModel.uiSnapshot
     val batterySnapshot: StateFlow<BatteryEstimatorUiSnapshot> = engine.batteryEstimator.snapshot
+    val batteryHistory: StateFlow<List<com.example.governor.BatteryHistoryPoint>> = engine.batteryHistory.history
+    fun clearBatteryHistory() = engine.batteryHistory.clear()
     val stutterHunterStatus: StateFlow<com.example.governor.StutterHunterStatus> =
         com.example.governor.StutterHunterRunner.status
 
@@ -558,6 +560,25 @@ class CoreGovernorViewModel(application: Application) : AndroidViewModel(applica
                     componentAware = componentAware ?: p.componentAware
                 )
             )
+        }
+    }
+
+    fun setSmoothMinConfidence(pct: Int) {
+        engine.updateConfig { cfg -> cfg.copy(smoothMinConfidencePct = pct.coerceIn(10, 95)) }
+    }
+
+    fun setSmoothSliceMs(ms: Int) {
+        engine.updateConfig { cfg -> cfg.copy(smoothSliceMs = ms.coerceIn(30, 400)) }
+    }
+
+    fun setSmoothFixDrift(enabled: Boolean) {
+        engine.updateConfig { cfg -> cfg.copy(smoothFixDrift = enabled) }
+    }
+
+    fun setSmoothSliceAuto(enabled: Boolean) {
+        // Switching learning on starts from scratch (forgets earlier results); switching it off keeps nothing in use.
+        engine.updateConfig { cfg ->
+            cfg.copy(smoothSliceAuto = enabled, smoothLearnedSlices = if (enabled) "" else cfg.smoothLearnedSlices)
         }
     }
 

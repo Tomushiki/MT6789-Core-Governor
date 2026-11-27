@@ -535,6 +535,11 @@ class ConfigStorage(private val context: Context) {
             put("efficiencyLearningEnabled", c.efficiencyLearningEnabled)
             put("efficiencyMode", c.efficiencyMode.name)
             put("minConfidencePct", c.minConfidencePct)
+            put("smoothMinConfidencePct", c.smoothMinConfidencePct)
+            put("smoothSliceMs", c.smoothSliceMs)
+            put("smoothSliceAuto", c.smoothSliceAuto)
+            put("smoothFixDrift", c.smoothFixDrift)
+            put("smoothLearnedSlices", c.smoothLearnedSlices)
             put("explorationRate", c.explorationRate.name)
             put("batteryEstimationEnabled", c.batteryEstimationEnabled)
             put("batteryDesignCapacityOverrideMah", c.batteryDesignCapacityOverrideMah)
@@ -885,6 +890,11 @@ class ConfigStorage(private val context: Context) {
             efficiencyLearningEnabled = obj.optBoolean("efficiencyLearningEnabled", default.efficiencyLearningEnabled),
             efficiencyMode = enumOrDefault(obj.optString("efficiencyMode"), default.efficiencyMode),
             minConfidencePct = obj.optInt("minConfidencePct", default.minConfidencePct).coerceIn(20, 95),
+            smoothMinConfidencePct = obj.optInt("smoothMinConfidencePct", default.smoothMinConfidencePct).coerceIn(10, 95),
+            smoothSliceMs = obj.optInt("smoothSliceMs", default.smoothSliceMs).coerceIn(30, 400),
+            smoothSliceAuto = obj.optBoolean("smoothSliceAuto", default.smoothSliceAuto),
+            smoothFixDrift = obj.optBoolean("smoothFixDrift", default.smoothFixDrift),
+            smoothLearnedSlices = obj.optString("smoothLearnedSlices", default.smoothLearnedSlices),
             explorationRate = enumOrDefault(obj.optString("explorationRate"), default.explorationRate),
             batteryEstimationEnabled = obj.optBoolean("batteryEstimationEnabled", default.batteryEstimationEnabled),
             batteryDesignCapacityOverrideMah = obj.optInt("batteryDesignCapacityOverrideMah", default.batteryDesignCapacityOverrideMah).coerceAtLeast(0),

@@ -225,6 +225,10 @@ fun TuningScreen(
         componentAware: Boolean?
     ) -> Unit,
     onSetSmoothPowerLimit: (Boolean) -> Unit,
+    onSetSmoothMinConfidence: (Int) -> Unit,
+    onSetSmoothSliceMs: (Int) -> Unit,
+    onSetSmoothSliceAuto: (Boolean) -> Unit,
+    onSetSmoothFixDrift: (Boolean) -> Unit,
     onUpdateAfterburn: (
         enabled: Boolean?,
         strength: com.example.model.BoostStrength?,
@@ -1027,7 +1031,11 @@ fun TuningScreen(
                         config = config,
                         telemetryFlow = telemetryFlow,
                         onUpdatePowerThrottle = onUpdatePowerThrottle,
-                        onSetSmoothPowerLimit = onSetSmoothPowerLimit
+                        onSetSmoothPowerLimit = onSetSmoothPowerLimit,
+                        onSetSmoothMinConfidence = onSetSmoothMinConfidence,
+                        onSetSmoothSliceMs = onSetSmoothSliceMs,
+                        onSetSmoothSliceAuto = onSetSmoothSliceAuto,
+                        onSetSmoothFixDrift = onSetSmoothFixDrift
                     )
                 }
                 item {

@@ -108,6 +108,12 @@ class PowerModel(
         const val MAX_SCENARIOS = 24
         const val AUTO_SAVE_INTERVAL_MS = 5 * 60 * 1000L
         private const val DECAY_FACTOR = 0.9995f
+        /** v4.0.6 faster learning: confidence curve time constant in samples (was 16: ~60% at 14 samples, now ~60% at 8). */
+        private const val CONF_TAU_SAMPLES = 9f
+        /** Share of the neighbour's confidence a never-visited frequency inherits when its power is interpolated (was 0.45). */
+        private const val INTERP_CONF_FACTOR = 0.7f
+        /** Multiplier on the per-sample correction step (was 1.0). */
+        private const val FAST_STEP_BOOST = 1.35f
         private const val BACKOFF_DURATION_MS = 8_000L
         private const val STEP_COOLDOWN_MS = 600L
         private const val EXPLORE_HOLD_MS = 1_500L
@@ -588,7 +594,7 @@ class PowerModel(
                 if (!isOutlier) {
                     val k = activeKeys.size
                     // Projected regularized LMS update
-                    val step = 0.09f / (1f + k * 0.5f)
+                    val step = FAST_STEP_BOOST * 0.09f / (1f + k * 0.5f)
                     val avgUtil = totalUtilSum / max(1, k)
                     val baseLr = if (avgUtil < 15f) 0.045f else 0.015f
                     baselineMw = (baselineMw + error * baseLr).coerceIn(150f, 3500f)
@@ -655,7 +661,11 @@ class PowerModel(
     ) {
         val b = map.getOrPut(key) { BucketStats(powerMw = prior) }
         val regPull = if (b.effSamples < 15f) (prior - b.powerMw) * 0.02f else 0f
-        val effectiveLr = if (b.effSamples < 8f) 1.0f else 0.75f
+        val effectiveLr = when {
+            b.effSamples < 8f -> 1.25f
+            b.effSamples < 30f -> 0.95f
+            else -> 0.75f
+        }
         b.powerMw = (b.powerMw + delta * effectiveLr + regPull).coerceIn(5f, 15_000f)
         b.effSamples = b.effSamples * DECAY_FACTOR + 1f
         b.rawCount += 1
@@ -1458,12 +1468,12 @@ class PowerModel(
         if (nearestBucket == null || nearestKey < 0L) return prior to 0f
         val ratio = if (nearestFreq > 0) (targetFreqMhz.toFloat() / nearestFreq.toFloat()).pow(1.4f).coerceIn(0.35f, 2.5f) else 1f
         val (baseMw, baseConf) = predictBucketMwLocked(nearestKey, prior, scenarioKey)
-        return (baseMw * ratio).coerceIn(5f, 15_000f) to (baseConf * 0.45f)
+        return (baseMw * ratio).coerceIn(5f, 15_000f) to (baseConf * INTERP_CONF_FACTOR)
     }
 
     private fun bucketConfidence01(b: BucketStats): Float {
-        // Reaches ~0.60 around 14 effective samples, ~0.85 around 38 samples, ~0.96 around 80 samples.
-        val rawConf = 1f - exp(-b.effSamples / 16f)
+        // Reaches ~0.60 around 8 effective samples, ~0.85 around 17 samples, ~0.96 around 29 samples.
+        val rawConf = 1f - exp(-b.effSamples / CONF_TAU_SAMPLES)
         return (rawConf * b.penaltyFactor).coerceIn(0f, 1f)
     }
 

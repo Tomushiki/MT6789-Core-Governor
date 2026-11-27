@@ -119,6 +119,23 @@ class GovernorEngine(context: Context) {
     val scanShell = RootShell().apply {
         onLog = { msg -> log(LogLevel.INFO, "RootShell(scan)", msg) }
     }
+
+    /**
+     * v4.0.8 fourth root shell: only the Game Thread Controller's scan and taskset writes. A scan can hold a shell for
+     * several seconds in a busy game; on [bgShell] it queued the FPS reads behind it (FPS updated about every 8 s).
+     */
+    val threadShell = RootShell().apply {
+        onLog = { msg -> log(LogLevel.INFO, "RootShell(thread)", msg) }
+    }
+    /**
+     * v4.1.1 fifth root shell: only the smooth limiter's fast switcher writes. On [rootShell] those writes waited behind
+     * the control loop's reads (about 160 ms per write in the 4.1.0 log), so slices could not be shorter than that.
+     * The control loop does not write a cluster while the fast switcher owns it, and hands over only after the
+     * fast switcher's in-flight write has finished (see [fastInFlight]).
+     */
+    val fastShell = RootShell().apply {
+        onLog = { msg -> log(LogLevel.INFO, "RootShell(fast)", msg) }
+    }
     private val discovery = HardwareDiscovery(rootShell)
     private val foregroundDetector = ForegroundDetector(appContext, rootShell)
 
@@ -169,6 +186,9 @@ class GovernorEngine(context: Context) {
     val batteryEstimator = BatteryEstimator(java.io.File(appContext.filesDir, "battery_model.json"), engineScope) { level, tag, msg ->
         log(level, tag, msg)
     }
+
+    /** v4.2.0: a week of battery level/power/temperature history for the Energy screen graphs. */
+    val batteryHistory = BatteryHistoryStore(java.io.File(appContext.filesDir, "battery_history.csv"), engineScope)
 
     /** v2.7.0 Smart app profiles: per-app learned demand + ceilings/floors. */
     val appDemand = AppDemandModel(java.io.File(appContext.filesDir, "app_profiles.json"), engineScope, { l, t, m -> log(l, t, m) }) { pkg ->
@@ -316,7 +336,7 @@ class GovernorEngine(context: Context) {
 
     /** v3.6.7/3.6.8 Game Thread Controller: thread-level taskset CPU affinity in Game mode & thread history. */
     val gameThreadRuntime = GameThreadRuntime(
-        shellExec = { cmd -> bgShell.exec(cmd) },
+        shellExec = { cmd -> threadShell.exec(cmd) },
         log = { l, t, m -> log(l, t, m) },
         onThreadsObserved = { pkg, procName, observedAtMs, threads ->
             recordObservedGameThreads(pkg, procName, observedAtMs, threads)
@@ -501,6 +521,25 @@ class GovernorEngine(context: Context) {
     private val FAST_TICK_MS = 20L
     private val FAST_PLAN_STALE_MS = 1500L
 
+    // v4.0.9 slice learning, write latency and drift counting for the fast switcher
+    private val sliceLearner = SliceLearner()
+    private val writeLatCpu = WriteLatencyTracker()
+    private val writeLatOther = WriteLatencyTracker()
+    private val writeLatFast = WriteLatencyTracker()
+    private val fastInFlight = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val driftTotal = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+    private val fastWrittenMirror = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val fastWrittenAtMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val fastDriftStamp = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val fastForceRewrite = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private val fastLastFixMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val fastFixCount = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+    private val fastFixLogMs = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+    private var lastLatLogMs = 0L
+    private var lastSlowWriteLogMs = 0L
+    private var lastManualSliceMs = -1
+    private var lastSliceAuto = false
+
     /** What the fast switcher needs to alternate one component between two steps on its own timer. */
     private class FastPlan(
         val isGpu: Boolean,
@@ -534,6 +573,9 @@ class GovernorEngine(context: Context) {
         smoothActive = false
         smoothTrimValue = 0f
         fastPlans.clear()
+        fastWrittenMirror.clear()
+        fastWrittenAtMs.clear()
+        fastForceRewrite.clear()
         fastJob?.cancel()
         fastJob = null
     }
@@ -557,6 +599,7 @@ class GovernorEngine(context: Context) {
             for ((id, plan) in fastPlans) {
                 if (now - plan.stampMs > FAST_PLAN_STALE_MS) {
                     lastWritten.remove(id)
+                    fastWrittenMirror.remove(id)
                     continue
                 }
                 anyFresh = true
@@ -568,16 +611,29 @@ class GovernorEngine(context: Context) {
                     sched.update(now, plan.duty)
                 }
                 val f = fastPick(plan, high)
+                if (fastForceRewrite.remove(id) != null) lastWritten.remove(id)
                 if (lastWritten[id] == f) continue
-                val ok = if (plan.isGpu) {
-                    val idx = plan.gpuOppByFreq[f]
-                    idx != null && safeWriteSysfs(plan.path, idx.toString())
-                } else if (plan.maxOnly) {
-                    safeWriteSysfs("${plan.path}/scaling_max_freq", f.toString())
-                } else {
-                    writeCpuPinnedFreq(plan.path, f, f >= (lastWritten[id] ?: 0L))
+                fastInFlight[id] = now
+                val ok = try {
+                    if (plan.isGpu) {
+                        val idx = plan.gpuOppByFreq[f]
+                        idx != null && safeWriteSysfs(plan.path, idx.toString(), fastShell)
+                    } else if (plan.maxOnly) {
+                        safeWriteSysfs("${plan.path}/scaling_max_freq", f.toString(), fastShell)
+                    } else {
+                        writeCpuPinnedFreq(plan.path, f, f >= (lastWritten[id] ?: 0L), fastShell)
+                    }
+                } finally {
+                    fastInFlight.remove(id)
                 }
-                if (ok) lastWritten[id] = f else lastWritten.remove(id)
+                if (ok) {
+                    lastWritten[id] = f
+                    fastWrittenMirror[id] = f
+                    fastWrittenAtMs[id] = System.currentTimeMillis()
+                } else {
+                    lastWritten.remove(id)
+                    fastWrittenMirror.remove(id)
+                }
             }
             if (anyFresh) {
                 idleSinceMs = 0L
@@ -687,6 +743,7 @@ class GovernorEngine(context: Context) {
         engineScope.launch(Dispatchers.IO) {
             powerModel.load()
             batteryEstimator.load()
+            batteryHistory.load()
         }
         powerModel.start(engineScope)
         log(LogLevel.INFO, "Engine", "CoreGovernor v2 initialized (OPP-index GPU control).")
@@ -798,6 +855,8 @@ class GovernorEngine(context: Context) {
             }
             refreshCtl.start()
             screenOff.begin(isScreenInteractive)
+            // v4.3: root helper that keeps the frequency/GPU files open for the fast switcher (falls back to the shell).
+            fastShell.enableFastWriter(appContext.applicationInfo.sourceDir)
 
             val backup = OriginalHardwareBackup(
                 cpus = hw.cpuPolicies.map {
@@ -1130,6 +1189,7 @@ class GovernorEngine(context: Context) {
         storage.flush()
         powerModel.flush()
         batteryEstimator.flush()
+        batteryHistory.flush()
         appDemand.flush()
         screenOff.stop()
         chargeGuard.stop()
@@ -1141,6 +1201,7 @@ class GovernorEngine(context: Context) {
         metrics.onStopped()
         stopFpsSampler()
         stopLiveWattsSampler()
+        fastShell.releaseFastWriter()
         sensorPinner.setServiceRunning(false)
         sleepWatcherJob?.cancel()
         sleepWatcherJob = null
@@ -1616,6 +1677,25 @@ class GovernorEngine(context: Context) {
                 val gap = gapRaw.toFloat()
                 smoothTickGapMs = if (smoothTickGapMs <= 0f) gap else smoothTickGapMs * 0.7f + gap * 0.3f
             }
+            val manualSliceMs = SmoothSlice.clampMs(cfg.smoothSliceMs)
+            val autoSlice = cfg.smoothSliceAuto
+            if (manualSliceMs != lastManualSliceMs) {
+                if (lastManualSliceMs > 0) {
+                    log(LogLevel.INFO, "SmoothSlice", "Slice length set to $manualSliceMs ms (setting changed).")
+                }
+                lastManualSliceMs = manualSliceMs
+            }
+            if (autoSlice != lastSliceAuto) {
+                lastSliceAuto = autoSlice
+                if (autoSlice) {
+                    sliceLearner.reset()
+                    log(LogLevel.INFO, "SmoothSlice", "Automatic slice learning on: starts at $manualSliceMs ms, only in long game sessions under the power limit.")
+                } else {
+                    sliceLearner.abortTrial()
+                    smoothSched.values.forEach { it.minPhaseMs = manualSliceMs.toLong() }
+                    log(LogLevel.INFO, "SmoothSlice", "Automatic slice learning off: using $manualSliceMs ms.")
+                }
+            }
             val thermalCapActive = currentTempCpuCapPct < 99.5f || currentTempGpuCapPct < 99.5f
             val wanted = effPowerThrottle.smoothPowerLimit && (powerThrottleActive || thermalCapActive)
             var reason: String? = null
@@ -1625,8 +1705,8 @@ class GovernorEngine(context: Context) {
                     smoothDisabledUntilMs = nowMs + SmoothPowerLimiter.BACKOFF_MS
                 }
                 // Too many writes: make phases longer; relax again when calm.
-                val floorPhase = SmoothPowerLimiter.MIN_PHASE_MS
-                for (sc in smoothSched.values) {
+                for ((schedId, sc) in smoothSched) {
+                    val floorPhase = effectiveSliceMs(schedId, manualSliceMs, autoSlice).toLong()
                     sc.minPhaseMs = when {
                         rate > SmoothPowerLimiter.MAX_SWITCHES_PER_SEC -> (sc.minPhaseMs * 2).coerceAtMost(SmoothPowerLimiter.MAX_PHASE_MS)
                         rate < SmoothPowerLimiter.MAX_SWITCHES_PER_SEC / 2f -> (sc.minPhaseMs - 10L).coerceAtLeast(floorPhase)
@@ -1676,6 +1756,19 @@ class GovernorEngine(context: Context) {
             if (nowActive && fastJob?.isActive != true) {
                 fastJob = engineScope.launch { fastSwitchLoop() }
             }
+            if (autoSlice) {
+                runSliceLearning(
+                    nowMs = nowMs,
+                    cfg = cfg,
+                    manualSliceMs = manualSliceMs,
+                    watts = avgWatts,
+                    limitWatts = effPowerThrottle.limitWatts,
+                    eligible = nowActive && activeMode == GovernorMode.GAME && !burstActive &&
+                        powerThrottleActive && avgWatts > 0f && effPowerThrottle.limitWatts > 0f &&
+                        nowMs - lastPowerStepMs >= 1000L
+                )
+            }
+            logWriteLatency(nowMs)
             if (nowActive && nowMs - smoothLastLogMs >= 5_000L && smoothPlanText.isNotEmpty()) {
                 smoothLastLogMs = nowMs
                 val rate = smoothSched.values.maxOfOrNull { it.switchesPerSec(nowMs) } ?: 0f
@@ -1901,7 +1994,7 @@ class GovernorEngine(context: Context) {
                     utilPct = rawLoad,
                     curKhz = batch["${p.path}/scaling_cur_freq"]?.trim()?.toLongOrNull() ?: 0L,
                     scenarioKey = scenarioKey,
-                    minConfidencePct = cfg.minConfidencePct.toFloat(),
+                    minConfidencePct = cfg.smoothMinConfidencePct.toFloat(),
                     trim = if (cPowerTighter) smoothTrimValue else 0f
                 )
                 val ss = smoothStep
@@ -2100,17 +2193,48 @@ class GovernorEngine(context: Context) {
             }
             if (!fastOwned) fastPlans.remove(fastId)
             if (fastOwned) {
+                // The control loop does not re-assert while the fast switcher owns the cluster, so count the times the
+                // kernel overrode the fast switcher's last write (once per write, and only when our read is newer than it).
+                val fw = fastWrittenMirror[fastId]
+                val at = fastWrittenAtMs[fastId] ?: 0L
+                val mismatch = fw != null && liveMax != null && liveMax != fw && nowMs - at >= 250L
+                if (mismatch && fastDriftStamp[fastId] != at) {
+                    fastDriftStamp[fastId] = at
+                    driftTotal[p.policyId] = (driftTotal[p.policyId] ?: 0) + 1
+                }
+                // v4.1.0 (option, off by default): tell the fast switcher to write its value again.
+                if (SmoothSlice.shouldFixDrift(
+                        enabled = cfg.smoothFixDrift,
+                        thermalCapActive = currentTempCpuCapPct < 99.5f || currentTempGpuCapPct < 99.5f,
+                        mismatch = mismatch,
+                        nowMs = nowMs,
+                        lastFixMs = fastLastFixMs[fastId] ?: 0L
+                    )
+                ) {
+                    fastLastFixMs[fastId] = nowMs
+                    fastForceRewrite[fastId] = true
+                    val fixes = (fastFixCount[p.policyId] ?: 0) + 1
+                    fastFixCount[p.policyId] = fixes
+                    if (nowMs - (fastFixLogMs[p.policyId] ?: 0L) >= 60_000L) {
+                        fastFixLogMs[p.policyId] = nowMs
+                        fastFixCount[p.policyId] = 0
+                        log(LogLevel.INFO, "CpuDrift", "policy${p.policyId}: kernel overrode the smooth limit $fixes time(s) since the last note; written again (fix option on). Kernel had max=${liveMax?.div(1000)} MHz, wanted ${fw?.div(1000)} MHz.")
+                    }
+                }
+            }
+            if (fastOwned) {
                 fastOwnedPrev.add(fastId)
             } else if (fastOwnedPrev.remove(fastId)) {
                 lastWrittenCpuFreq.remove(p.policyId) // the fast switcher moved it; make the loop write again
             }
-            if (!fastOwned && targetFreq > 0L && (targetFreq != prevWritten || reassertDue || justSwitchedToPerf)) {
+            if (!fastOwned && !fastInFlight.containsKey(fastId) && targetFreq > 0L && (targetFreq != prevWritten || reassertDue || justSwitchedToPerf)) {
                 if (reassertDue) {
                     lastReassertMs[p.policyId] = nowMs
                     // The kernel/system overriding the limits now and then is normal and is fixed on the spot, so it is
                     // only counted here and summarised once a minute (keeps the log, and the 400-line buffer, free for real events).
                     val n = (driftCount[p.policyId] ?: 0) + 1
                     driftCount[p.policyId] = n
+                    driftTotal[p.policyId] = (driftTotal[p.policyId] ?: 0) + 1
                     if (nowMs - (lastDriftLogMs[p.policyId] ?: 0L) >= 60_000L) {
                         lastDriftLogMs[p.policyId] = nowMs
                         driftCount[p.policyId] = 0
@@ -2223,7 +2347,7 @@ class GovernorEngine(context: Context) {
                     utilPct = rawGpuLoad,
                     curKhz = statusParsed.freqKhz ?: selection.targetOpp.freqKhz,
                     scenarioKey = scenarioKey,
-                    minConfidencePct = cfg.minConfidencePct.toFloat(),
+                    minConfidencePct = cfg.smoothMinConfidencePct.toFloat(),
                     trim = if (gPowerTighter) smoothTrimValue else 0f
                 )
                 val gss = gSmoothStep
@@ -2299,7 +2423,7 @@ class GovernorEngine(context: Context) {
                 val targetOppIdx = chosenOpp.oppIndex
                 val targetFreqKhz = chosenOpp.freqKhz
 
-                if (!gpuFastOwned && targetOppIdx != lastWrittenGpuOppIndex) {
+                if (!gpuFastOwned && !fastInFlight.containsKey("gpu") && targetOppIdx != lastWrittenGpuOppIndex) {
                     val fixPath = gpuSpec.gpufreqFixOppPath
                     if (fixPath != null) {
                         val writeAttempted = shouldAttemptWrite(fixPath, nowMs)
@@ -2377,6 +2501,21 @@ class GovernorEngine(context: Context) {
             pollIntervalMs = cfg.pollIntervalMs,
             estimationEnabled = cfg.batteryEstimationEnabled,
             internalResistanceMohm = if (batteryTruth.resistanceSamples >= 3) batteryTruth.internalResistanceMohm else 0f
+        )
+        batteryHistory.record(
+            BatteryHistoryPoint(
+                timeMs = System.currentTimeMillis(),
+                pct = cachedBatteryPct,
+                state = stableBatteryState,
+                watts = when (stableBatteryState) {
+                    BatteryState.CHARGING -> rawReading.chargeWatts
+                    BatteryState.DISCHARGING -> -rawReading.dischargeWatts
+                    else -> 0f
+                },
+                tempC = cachedBattTempC,
+                voltageMv = estVoltMv,
+                screenOn = isScreenInteractive
+            )
         )
 
         // 7b. Keep RAM at max & read DDR frequency if detailed overlay active
@@ -2970,17 +3109,73 @@ class GovernorEngine(context: Context) {
         return (statusUtilFallback ?: 0f) to (if (statusUtilFallback != null) "gpufreq_status" else "none")
     }
 
-    private suspend fun writeCpuPinnedFreq(policyPath: String, targetKhz: Long, raising: Boolean): Boolean {
-        val freqStr = targetKhz.toString()
-        return if (raising) {
-            val okMax = safeWriteSysfs("$policyPath/scaling_max_freq", freqStr)
-            val okMin = safeWriteSysfs("$policyPath/scaling_min_freq", freqStr)
-            okMax && okMin
-        } else {
-            val okMin = safeWriteSysfs("$policyPath/scaling_min_freq", freqStr)
-            val okMax = safeWriteSysfs("$policyPath/scaling_max_freq", freqStr)
-            okMin && okMax
+    /** Slice the scheduler of [id] must not go below: learned/trial value in auto mode, the setting otherwise. */
+    private fun effectiveSliceMs(id: String, manualMs: Int, auto: Boolean): Int =
+        if (auto) (sliceLearner.sliceFor(id) ?: manualMs) else manualMs
+
+    /**
+     * Time of one write round trip through the root shell. It includes any wait behind other commands on that
+     * shell, which is what limits how fast the smooth limiter can really switch.
+     */
+    private fun recordWriteLatency(path: String, ms: Float, fast: Boolean = false) {
+        if (fast) writeLatFast.add(ms)
+        else if (path.contains("/cpufreq/")) writeLatCpu.add(ms) else writeLatOther.add(ms)
+        if (ms >= 150f) {
+            val now = System.currentTimeMillis()
+            if (now - lastSlowWriteLogMs >= 10_000L) {
+                lastSlowWriteLogMs = now
+                log(LogLevel.WARN, "WriteLat", "Slow frequency write: ${ms.roundToInt()} ms [$path]${if (fast) " (fast shell)" else ""}")
+            }
         }
+    }
+
+    private fun logWriteLatency(nowMs: Long) {
+        if (nowMs - lastLatLogMs < 30_000L) return
+        lastLatLogMs = nowMs
+        val c = writeLatCpu.summary()
+        val o = writeLatOther.summary()
+        val fs = writeLatFast.summary()
+        if ((c?.count ?: 0) < 5 && (o?.count ?: 0) < 5 && (fs?.count ?: 0) < 5) return
+        fun txt(name: String, s: WriteLatencyTracker.Summary?): String? =
+            if (s == null || s.count < 5) null else
+                "$name n=${s.count} avg ${"%.1f".format(Locale.US, s.avgMs)} p50 ${"%.1f".format(Locale.US, s.p50Ms)} p90 ${"%.1f".format(Locale.US, s.p90Ms)} max ${"%.1f".format(Locale.US, s.maxMs)} ms"
+        val line = listOfNotNull(txt("fast switcher", fs), txt("control CPU", c), txt("control GPU/other", o)).joinToString(" | ")
+        log(LogLevel.INFO, "WriteLat", "Write time (recent writes, includes waiting for the shell): $line")
+    }
+
+    private fun runSliceLearning(nowMs: Long, cfg: GovernorConfig, manualSliceMs: Int, eligible: Boolean, watts: Float, limitWatts: Float) {
+        val ids = smoothSched.keys.filter { it.startsWith("cpu_") }.sorted()
+        sliceLearner.configure(ids, manualSliceMs, SmoothSlice.decode(cfg.smoothLearnedSlices))
+        val cur = sliceLearner.currentId ?: return
+        val policy = cur.removePrefix("cpu_").toIntOrNull()
+        val slice = sliceLearner.sliceFor(cur) ?: manualSliceMs
+        val sample = SmoothSlice.Sample(
+            watts = watts,
+            limitWatts = limitWatts,
+            fps = _telemetry.value.fps,
+            driftTotal = if (policy != null) driftTotal[policy] ?: 0 else 0,
+            writeP90Ms = writeLatFast.p90(),
+            backedOff = (smoothSched[cur]?.minPhaseMs ?: 0L) > slice
+        )
+        val ch = sliceLearner.onTick(nowMs, eligible, sample) ?: return
+        if (ch.fromMs != ch.toMs || ch.kind == SliceLearner.ChangeKind.SETTLED) {
+            smoothSched[ch.id]?.minPhaseMs = ch.toMs.toLong()
+        }
+        log(LogLevel.INFO, "SmoothSlice", ch.text)
+        if (ch.kind == SliceLearner.ChangeKind.SETTLED) {
+            val encoded = SmoothSlice.encode(sliceLearner.learnedMap())
+            updateConfig(markMidSession = false) { it.copy(smoothLearnedSlices = encoded) }
+        }
+    }
+
+    private suspend fun writeCpuPinnedFreq(policyPath: String, targetKhz: Long, raising: Boolean, shell: RootShell = rootShell): Boolean {
+        val freqStr = targetKhz.toString()
+        val maxPath = "$policyPath/scaling_max_freq"
+        val minPath = "$policyPath/scaling_min_freq"
+        // One root round trip, same order as before: raise = max then min, lower = min then max.
+        val writes = if (raising) listOf(maxPath to freqStr, minPath to freqStr)
+        else listOf(minPath to freqStr, maxPath to freqStr)
+        return safeWriteSysfsOrdered(writes, shell).all { it }
     }
 
     private fun shouldAttemptWrite(path: String, nowMs: Long): Boolean {
@@ -2988,11 +3183,36 @@ class GovernorEngine(context: Context) {
         return nowMs >= cooldownUntil
     }
 
-    private suspend fun safeWriteSysfs(path: String, value: String): Boolean {
+    /** Batched [safeWriteSysfs]: per-path cooldown, logging and failure handling are unchanged. */
+    private suspend fun safeWriteSysfsOrdered(writes: List<Pair<String, String>>, shell: RootShell = rootShell): List<Boolean> {
+        val now = System.currentTimeMillis()
+        // Decide once: another coroutine (fast switcher) can set a cooldown while we run, and re-checking
+        // afterwards would shift which result belongs to which write.
+        val allowed = writes.map { shouldAttemptWrite(it.first, now) }
+        val attempt = writes.filterIndexed { i, _ -> allowed[i] }
+        if (attempt.isEmpty()) return writes.map { false }
+        val t0 = System.nanoTime()
+        val results = shell.writeSysfsOrdered(attempt)
+        recordWriteLatency(attempt.first().first, (System.nanoTime() - t0) / 1_000_000f, shell === fastShell)
+        var n = 0
+        return writes.mapIndexed { i, w ->
+            if (!allowed[i]) return@mapIndexed false
+            val res = results[n++]
+            if (!res.isSuccess) {
+                failedWriteCooldownUntil[w.first] = now + if (w.first.contains("/cpufreq/")) 750L else 6_000L
+                log(LogLevel.ERROR, "SysfsWrite", "Write failed [${w.first} <- ${w.second}]: ${res.error ?: res.stdout}")
+                false
+            } else true
+        }
+    }
+
+    private suspend fun safeWriteSysfs(path: String, value: String, shell: RootShell = rootShell): Boolean {
         val now = System.currentTimeMillis()
         if (!shouldAttemptWrite(path, now)) return false
 
-        val res = rootShell.writeSysfs(path, value)
+        val t0 = System.nanoTime()
+        val res = shell.writeSysfs(path, value)
+        recordWriteLatency(path, (System.nanoTime() - t0) / 1_000_000f, shell === fastShell)
         if (!res.isSuccess) {
             failedWriteCooldownUntil[path] = now + if (path.contains("/cpufreq/")) 750L else 6_000L
             log(LogLevel.ERROR, "SysfsWrite", "Write failed [$path <- $value]: ${res.error ?: res.stdout}")

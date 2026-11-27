@@ -80,7 +80,11 @@ data class MetricSummary(
     val p50Fps: Float = Float.NaN,
     val frameStabilityPct: Float = Float.NaN,
     val thermalThrottleSec: Int = 0,
-    val powerThrottleSec: Int = 0
+    val powerThrottleSec: Int = 0,
+    /** v4.0.7: seconds where the GAME held a flat cap (lobby/menu/pause); left out of the FPS figures. Not saved to file. */
+    val gameLimitedSec: Int = 0,
+    /** The cap level (FPS) those seconds sat on, or 0 when there were none. */
+    val gameLimitedFps: Int = 0
 )
 
 /** A saved game session. The summary and tweak snapshot live in the file header so listing never has to read samples. */
@@ -153,6 +157,55 @@ object MetricsMath {
     fun timeAboveTempSec(samples: List<MetricSample>, thresholdC: Float): Int =
         samples.count { !it.tempC.isNaN() && it.tempC >= thresholdC }
 
+    /** FPS levels games commonly hold in lobbies, menus and pause screens to save power. */
+    val GAME_CAP_LEVELS = floatArrayOf(30f)
+    /** A sample counts as "on the cap" when within this many FPS of it. */
+    const val GAME_CAP_TOLERANCE_FPS = 2.5f
+    /** A cap plateau must be at least this many consecutive samples (about 1 s each) to be called a game cap. */
+    const val GAME_CAP_MIN_RUN = 2
+    /** ...and it must stay flat: the highest and lowest reading in the run differ by at most this much. */
+    const val GAME_CAP_MAX_SPREAD_FPS = 2.5f
+    /** The session must otherwise run clearly above the cap (more than 20% over it) for this share of its FPS samples. */
+    const val GAME_CAP_MIN_ABOVE_PCT = 25
+
+    /**
+     * Marks samples where the game itself held a flat FPS cap (typically 30 FPS in a lobby, menu or pause) so they are not
+     * mistaken for the governor's throttling. Only a flat run of at least [GAME_CAP_MIN_RUN] samples counts, and only when
+     * the session mostly runs well above the cap; a game that simply runs at 30 all the time is left alone.
+     */
+    fun gameLimitedMask(samples: List<MetricSample>): BooleanArray {
+        val n = samples.size
+        val mask = BooleanArray(n)
+        if (n < GAME_CAP_MIN_RUN) return mask
+        val validTotal = samples.count { it.fps >= 0f }
+        if (validTotal == 0) return mask
+        for (cap in GAME_CAP_LEVELS) {
+            val above = samples.count { it.fps > cap * 1.2f }
+            if (above * 100 < validTotal * GAME_CAP_MIN_ABOVE_PCT) continue
+            var i = 0
+            while (i < n) {
+                if (!nearCap(samples[i].fps, cap)) { i++; continue }
+                var j = i
+                var lo = samples[i].fps
+                var hi = lo
+                while (j + 1 < n && nearCap(samples[j + 1].fps, cap)) {
+                    j++
+                    val v = samples[j].fps
+                    if (v < lo) lo = v
+                    if (v > hi) hi = v
+                }
+                if (j - i + 1 >= GAME_CAP_MIN_RUN && hi - lo <= GAME_CAP_MAX_SPREAD_FPS) {
+                    for (k in i..j) mask[k] = true
+                }
+                i = j + 1
+            }
+        }
+        return mask
+    }
+
+    private fun nearCap(fps: Float, cap: Float): Boolean =
+        fps >= 0f && kotlin.math.abs(fps - cap) <= GAME_CAP_TOLERANCE_FPS
+
     fun summarize(samples: List<MetricSample>): MetricSummary {
         if (samples.isEmpty()) {
             return MetricSummary(0L, 0, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN, 0f, false)
@@ -177,8 +230,11 @@ object MetricsMath {
         var includesCharging = false
         var thermalSec = 0
         var powerSec = 0
+        val limitedMask = gameLimitedMask(samples)
+        val gameLimitedSec = limitedMask.count { it }
 
         for ((i, s) in samples.withIndex()) {
+            val gameLimited = limitedMask[i]
             sumTemp += s.tempC
             if (s.tempC > maxTemp) maxTemp = s.tempC
             if (s.thermalThrottled) thermalSec++
@@ -195,7 +251,7 @@ object MetricsMath {
                 if (s.watts >= MIN_WATTS_FOR_RATIO) {
                     ratioWork += s.work
                     ratioWattsForWork += s.watts
-                    if (s.fps >= 0f) {
+                    if (s.fps >= 0f && !gameLimited) {
                         ratioFps += s.fps
                         ratioWattsForFps += s.watts
                     }
@@ -205,7 +261,7 @@ object MetricsMath {
                     energyWs += s.watts * (dt / 1000.0)
                 }
             }
-            if (s.fps >= 0f) {
+            if (s.fps >= 0f && !gameLimited) {
                 sumFps += s.fps
                 fpsN++
                 fpsValues.add(s.fps)
@@ -243,7 +299,9 @@ object MetricsMath {
             p50Fps = p50,
             frameStabilityPct = stabilityPct,
             thermalThrottleSec = thermalSec,
-            powerThrottleSec = powerSec
+            powerThrottleSec = powerSec,
+            gameLimitedSec = gameLimitedSec,
+            gameLimitedFps = if (gameLimitedSec > 0) GAME_CAP_LEVELS.first().toInt() else 0
         )
     }
 
@@ -578,6 +636,14 @@ class MetricsRecorder(
                     midSessionChanges = midChanges,
                     kept = false
                 )
+                if (summary.gameLimitedSec > 0) {
+                    log(
+                        LogLevel.INFO,
+                        "Metrics",
+                        "Game held a flat ~${summary.gameLimitedFps} FPS cap for ${summary.gameLimitedSec}s " +
+                            "(lobby/menu/pause, set by the game, not by CoreGovernor); left out of the FPS figures and Auto-Tune."
+                    )
+                }
                 log(LogLevel.INFO, "Metrics", "Saved session $safePkg (${samples.size}s).")
                 onSessionSaved?.invoke(savedInfo)
             } catch (e: Exception) {

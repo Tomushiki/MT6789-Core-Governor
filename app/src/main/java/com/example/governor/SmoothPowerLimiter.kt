@@ -46,6 +46,9 @@ object SmoothPowerLimiter {
     const val BACKOFF_MS = 30_000L
     const val SWITCH_WINDOW_MS = 2_000L
 
+    /** The two steps being alternated must reach at least this share of the minimum confidence. */
+    const val BRACKET_CONF_FRAC = 0.5f
+
     const val TRIM_LIMIT = 0.15f
     const val TRIM_DEADBAND = 0.04f
     const val TRIM_INTERVAL_MS = 1_000L
@@ -82,9 +85,16 @@ object SmoothPowerLimiter {
         if (n < 2) return plain.copy(reason = "single step")
         if (cap >= 0.995f) return plain.copy(reason = "no cap")
 
+        var confSum = 0f
         for (s in steps) {
-            if (s.confidencePct < minConfidencePct) return plain.copy(reason = "low model confidence")
             if (!(s.powerMw >= 0f)) return plain.copy(reason = "bad model value")
+            confSum += s.confidencePct
+        }
+        // v4.0.6: judge the model by its AVERAGE confidence over the ladder (one rarely-visited step no longer
+        // vetoes smoothing). The two steps actually used are checked below with a lower floor.
+        val avgConf = confSum / n
+        if (avgConf < minConfidencePct) {
+            return plain.copy(reason = "low model confidence (avg ${avgConf.toInt()}% < ${minConfidencePct.toInt()}%)")
         }
         // Power must rise with frequency; smooth out noise with a running maximum.
         val p = FloatArray(n)
@@ -102,6 +112,12 @@ object SmoothPowerLimiter {
         // Next step that actually draws more (skips equal-power neighbours).
         var hi = lo + 1
         while (hi < n - 1 && p[hi] <= p[lo]) hi++
+        val floor = minConfidencePct * BRACKET_CONF_FRAC
+        if (steps[lo].confidencePct < floor || steps[hi].confidencePct < floor) {
+            return plain.copy(
+                reason = "low model confidence (steps in use ${steps[lo].confidencePct.toInt()}%/${steps[hi].confidencePct.toInt()}% < ${floor.toInt()}%)"
+            )
+        }
         val span = p[hi] - p[lo]
         if (span <= 0.5f) return Plan(lo, lo, 0f, true, "")
         val duty = ((target - p[lo]) / span).coerceIn(0f, 1f)

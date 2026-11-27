@@ -81,7 +81,21 @@ data class ObservedThreadRow(
 /** Pure conversion, matching, auto-classification, command building, and parsing logic. */
 object GameThreadLogic {
 
+    /** Fast scan interval, used right after the game (re)starts and while threads are still being found. */
     const val MIN_POLL_INTERVAL_MS = 2_000L
+    /** v4.0.7: scan interval once the thread list has settled. Each scan costs several seconds of root shell time. */
+    const val STEADY_POLL_INTERVAL_MS = 12_000L
+    /** v4.0.7: interval after a scan that still found new threads to pin. */
+    const val ACTIVE_POLL_INTERVAL_MS = 4_000L
+    /** v4.0.7: how long after a new game process is tracked that the fast interval is used. */
+    const val SETTLE_WINDOW_MS = 30_000L
+
+    /** Delay before the next scan: fast while settling, a bit slower while new threads keep appearing, else steady. */
+    fun nextPollDelayMs(nowMs: Long, settleUntilMs: Long, appliedCount: Int): Long = when {
+        nowMs < settleUntilMs -> MIN_POLL_INTERVAL_MS
+        appliedCount > 0 -> ACTIVE_POLL_INTERVAL_MS
+        else -> STEADY_POLL_INTERVAL_MS
+    }
     const val UI_CORE_COUNT = 8
     const val MAX_SUPPORTED_CORES = 63
 
@@ -336,6 +350,54 @@ object GameThreadLogic {
             "done; " +
             "fi"
     }
+
+    /**
+     * v4.0.8 backup scan: ONE `grep` reads every thread's comm file ("/proc/PID/task/TID/comm:name" per line) instead of
+     * a shell loop. Only used after the loop scan has proved slow and this command has proved to return the same threads.
+     */
+    fun buildFastThreadEnumCommand(pid: Int): String? {
+        if (pid <= 0) return null
+        return "if [ -d \"/proc/$pid/task\" ]; then " +
+            "proc=\$(tr '\\0' '\\n' < \"/proc/$pid/cmdline\" 2>/dev/null | head -n 1 | tr '\\r\\t' '  '); " +
+            "[ -z \"\$proc\" ] && [ -r \"/proc/$pid/comm\" ] && proc=\$(cat \"/proc/$pid/comm\" 2>/dev/null | tr '\\n\\r\\t' '   '); " +
+            "[ -n \"\$proc\" ] && printf 'PROC\\t%s\\n' \"\$proc\"; " +
+            "grep -H '' /proc/$pid/task/*/comm 2>/dev/null; " +
+            "fi"
+    }
+
+    fun parseFastThreadEnumOutput(stdout: String, pid: Int): ParsedThreadEnumeration {
+        if (stdout.isBlank() || pid <= 0) return ParsedThreadEnumeration()
+        var procName = ""
+        val prefix = "/proc/$pid/task/"
+        val byTid = LinkedHashMap<Int, LiveThreadInfo>()
+        for (line in stdout.lineSequence()) {
+            if (line.startsWith("PROC\t")) {
+                if (procName.isEmpty()) procName = line.substringAfter("PROC\t").trim()
+                continue
+            }
+            if (!line.startsWith(prefix)) continue
+            val rest = line.substring(prefix.length)
+            val sep = rest.indexOf("/comm:")
+            if (sep <= 0) continue
+            val tid = rest.substring(0, sep).toIntOrNull() ?: continue
+            if (tid <= 0) continue
+            val name = rest.substring(sep + "/comm:".length).trim()
+            if (name.isEmpty()) continue
+            byTid[tid] = LiveThreadInfo(tid = tid, name = name)
+        }
+        return ParsedThreadEnumeration(processName = procName, threads = byTid.values.sortedBy { it.tid })
+    }
+
+    /** A loop scan slower than this makes the one-command scan worth trying. */
+    const val SLOW_ENUM_MS = 1_500L
+
+    /** The one-command scan must find at least this share of the loop scan's threads to be trusted. */
+    const val FAST_ENUM_MIN_MATCH_PCT = 90
+
+    /** True when the one-command scan returned about the same threads as the loop scan and was clearly faster. */
+    fun fastEnumIsTrustworthy(loopCount: Int, loopMs: Long, fastCount: Int, fastMs: Long): Boolean =
+        loopCount > 0 && fastCount * 100 >= loopCount * FAST_ENUM_MIN_MATCH_PCT &&
+            fastCount * 100 <= loopCount * (200 - FAST_ENUM_MIN_MATCH_PCT) && fastMs * 2 <= loopMs
 
     fun parseThreadList(stdout: String): List<LiveThreadInfo> {
         if (stdout.isBlank()) return emptyList()
@@ -643,6 +705,10 @@ class GameThreadRuntime(
 ) {
     private val inspectionMutex = Mutex()
     private var lastRunAtMs: Long = 0L
+    private var nextDelayMs: Long = GameThreadLogic.MIN_POLL_INTERVAL_MS
+    private var settleUntilMs: Long = 0L
+    /** 0 = not tried yet, 1 = one-command scan in use, -1 = tried and rejected (stay on the loop scan). */
+    private var fastEnumState: Int = 0
     private var trackedPid: Int = -1
     private var trackedPkg: String = ""
     private var trackedSignature: String = ""
@@ -650,6 +716,8 @@ class GameThreadRuntime(
 
     fun reset() {
         lastRunAtMs = 0L
+        nextDelayMs = GameThreadLogic.MIN_POLL_INTERVAL_MS
+        settleUntilMs = 0L
         trackedPid = -1
         trackedPkg = ""
         trackedSignature = ""
@@ -679,10 +747,12 @@ class GameThreadRuntime(
             return
         }
 
-        if (lastRunAtMs > 0L && nowMs - lastRunAtMs < GameThreadLogic.MIN_POLL_INTERVAL_MS) {
+        if (lastRunAtMs > 0L && nowMs - lastRunAtMs < nextDelayMs) {
             return
         }
         lastRunAtMs = nowMs
+        // Until a scan succeeds, retry at a moderate pace (a missing process or empty list is not worth hammering).
+        nextDelayMs = GameThreadLogic.ACTIVE_POLL_INTERVAL_MS
 
         val pidCmd = GameThreadLogic.buildPidLookupCommand(fgPkg) ?: return
         val pidRes = try {
@@ -699,13 +769,60 @@ class GameThreadRuntime(
             return
         }
 
-        val enumCmd = GameThreadLogic.buildThreadEnumCommand(pid) ?: return
-        val enumRes = try {
-            shellExec(enumCmd)
-        } catch (_: Throwable) {
-            return
+        var parsed: ParsedThreadEnumeration = ParsedThreadEnumeration()
+        if (fastEnumState == 1) {
+            val fastCmd = GameThreadLogic.buildFastThreadEnumCommand(pid) ?: return
+            val fastRes = try {
+                shellExec(fastCmd)
+            } catch (_: Throwable) {
+                return
+            }
+            parsed = GameThreadLogic.parseFastThreadEnumOutput(fastRes.stdout, pid)
+            if (parsed.threads.isEmpty()) {
+                fastEnumState = -1
+                log(LogLevel.WARN, "GameThreads", "One-command thread scan returned nothing; back to the loop scan.")
+            }
         }
-        val parsed = GameThreadLogic.parseThreadEnumOutput(enumRes.stdout)
+        if (parsed.threads.isEmpty()) {
+            val enumCmd = GameThreadLogic.buildThreadEnumCommand(pid) ?: return
+            val loopStartMs = System.nanoTime() / 1_000_000L
+            val enumRes = try {
+                shellExec(enumCmd)
+            } catch (_: Throwable) {
+                return
+            }
+            val loopMs = System.nanoTime() / 1_000_000L - loopStartMs
+            parsed = GameThreadLogic.parseThreadEnumOutput(enumRes.stdout)
+            // Backup plan: when the loop scan is slow, try the one-command scan once and keep it only if it matches.
+            if (fastEnumState == 0 && loopMs >= GameThreadLogic.SLOW_ENUM_MS && parsed.threads.isNotEmpty()) {
+                val fastCmd = GameThreadLogic.buildFastThreadEnumCommand(pid)
+                if (fastCmd != null) {
+                    val fastStartMs = System.nanoTime() / 1_000_000L
+                    val fastParsed = try {
+                        GameThreadLogic.parseFastThreadEnumOutput(shellExec(fastCmd).stdout, pid)
+                    } catch (_: Throwable) {
+                        ParsedThreadEnumeration()
+                    }
+                    val fastMs = System.nanoTime() / 1_000_000L - fastStartMs
+                    if (GameThreadLogic.fastEnumIsTrustworthy(parsed.threads.size, loopMs, fastParsed.threads.size, fastMs)) {
+                        fastEnumState = 1
+                        log(
+                            LogLevel.INFO,
+                            "GameThreads",
+                            "Thread scan switched to one command: ${loopMs}ms -> ${fastMs}ms (${fastParsed.threads.size} threads)."
+                        )
+                    } else {
+                        fastEnumState = -1
+                        log(
+                            LogLevel.INFO,
+                            "GameThreads",
+                            "One-command thread scan not used (loop ${loopMs}ms/${parsed.threads.size} threads, " +
+                                "one-command ${fastMs}ms/${fastParsed.threads.size} threads)."
+                        )
+                    }
+                }
+            }
+        }
         val threads = parsed.threads
         if (threads.isEmpty()) {
             appliedByTid.clear()
@@ -717,6 +834,7 @@ class GameThreadRuntime(
 
         val sig = GameThreadLogic.configSignature(config, availableCpuCount)
         if (pid != trackedPid || fgPkg != trackedPkg || sig != trackedSignature) {
+            settleUntilMs = nowMs + GameThreadLogic.SETTLE_WINDOW_MS
             appliedByTid.clear()
             trackedPid = pid
             trackedPkg = fgPkg
@@ -756,6 +874,8 @@ class GameThreadRuntime(
                 // Ignore individual taskset failure and continue processing remaining threads.
             }
         }
+
+        nextDelayMs = GameThreadLogic.nextPollDelayMs(nowMs, settleUntilMs, appliedCount)
 
         if (appliedCount > 0) {
             log(

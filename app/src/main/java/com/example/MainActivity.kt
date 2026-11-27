@@ -623,6 +623,7 @@ fun CoreGovernorRootScreen(
             NavTab.ENERGY -> {
                 val energySnapshot by vm.powerModelSnapshot.collectAsStateWithLifecycle()
                 val batterySnapshot by vm.batterySnapshot.collectAsStateWithLifecycle()
+                val batteryHistory by vm.batteryHistory.collectAsStateWithLifecycle()
                 val demandRows by vm.appDemandRows.collectAsStateWithLifecycle()
                 val refreshUi by vm.refreshState.collectAsStateWithLifecycle()
                 val screenOffSnap by vm.screenOffSnapshot.collectAsStateWithLifecycle()
@@ -639,6 +640,8 @@ fun CoreGovernorRootScreen(
                     onResetBatteryEstimate = vm::resetBatteryEstimate,
                     modifier = Modifier,
                     telemetryFlow = vm.telemetry,
+                    batteryHistory = batteryHistory,
+                    onClearBatteryHistory = vm::clearBatteryHistory,
                     extraContent = {
                         item(key = "smart_app_demand") {
                             AppDemandCard(
@@ -692,6 +695,10 @@ fun CoreGovernorRootScreen(
                 onUpdateTempThrottle = vm::updateTempThrottle,
                 onUpdatePowerThrottle = vm::updatePowerThrottle,
                 onSetSmoothPowerLimit = vm::setSmoothPowerLimit,
+                onSetSmoothMinConfidence = vm::setSmoothMinConfidence,
+                onSetSmoothSliceMs = vm::setSmoothSliceMs,
+                onSetSmoothSliceAuto = vm::setSmoothSliceAuto,
+                onSetSmoothFixDrift = vm::setSmoothFixDrift,
                 onUpdateAfterburn = vm::updateAfterburn,
                 onSetBoostStrength = vm::setBoostStrength,
                 onSavePreset = vm::saveNamedPreset,

@@ -6,6 +6,113 @@ All notable changes to **CoreGovernor** will be documented in this file.
 
 No changes yet.
 
+## [4.3.0] - 2026-11-27
+
+### Added
+- **Fast root writer for the smooth limiter's fast switcher.** A small helper starts once as root (`app_process` running `FastWriterMain` from the app's own APK) and keeps `scaling_max_freq`, `scaling_min_freq` and the GPU node open. Each frequency write is now one direct write over a pipe instead of a whole shell command, so a write should drop from tens of milliseconds to about one. No kernel change.
+- The two CPU writes of a flip (max then min, or min then max) go out in one pipe round trip, in the same order as before.
+- `FastWriteCoreTest` unit tests (keeps files open, no stale bytes, recovers when a node is recreated, protocol).
+
+### Changed
+- Only the fast switcher's shell (`RootShell(fast)`) uses the helper. The control loop and every other shell are unchanged.
+- **Safe fallback.** The helper starts in the background; until it reports ready, and whenever it is unavailable, a call fails, or it hangs for 2 s, writes go through the shell exactly as in 4.2.0 (including the chmod repairs). A write the helper cannot do is retried through the shell. After 3 helper failures it stays off for the session. The log shows `Fast writer ready in N ms`, or the reason it was dropped.
+- The helper is stopped when the governor stops, and exits by itself if the app dies. Nodes that cannot be rewound (some proc files) are reopened for every write.
+- The `WriteLat` "fast switcher" figures now measure the helper path, so they show the gain directly.
+- Version 4.3.0 (versionCode 76).
+
+## [4.2.0] - 2026-11-27
+
+### Changed
+- **The Energy screen's battery section is rebuilt to be readable at a glance.** The old wall of numbers is replaced by plain-language cards:
+  - **Hero card:** big battery ring, "On battery / Charging / Full", time left or time to full in words, and two facts with a one-word verdict (power: light/normal/heavy/very heavy, or charging: slow/normal/fast; temperature: cool/normal/warm/hot).
+  - **History graphs** with a 6 hours / 24 hours / 7 days picker: battery level over time (green bands while plugged in, touch and hold to read any moment) and a power graph (bars up = charging, bars down = using).
+  - **Summary and comparison:** battery lost per hour (overall, screen on, screen off), time on battery, average charging speed, warmest temperature, and a sentence comparing with the period before ("Better: you used 12% less battery per hour").
+  - **Battery health card:** a plain word (Excellent / Good / Showing its age / Worn), the percentage, current vs new capacity, and a clear note when the estimate is still learning.
+  - **Charge and use history:** each charge or use session with duration, % change, average power and screen-on share.
+- The previous detailed battery card (capacity, calibration, charge-time-by-power, segments, design override, reset) is kept under **Show technical details**.
+
+### Added
+- **Battery history recorder** (`BatteryHistory.kt`): one point per minute (or when the level/state changes) with level, state, power, temperature, voltage and screen state, kept for 7 days in `battery_history.csv` and saved every 5 minutes and on stop. "Clear battery history" is in the technical details.
+- `BatteryHistoryTest` unit tests (recording rules, pruning, windows, thinning, sessions, drain summary, file format).
+- Version 4.2.0 (versionCode 75). New texts are English only for now.
+
+## [4.1.1] - 2026-11-27
+
+### Changed
+- **The smooth limiter's fast switcher has its own root shell** (`RootShell(fast)` in the log). In the 4.1.0 log every frequency write took 155-223 ms because it waited behind the control loop's reads on the shared shell, which capped switching at about 6 per second and made slices under ~300 ms pointless. Only the fast switcher's writes use the new shell; the control loop's reads and writes stay serialized on the main shell as before.
+- **Safe handover.** The control loop still never writes a cluster (or the GPU) while the fast switcher owns it, and it now also waits for the fast switcher's in-flight write to finish before writing that cluster again (at most one tick), so the two shells can never write the same file at the same time.
+- **Write time is measured per shell.** The `WriteLat` line now shows `fast switcher`, `control CPU` and `control GPU/other` separately, and slow-write warnings from the fast shell say `(fast shell)`. The slice learner's write-time floor (3 x p90) now uses the fast switcher's own writes.
+- Version 4.1.1 (versionCode 74).
+
+## [4.1.0] - 2026-11-27
+
+### Added
+- **"Smooth limit: fix kernel overrides"** (off by default). While the fast switcher owns a CPU cluster, the control loop did not re-assert limits, so a kernel or vendor override stayed until the next frequency flip. With the option on, an override of the fast switcher's last write makes it write the value again. Safety rules: at most one fix per cluster every 400 ms (no write war on the root shell), never while a CPU or GPU temperature cap is active, and only when the control loop's own read is newer than the last write. The log summarises the fixes once a minute as a `CpuDrift` line (count, what the kernel had, what we wanted).
+- `SmoothSlice.shouldFixDrift` (pure) with unit tests.
+
+### Changed
+- Version 4.1.0 (versionCode 73). The default behaviour is unchanged: the option is off, and overrides are still only counted (as in 4.0.9).
+
+## [4.0.9] - 2026-11-27
+
+### Added
+- **Smooth limit slice length.** New setting "Smooth limit: slice length" (30-400 ms, default 50 ms = exactly the behaviour before 4.0.9). It is the shortest time the smooth limiter stays on one of its two frequency steps. The fast switcher runs on its own 20 ms timer, so this (not the 140-450 ms control tick) is what sets how finely the average power is sliced.
+- **Automatic slice learning** (off by default): "Learn the slice length automatically". Only during long steady game sessions (2 minutes of game, power limit engaged, discharging, no launch burst), one CPU cluster at a time. It measures a 45 s baseline, then tries the next shorter slice from the ladder 400 / 300 / 200 / 150 / 100 / 70 / 50 / 40 / 30 ms for 45 s, and keeps going only while it is better (overshoot smaller or FPS steadier) and nothing is worse (overshoot, FPS steadiness, CpuDrift re-asserts, write time, switch-rate backoff). If something gets worse, or there is no clear gain, it goes back to the last good slice and keeps it. If the load changed too much to compare, the stage is measured again (up to 2 times). The slider is the starting point; the results are saved per cluster. Switching learning on again starts from scratch.
+- **Hard safe range.** Never shorter than 30 ms or longer than 400 ms, and never shorter than 3 x the measured p90 write time (rounded up to the ladder). The existing switch-rate guard (phase doubling above 14 switches/s, 30 s backoff above 28/s) still applies on top.
+- **Write time logging.** Every frequency write is timed (including any wait for the root shell). `WriteLat` log line every 30 s: count, average, p50, p90, max for CPU writes and for GPU/other writes. A single write over 150 ms logs a warning (at most every 10 s).
+- **One `SmoothSlice` log line every time a slice changes** (trial start, kept and trying shorter, reverted, settled, interrupted), with the numbers that decided it, e.g. `cpu_3 slice 100 -> 70 ms (trial)` and `cpu_3 slice settled at 100 ms (kept 100ms: 70ms was worse: ...)`.
+- `SmoothSliceLearnerTest` unit tests (ladder and floor, decision function, window statistics, latency tracker, state machine).
+
+### Changed
+- CpuDrift counting now also sees the kernel overriding the fast switcher's last write (the control loop does not re-assert while the fast switcher owns a cluster, so those overrides were invisible before). It is only counted for the learner; behaviour is unchanged and the `CpuDrift` log lines are unchanged.
+- Version 4.0.9 (versionCode 72).
+
+## [4.0.8] - 2026-11-27
+
+### Changed
+- **The Game Thread Controller has its own root shell.** Its thread scan (which can hold a shell for 4-7 s in a busy game) used to share the background shell with the FPS reads, so FPS updated only about every 8 s in games. The scan and its taskset writes now use a fourth shell (`RootShell(thread)` in the log), so FPS reads, Stutter Hunter and Auto-Tune no longer wait behind it. The control loop's shell is untouched.
+- **Backup plan for slow scans.** When a thread scan takes 1.5 s or more, the app tries a one-command scan (a single `grep` over every thread's `comm` file) once. It is switched to only if it finds about the same threads (90-110% of them) and is at least twice as fast; otherwise the normal scan stays. If the one-command scan ever returns nothing, it falls back to the normal scan. The log says which was chosen.
+- Version 4.0.8 (versionCode 71).
+
+### Added
+- `GameThreadFastEnumTest` unit tests for the one-command scan command, its parsing and the trust check.
+
+## [4.0.7] - 2026-11-27
+
+### Changed
+- **Game Thread Controller scans far less often.** Each scan of the game's threads costs several seconds of root shell time, and it used to repeat every 2 s. It now scans every 2 s only for the first 30 s after a game starts (while threads are still appearing), every 4 s while a scan still finds new threads to pin, and every 12 s once things have settled. Pinning itself is unchanged and new threads (for example when a match loads) are still picked up.
+- **Game-set FPS caps no longer count against the tune.** When the game holds a flat ~30 FPS for 2 s or more (lobby, menu, pause) in a session that otherwise runs well above 30, those seconds are left out of average, minimum, 1%/5% low, median, stability and FPS per watt. Auto-Tune therefore no longer rejects a trial with `safety_p5_collapse` because the game went to its lobby. A session that simply runs at 30 FPS all the time is left alone, and a single dip or a wandering 28-32 FPS run still counts as real. Temperature, power and energy still use every second.
+- Saving a session logs when this happened, for example `Game held a flat ~30 FPS cap for 17s (lobby/menu/pause, set by the game, not by CoreGovernor)`.
+- Version 4.0.7 (versionCode 70).
+
+### Added
+- `GameLimitedFpsTest` unit tests for the cap detection and the scan interval.
+
+## [4.0.6] - 2026-11-27
+
+### Added
+- **Smooth limit minimum model confidence slider** (`Tuning` -> `Power throttling`, shown while Smooth power limit is on). Range 10-95%, default 40%, saved with the config as `smoothMinConfidencePct`. It is separate from the Energy tab's confidence setting, so changing one no longer affects the other.
+- Unit tests for the average-confidence rule, the lower-threshold case, faster cap release and noisy-sample protection.
+
+### Changed
+- **Smooth power limit judges the model by its average confidence.** Before, one rarely-visited frequency step below the threshold switched smoothing off for the whole ladder, so in a game every cluster stayed on `plain (low model confidence)`. Now the average over the steps must reach the slider value, and the two steps actually alternated between must reach half of it.
+- The log reason now shows the numbers, for example `low model confidence (avg 33% < 40%)`, so you can set the slider just below the average.
+- **Power model learns faster.** Confidence builds quicker (about 60% after 8 samples instead of 14), frequency steps never visited inherit more confidence from their neighbours (0.7 instead of 0.45), and each sample corrects the model harder while a step is still young.
+- Version 4.0.6 (versionCode 69).
+
+### Fixed
+- **Power cap sank too far and stayed there.** The cap was cut by up to 12% per 350 ms from the last few noisy watt samples but lifted by only 1-2% per step, so it ratcheted down to about 40% and cost FPS while power was close to the limit. Maximum cut per step is now 2.5x instead of 4x, an engaged cap judges the blend of the fast and slow readings, and release speeds up (up to 8x) the further the draw is under the limit.
+
+## [4.0.5] - 2026-11-26 (Optimized edition)
+
+### Changed
+- **Fewer root round trips when pinning CPU clusters.** The max and min frequency writes for a cluster now go to the root shell as one ordered command instead of two. Write order (max then min when raising, min then max when lowering), per-file error handling, failure cooldowns and log lines are unchanged. Any write that does not report success is retried the old way, including the chmod fallbacks.
+- The two writes can no longer be split by the 20 ms fast switcher, which also reduces waiting on the shared root shell.
+- Version 4.0.5 (versionCode 68).
+
+### Added
+- `SysfsBatchWriteTest` unit tests for the batched write command and its result parsing.
+
 ## [4.0.0] - 2026-11-26
 
 ### Added

@@ -665,6 +665,15 @@
     <string name="power_enable">Enable Power Throttling</string>
     <string name="power_enable_desc">Gently steps down clock caps when sustained wattage stays above your budget to prevent heat buildup.</string>
     <string name="power_comp_aware">Smart split by component</string>
+    <string name="power_smooth_min_conf">Smooth limit: minimum model confidence</string>
+    <string name="power_smooth_min_conf_desc">Average model confidence needed before the smooth limit alternates between two steps. Lower = it kicks in sooner (less exact), higher = it waits for a better-trained model. The log shows the current average when it is not active.</string>
+    <string name="power_smooth_slice">Smooth limit: slice length</string>
+    <string name="power_smooth_slice_start">%1$d ms (start)</string>
+    <string name="power_smooth_slice_desc">Shortest time the smooth limit stays on one of its two frequency steps. Shorter = finer, steadier average power but more frequency writes through the root shell. 50 ms is the behaviour before 4.0.9; the log line WriteLat shows how long writes really take.</string>
+    <string name="power_smooth_slice_auto">Learn the slice length automatically</string>
+    <string name="power_smooth_slice_auto_desc">Tries shorter slices one CPU cluster at a time, only during long steady game sessions under the power limit. A shorter slice is kept only while overshoot or FPS steadiness gets better and nothing gets worse; otherwise it goes back to the last good slice. Never below 30 ms. Each change is logged as SmoothSlice. The slider is the starting point.</string>
+    <string name="power_smooth_fix_drift">Smooth limit: fix kernel overrides</string>
+    <string name="power_smooth_fix_drift_desc">When the kernel or vendor code changes the frequency limits behind the smooth limit, write the value again (at most every 0.4 s per cluster, never while a temperature cap is active). Off = the override stays until the next switch. The log shows how many were fixed (CpuDrift).</string>
     <string name="power_smooth">Smooth power limit</string>
     <string name="power_smooth_desc">Instead of parking on one frequency step, switch quickly between two neighbouring steps so the average power lands on the limit. A separate fast timer does the switching, so it works with any normal poll interval. Also smooths thermal caps (no watt-based trim there). Needs a confident power model; otherwise the normal limit is used. See the log (SmoothLimit).</string>
     <string name="power_comp_aware_desc">When power is over the limit, throttle the heavier consumer (CPU or GPU, and the busiest CPU cluster) more.</string>

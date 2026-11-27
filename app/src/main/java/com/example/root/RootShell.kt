@@ -59,6 +59,26 @@ class RootShell {
     private var useBuiltinRead: Boolean? = null
     var onLog: ((String) -> Unit)? = null
 
+    /** v4.3 optional root helper that holds frequency files open (only the fast switcher's shell turns it on). */
+    @Volatile private var fastWriter: FastWriter? = null
+
+    /** Turns on the root helper for this shell's writes. Safe to call again; reads and other commands are unchanged. */
+    fun enableFastWriter(apkPath: String) {
+        val existing = fastWriter
+        if (existing != null) {
+            existing.startAsync()
+            return
+        }
+        val fw = FastWriter(apkPath) { msg -> onLog?.invoke(msg) }
+        fastWriter = fw
+        fw.startAsync()
+    }
+
+    /** Stops the helper (governor stopped). It restarts on the next write attempt or [enableFastWriter]. */
+    fun releaseFastWriter() {
+        fastWriter?.stop()
+    }
+
     suspend fun ensureSession(): Boolean = mutex.withLock {
         withContext(dispatcher) {
             ensureSessionLocked()
@@ -209,7 +229,14 @@ class RootShell {
         return if (res.isSuccess) res.stdout.trim() else null
     }
 
-    suspend fun writeSysfs(path: String, value: String): ShellResult {
+    suspend fun writeSysfs(path: String, value: String): ShellResult = writeSysfs(path, value, true)
+
+    private suspend fun writeSysfs(path: String, value: String, viaHelper: Boolean): ShellResult {
+        if (viaHelper) {
+            val codes = fastWriter?.write(listOf(path to value))
+            if (codes != null && codes.isNotEmpty() && codes[0] == 0) return ShellResult(0, "")
+            // helper unavailable or refused this write: the shell path below also repairs file permissions
+        }
         val q = shellQuote(path)
         val qVal = shellQuote(value)
         val printfCmd = "printf '%s' $qVal > $q"
@@ -228,6 +255,29 @@ class RootShell {
             }
         }
         return res
+    }
+
+    /**
+     * v4.1: writes several files in order using ONE shell round trip. Any write that did not report success is
+     * retried through [writeSysfs] (same chmod fallbacks as before), in the original order.
+     */
+    suspend fun writeSysfsOrdered(writes: List<Pair<String, String>>): List<ShellResult> {
+        if (writes.isEmpty()) return emptyList()
+        val helperCodes = fastWriter?.write(writes)
+        if (helperCodes != null && helperCodes.size == writes.size) {
+            // One pipe round trip for the whole batch; only a write the helper could not do goes through the shell.
+            return writes.mapIndexed { i, (path, value) ->
+                if (helperCodes[i] == 0) ShellResult(0, "") else writeSysfs(path, value, false)
+            }
+        }
+        if (writes.size == 1) return listOf(writeSysfs(writes[0].first, writes[0].second, false))
+        val res = exec(SysfsBatchWrite.buildCommand(writes) { permissionFixedPaths.add(it) })
+        // The shell never ran the batch (su gone): forget the "chmod done" marks so the retry below redoes them.
+        if (res.error != null) writes.forEach { permissionFixedPaths.remove(it.first) }
+        val codes = SysfsBatchWrite.parseCodes(res.stdout, writes.size)
+        return writes.mapIndexed { i, (path, value) ->
+            if (codes[i] == 0) ShellResult(0, "") else writeSysfs(path, value, false)
+        }
     }
 
     /**
@@ -255,6 +305,7 @@ class RootShell {
     }
 
     suspend fun close() = mutex.withLock {
+        fastWriter?.stop()
         withContext(dispatcher) {
             destroyProcessLocked()
             isRootAvailable = false

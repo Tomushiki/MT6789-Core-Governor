@@ -124,6 +124,8 @@ fun EnergyScreen(
     onResetBatteryEstimate: () -> Unit,
     modifier: Modifier = Modifier,
     telemetryFlow: kotlinx.coroutines.flow.StateFlow<com.example.model.TelemetryState>? = null,
+    batteryHistory: List<com.example.governor.BatteryHistoryPoint> = emptyList(),
+    onClearBatteryHistory: () -> Unit = {},
     extraContent: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -261,16 +263,40 @@ fun EnergyScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 0. Battery Card (capacity, SoH, health, energy totals & estimation controls)
+        // 0. Battery overview: plain-language status, history graphs, health, sessions (v4.2.0)
         item {
-            BatteryCard(
+            BatteryOverview(
                 batt = batterySnapshot,
-                config = config,
-                telemetryFlow = telemetryFlow,
-                onToggleEstimation = { onUpdateBatterySettings(it, null) },
-                onEditDesignOverride = { showDesignOverrideDialog = true },
-                onResetBatteryEstimate = { showResetBatteryDialog = true }
+                history = batteryHistory,
+                nowMs = batteryHistory.lastOrNull()?.timeMs ?: System.currentTimeMillis()
             )
+        }
+        // 0b. The old detailed battery numbers, tucked away for people who want them
+        item {
+            var showTech by remember { mutableStateOf(false) }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    onClick = { showTech = !showTech },
+                    modifier = Modifier.fillMaxWidth().testTag("toggle_battery_technical")
+                ) {
+                    Text(
+                        if (showTech) stringResource(R.string.bo_tech_hide) else stringResource(R.string.bo_tech_show)
+                    )
+                }
+                if (showTech) {
+                    BatteryCard(
+                        batt = batterySnapshot,
+                        config = config,
+                        telemetryFlow = telemetryFlow,
+                        onToggleEstimation = { onUpdateBatterySettings(it, null) },
+                        onEditDesignOverride = { showDesignOverrideDialog = true },
+                        onResetBatteryEstimate = { showResetBatteryDialog = true }
+                    )
+                    TextButton(onClick = onClearBatteryHistory, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.bo_clear_history), color = ext.throttle)
+                    }
+                }
+            }
         }
         // 1. Model Status & Live Comparison Card
         item {

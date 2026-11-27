@@ -482,6 +482,16 @@ data class GovernorConfig(
     val efficiencyLearningEnabled: Boolean = false,
     val efficiencyMode: EfficiencyMode = EfficiencyMode.BALANCED,
     val minConfidencePct: Int = 60,
+    /** v4.0.6: average model confidence the smooth power limit needs before it switches between two steps. */
+    val smoothMinConfidencePct: Int = 40,
+    /** v4.0.9: shortest time the smooth limit stays on one of its two steps (ms). 50 = the behaviour before 4.0.9. */
+    val smoothSliceMs: Int = 50,
+    /** v4.0.9: learn the slice length automatically (one CPU cluster at a time, long game sessions only). */
+    val smoothSliceAuto: Boolean = false,
+    /** v4.1.0: when the kernel overrides the smooth limiter's last write, write it again (rate-limited, never during a thermal cap). */
+    val smoothFixDrift: Boolean = false,
+    /** v4.0.9: slices the learner settled on, as "cpu_0:40,cpu_3:50". */
+    val smoothLearnedSlices: String = "",
     val explorationRate: ExplorationRate = ExplorationRate.LOW,
     val batteryEstimationEnabled: Boolean = true,
     val batteryDesignCapacityOverrideMah: Int = 0,

@@ -46,7 +46,21 @@ class SmoothPowerLimiterTest {
         assertEquals(0f, p.duty, 0f)
         // plain: threshold = 2.3 + 0.2*0.7 = 2.44 GHz -> 2.4 GHz step.
         assertEquals(1, p.lowIdx)
-        assertEquals("low model confidence", p.reason)
+        assertTrue(p.reason.startsWith("low model confidence"))
+    }
+
+    @Test fun oneWeakFarStepDoesNotVetoWhenAverageIsHighEnough() {
+        // Cap 0.7 lands between steps 1 and 2 (both strong); only the bottom step is weak. Average 70 >= 60.
+        val weakBottom = ladder.toMutableList().also { it[0] = Step(2_300_000L, 2000f, 10f) }
+            .also { it[1] = it[1].copy(confidencePct = 90f); it[2] = it[2].copy(confidencePct = 90f) }
+        val p = SmoothPowerLimiter.plan(weakBottom, 0.7f, 60f, 0f)
+        assertTrue(p.smooth)
+    }
+
+    @Test fun lowerThresholdLetsAWeakerModelSmooth() {
+        val mid = ladder.map { it.copy(confidencePct = 45f) }
+        assertFalse(SmoothPowerLimiter.plan(mid, 0.7f, 60f, 0f).smooth)
+        assertTrue(SmoothPowerLimiter.plan(mid, 0.7f, 40f, 0f).smooth)
     }
 
     @Test fun flatOrBrokenModelFallsBack() {

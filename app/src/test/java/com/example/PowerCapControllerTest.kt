@@ -54,6 +54,20 @@ class PowerCapControllerTest {
         assertTrue(step(s, 12_000L, 4f).capPct > 80f)
     }
 
+    @Test fun farUnderTheLimitReleasesMuchFasterThanNearIt() {
+        val s = PowerCapController.State(capPct = 42f, overSinceMs = -1L, lastStepMs = 0L, lastOverMs = 0L)
+        val far = step(s, 20_000L, 2.5f)   // well under the 6 W limit
+        val near = step(s, 20_000L, 5.6f)  // just under the release line
+        assertTrue(far.capPct - 42f > 4f)
+        assertTrue(far.capPct - 42f > (near.capPct - 42f) * 3f)
+    }
+
+    @Test fun oneNoisyFastSampleDoesNotSlamAnEngagedCap() {
+        val s = PowerCapController.State(capPct = 80f, overSinceMs = 0L, lastStepMs = 0L, lastOverMs = 0L)
+        val r = step(s, 1000L, avg = 5.5f, fast = 7.5f)  // blended 6.5 W: small overshoot
+        assertTrue(80f - r.capPct <= 5f)
+    }
+
     @Test fun holdsInsideTheDeadBand() {
         val s = PowerCapController.State(capPct = 80f, overSinceMs = -1L, lastStepMs = 0L, lastOverMs = 0L)
         assertEquals(80f, step(s, 20_000L, 5.8f).capPct, 0.001f)

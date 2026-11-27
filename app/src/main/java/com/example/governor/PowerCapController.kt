@@ -34,7 +34,11 @@ import com.example.model.PowerThrottleConfig
 object PowerCapController {
     const val STEP_INTERVAL_MS = 350L
     const val HOLD_AFTER_OVER_MS = 1500L
-    const val MAX_STEP_MULT = 4f
+    /** v4.0.6: was 4x. A noisy 3-sample reading used to cut up to 12% per 350 ms while release crept up at 1-2%. */
+    const val MAX_STEP_MULT = 2.5f
+    /** v4.0.6: how much faster the cap lifts when the draw is far under the limit (headroom x this, up to [MAX_RELEASE_MULT]). */
+    const val RELEASE_HEADROOM_GAIN = 10f
+    const val MAX_RELEASE_MULT = 8f
     const val SPIKE_RATIO = 1.35f
     const val RELEASE_BELOW_RATIO = 0.95f
     const val ENGAGED_BELOW_PCT = 99.5f
@@ -58,7 +62,8 @@ object PowerCapController {
     ): State {
         val limit = cfg.limitWatts.coerceAtLeast(0.1f)
         val engaged = prev.capPct < ENGAGED_BELOW_PCT
-        val overW = if (engaged) fastWatts else avgWatts
+        // v4.0.6: once engaged, blend the fast and slow readings (fast alone chased single noisy samples and over-cut).
+        val overW = if (engaged) (fastWatts + avgWatts) * 0.5f else avgWatts
         val isOver = overW > limit
 
         if (isOver && bypassed) {
@@ -80,13 +85,13 @@ object PowerCapController {
 
         var next = prev.capPct
         var lastStep = prev.lastStepMs
-        val releaseW = maxOf(avgWatts, fastWatts)
+        val releaseW = (avgWatts + fastWatts) * 0.5f
         if (releaseW < limit * RELEASE_BELOW_RATIO && prev.capPct < 100f &&
             nowMs - prev.lastOverMs >= HOLD_AFTER_OVER_MS &&
             nowMs - prev.lastStepMs >= STEP_INTERVAL_MS
         ) {
             val headroom = RELEASE_BELOW_RATIO - releaseW / limit
-            val mult = (1f + headroom * 4f).coerceIn(1f, 2f)
+            val mult = (1f + headroom * RELEASE_HEADROOM_GAIN).coerceIn(1f, MAX_RELEASE_MULT)
             next = (prev.capPct + cfg.releaseStepPct * mult).coerceIn(floorPct, 100f)
             lastStep = nowMs
         }
